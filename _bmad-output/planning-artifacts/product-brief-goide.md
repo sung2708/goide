@@ -2,7 +2,7 @@
 title: "Product Brief: goide"
 status: "draft"
 created: "2026-04-07 16:41:30 +07:00"
-updated: "2026-04-07 16:41:30 +07:00"
+updated: "2026-04-08 00:00:00 +07:00"
 inputs:
   - {project-root}/_bmad-output/planning-artifacts/research/market-go-ide-developer-tooling-concurrency-debugging-runtime-visualization-research-2026-04-07-160018.md
   - {project-root}/_bmad-output/planning-artifacts/research/domain-developer-tooling-ides-concurrency-debugging-research-2026-04-07-161705.md
@@ -19,6 +19,18 @@ goide is a Go‑first, Rust‑native IDE purpose‑built for developers working 
 
 This product is positioned as a specialized complement to VS Code and GoLand, not a wholesale replacement. The Go developer community already uses multiple editors; goide earns its place by providing a single, unmatched outcome: understanding and fixing concurrency issues in minutes, not hours.
 
+## Purpose
+
+goide is a developer tool focused on understanding and debugging Go concurrency directly inside the editor using a Concurrency Lens (Invisible Runtime UX).
+
+## Critical Constraints
+
+- Must feel fast, lightweight, and responsive.
+- Editor-first workflow where code is always dominant.
+- Avoid heavy dashboards and multi-panel complexity.
+- Performance takes priority over visual effects.
+- Keep UI clutter-free and low-noise.
+
 ## The Problem
 
 Go developers routinely struggle to understand runtime concurrency behavior. Execution traces can reveal the truth, but they are external, complex, and time‑consuming. In practice, teams spend hours triangulating blocked goroutines, channel contention, and deadlocks across logs, traces, and mental models. The cost is slow diagnosis, reduced confidence, and longer incident resolution.
@@ -31,6 +43,49 @@ Core experience:
 - **Quick Insight**: lightweight static + runtime hints, single‑file first.
 - **Deep Trace**: scoped runtime sampling and trace windows for causal chains and temporal replay.
 - **Invisible Runtime UX**: overlays appear on intent, not as persistent dashboards.
+
+## UI Structure
+
+- Left sidebar: source tree and optional file search with subtle, low-weight visuals.
+- Top: minimal toolbar / command palette trigger only.
+- Center: code editor remains primary (70-80% of layout) with inline Concurrency Lens.
+- Bottom panel: lightweight logs/debug/trace panel, hidden by default.
+- Right panel: optional, collapsible, narrow summary panel for quick health states.
+- Status bar: mode and runtime state indicators with low visual noise.
+
+## Component Hierarchy
+
+- AppShell
+- TopBar
+- MainSplit
+- LeftSidebar (SourceTree, OptionalSearch)
+- EditorRegion (CodeEditor + ConcurrencyLensLayer)
+- ConcurrencyLensLayer (HintUnderline, BlockPulse, CausalThreads, TraceBubble)
+- RightSummaryPanel optional (GoroutineCount, BlockingSummary, HealthStatus)
+- BottomPanel optional
+- StatusBar
+
+## Visual System
+
+- Aesthetic: dark, high-contrast Catppuccin-inspired UI (Mocha palette preferred).
+- Tone: soft contrast and calm colors, never aggressive neon.
+- Typography: JetBrains Mono (or similar) for code, paired with a refined UI sans font (not Inter/Roboto defaults).
+- Motion: minimal and meaningful only (pulse for blocking, fade for overlays), no decorative animations.
+- Signal design: runtime highlights are lightweight and should never overwhelm source readability.
+
+## Concurrency Lens Behavior
+
+- Dotted underline for static hint.
+- Soft pulse for blocked operations.
+- Thin thread-like lines for causal flow.
+- Small trace bubbles for wait time and confidence (Predicted, Likely, Confirmed).
+- Signals appear only on hover, click, or trace activation.
+
+## Dashboard Boundaries
+
+- Not a full dashboard and not a separate workflow.
+- Collapsible, narrow, text-forward, no charts.
+- Supports click-to-jump from summary item to code location.
 
 ## What Makes This Different
 

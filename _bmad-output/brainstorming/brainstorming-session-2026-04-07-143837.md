@@ -47,25 +47,30 @@ We will explore divergent idea spaces across UX, performance, workflows, ecosyst
 **Question Storming (Partial):**
 
 - **Interactive Focus:** Concurrency Lens as a product pillar (in-code overlays, real-time blocking visibility, minimal cognitive overhead)
-- **Key Breakthroughs:** Channel Flow Overlay + causal chain hover + counterpart jump + pulse feedback; layered signal model (static + sampling + opt-in instrumentation + trace replay); confidence-aware UI; Quick Insight → Deep Trace ladder; 30-second deadlock break demo
+- **Key Breakthroughs:** Channel Flow Overlay + causal chain hover + counterpart jump + pulse feedback; layered signal model (static + sampling + opt-in instrumentation + trace replay); confidence-aware UI; Quick Insight -> Deep Trace ladder; 30-second deadlock break demo; editor-first layout with code as dominant surface
 - **Moats:** Trace dataset, full-stack signal integration, concurrency UX language, trust model, Go-specific AI reasoning, team feedback loop
-- **Positioning:** Free Go-native workflow engine; "make concurrency visible and deployment effortless"; native Docker/K8s integration
+- **Positioning:** Free Go-native workflow engine; "make concurrency visible and deployment effortless"; native Docker/K8s integration; calm, low-noise developer experience
 
 ## Implementation Checklist (Build-Ready)
 
 **Global Constraints**
 - Single-file first: runtime + causal features must be reliable within a single file before enabling cross-file behavior.
 - Fail-safe fallback: if runtime/trace is unavailable, degrade to static hints without UI breakage.
+- Editor-first: code editor remains dominant (target 70-80% of layout).
+- Lightweight by default: avoid heavy dashboards, charts, and always-on visualizations.
+- Performance first: interaction updates should feel immediate; visual effects are secondary.
+- Concurrency Lens appears only on intent (hover, click, trace activation).
 
 ### Milestone 1: Quick Insight Core (2–3 weeks)
 1. Implement static concurrency detection for `chan` ops, `select` without `default`, `Mutex.Lock`, `WaitGroup.Wait` within a single file.
-2. Render dotted underline + low-opacity icon only on hover or click.
+2. Render dotted underline hint only on hover or click (no persistent overlays).
 3. Show minimal tooltip with primitive type and location.
 4. Implement hover → static counterpart jump within the same file.
 5. Implement click → isolate flow (dim unrelated code) within the same file.
 6. Add density guard: cap visible signals per viewport, prioritize `Confirmed > Likely > Predicted` (even if only Predicted exists in M1).
-7. Add smooth fade/scale transitions for signal appearance/disappearance.
+7. Add minimal fade transitions for hint appearance/disappearance (no decorative animation).
 8. Add fail-safe fallback: if runtime/trace unavailable, static hints still render with no UI errors.
+9. Add status bar indicators for mode and runtime availability with low visual noise.
 
 **Milestone 1 Manual Verification**
 1. Open a single Go file with channel ops + `select` (no runtime). Hover a channel op → dotted underline + tooltip only on hover. No persistent UI.
@@ -84,6 +89,8 @@ We will explore divergent idea spaces across UX, performance, workflows, ecosyst
 7. Render thread-line flow overlay and pulse indicators in Deep Trace.
 8. Render trace bubbles with wait time + confidence level.
 9. Enforce fail-safe fallback to static hints when runtime/trace signals are unavailable.
+10. Add optional collapsible right summary panel (narrow width) with text-only indicators: active goroutines, blocking summary, and health status.
+11. Enable click-to-jump navigation from right-panel summary items to code.
 
 **Milestone 2 Manual Verification**
 1. Activate Deep Trace via hover toggle or context menu → overlays appear only in the current file.
@@ -101,6 +108,8 @@ We will explore divergent idea spaces across UX, performance, workflows, ecosyst
 6. Ensure all risk signals have in-editor actions (hover → explain, click → jump).
 7. Apply confidence-consistent UI encoding across blocking, causal, and risk.
 8. Enforce density guard + smooth escalation for all new signals.
+9. Keep bottom logs/debug panel hidden by default; reveal only on explicit user action.
+10. Preserve right summary panel as optional and collapsible; avoid chart-heavy UI.
 
 **Milestone 3 Manual Verification**
 1. Activate Deep Trace → trace ribbon appears in gutter; scrub updates overlays in real time.
@@ -114,13 +123,33 @@ We will explore divergent idea spaces across UX, performance, workflows, ecosyst
 **Core Product Idea**
 Concurrency Lens with an Invisible Runtime: a Go IDE that stays minimal by default, then reveals precise, contextual concurrency insight on user intent. The goal is instant clarity without UI noise.
 
+**UI Structure**
+- Left sidebar: minimal source tree and optional search.
+- Top: lightweight toolbar with command palette trigger.
+- Center (primary): code editor with inline lens overlays.
+- Right panel: optional, collapsible, narrow summary panel.
+- Bottom panel: optional logs/debug, hidden by default.
+- Status bar: low-noise mode and runtime state.
+
+**Component Hierarchy**
+- AppShell -> TopBar -> MainRegion.
+- MainRegion -> LeftSidebar + EditorRegion + RightSummaryPanel (optional).
+- EditorRegion -> CodeEditor + ConcurrencyLensLayer.
+- ConcurrencyLensLayer -> dotted hint, block pulse, causal threads, trace bubbles.
+
+**Visual System**
+- Catppuccin Mocha-inspired dark, soft-contrast palette.
+- JetBrains Mono (or equivalent) for code, refined sans-serif UI font.
+- Minimal motion only: soft pulse for blocked operations, fade for overlays.
+- No aggressive neon, no decorative animations, no chart-dense panels.
+
 **Main User Flow**
-Hover → understand (tooltip + signal) → click → isolate flow → trace (Deep Trace) → fix.
+Hover -> understand (tooltip + signal) -> click -> isolate flow -> trace (Deep Trace) -> fix.
 
 **Milestones (Concise)**
-1. **Quick Insight Core**: Static hints + hover/click overlays; isolate flow in-file; density guard + smooth transitions.
-2. **Deep Trace Scoped Runtime**: On-demand tracing (hover/context menu/command palette); flow→function→test scope; runtime blocking + causal links; thread-line overlays + trace bubbles.
-3. **Temporal + Risk Layer**: Trace ribbon (scrub/freeze); deadlock vectors + contention hotspots; action-driven risk signals.
+1. **Quick Insight Core**: Static hints + hover/click overlays; isolate flow in-file; density guard + minimal fade transitions.
+2. **Deep Trace Scoped Runtime**: On-demand tracing (hover/context menu/command palette); flow->function->test scope; runtime blocking + causal links; thread-line overlays + trace bubbles; optional right summary panel.
+3. **Temporal + Risk Layer**: Trace ribbon (scrub/freeze); deadlock vectors + contention hotspots; action-driven risk signals while preserving low-noise layout defaults.
 
 **Key Constraints**
 - **Single-file first**: runtime + causal features must be reliable within a single file before cross-file.
