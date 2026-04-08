@@ -26,3 +26,4 @@ dist-ssr
 # Project-specific
 _uv-cache
 .superpowers
+_bmad-output/code-review.diff
