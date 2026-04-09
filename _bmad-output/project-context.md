@@ -22,6 +22,8 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Frontend build tool: Vite
 - Styling: Tailwind CSS (latest stable)
 - Go tooling: gopls (latest stable) for LSP/static analysis
+- Syntax Highlighting (UI): CodeMirror 6 (Lezer) for instant feedback
+- Semantic Analysis (Backend): Tree-sitter (Rust) for concurrency lens analysis
 - Debug/runtime: Delve (DAP, latest stable)
 - Python scripts (if needed): use `uv` for runtime management (no global Python)
 
@@ -204,6 +206,7 @@ _This file contains critical rules and patterns that AI agents must follow when 
 - Do not mix Rust backend logic with frontend rendering concerns
 - Do not leak internal Rust state directly into UI
 - Maintain clear IPC contracts (typed, minimal)
+- **Workspace Scoping**: Use `useRef` + `startingPath` capture in frontend async callbacks to prevent stale data from overwriting new workspace state.
 
 **Complexity control**
 - No plugin system in MVP
