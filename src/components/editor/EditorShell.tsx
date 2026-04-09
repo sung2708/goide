@@ -60,24 +60,32 @@ function EditorShell() {
       setIsReading(true);
       setFileError(null);
 
-      const response = await readWorkspaceFile(workspacePath, relativePath);
+      try {
+        const response = await readWorkspaceFile(workspacePath, relativePath);
 
-      // If the workspace changed while we were reading, ignore the result
-      if (workspacePathRef.current !== startingPath) {
-        return;
-      }
+        // If the workspace changed while we were reading, ignore the result
+        if (workspacePathRef.current !== startingPath) {
+          return;
+        }
 
-      if (!response.ok || response.data === undefined) {
+        if (!response.ok || response.data === undefined) {
+          setActiveFilePath(relativePath);
+          setActiveFileContent(null);
+          setFileError(response.error?.message ?? "Unable to open file");
+          return;
+        }
+
         setActiveFilePath(relativePath);
-        setActiveFileContent(null);
-        setFileError(response.error?.message ?? "Unable to open file");
-        setIsReading(false);
-        return;
+        setActiveFileContent(response.data);
+      } catch (error) {
+        if (workspacePathRef.current === startingPath) {
+          setFileError("An unexpected error occurred while loading the file.");
+        }
+      } finally {
+        if (workspacePathRef.current === startingPath) {
+          setIsReading(false);
+        }
       }
-
-      setActiveFilePath(relativePath);
-      setActiveFileContent(response.data);
-      setIsReading(false);
     },
     [isReading, workspacePath]
   );
@@ -176,7 +184,7 @@ function EditorShell() {
                     {activeFilePath}
                   </div>
                   <div className="flex-1 overflow-auto px-4 py-3">
-                    {activeFileContent ? (
+                    {activeFileContent !== null ? (
                       <pre className="font-code text-xs leading-relaxed text-[#cdd6f4]">
                         {activeFileContent}
                       </pre>
