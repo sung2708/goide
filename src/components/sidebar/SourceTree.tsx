@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FsEntry } from "../../lib/ipc/types";
 import { listWorkspaceEntries } from "../../lib/ipc/client";
 
@@ -33,6 +33,8 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
   const [rootState, setRootState] = useState<EntryState>(emptyState);
   const [childrenByPath, setChildrenByPath] = useState<Record<string, EntryState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const workspacePathRef = useRef(workspacePath);
+  workspacePathRef.current = workspacePath;
 
   const resetTree = useCallback(() => {
     setRootState(emptyState);
@@ -86,6 +88,7 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
         return;
       }
 
+      const startingPath = workspacePath;
       const next = new Set(expanded);
       if (next.has(entry.path)) {
         next.delete(entry.path);
@@ -106,10 +109,17 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
       }));
 
       const response = await listWorkspaceEntries(workspacePath, entry.path);
+
+      // If the workspace changed while we were loading, ignore the result
+      if (workspacePathRef.current !== startingPath) {
+        return;
+      }
+
       setChildrenByPath((prev) => ({
         ...prev,
         [entry.path]: {
-          entries: response.ok && response.data ? filteredEntries(response.data) : [],
+          entries:
+            response.ok && response.data ? filteredEntries(response.data) : [],
           loading: false,
           error: response.ok
             ? null
