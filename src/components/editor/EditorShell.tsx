@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
@@ -16,6 +16,8 @@ function EditorShell() {
   const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
+  const workspacePathRef = useRef(workspacePath);
+  workspacePathRef.current = workspacePath;
 
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
@@ -54,9 +56,17 @@ function EditorShell() {
         return;
       }
 
+      const startingPath = workspacePath;
       setIsReading(true);
       setFileError(null);
+
       const response = await readWorkspaceFile(workspacePath, relativePath);
+
+      // If the workspace changed while we were reading, ignore the result
+      if (workspacePathRef.current !== startingPath) {
+        return;
+      }
+
       if (!response.ok || response.data === undefined) {
         setActiveFilePath(relativePath);
         setActiveFileContent(null);
