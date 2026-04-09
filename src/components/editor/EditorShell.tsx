@@ -3,6 +3,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
+import CodeEditor from "./CodeEditor";
 
 const EDITOR_BG = "bg-[#1e1e2e]";
 const PANEL_BG = "bg-[#181825]";
@@ -181,17 +182,17 @@ function EditorShell() {
                   <div className="border-b border-[#313244] px-3 py-2 text-xs text-[#cdd6f4]">
                     {activeFilePath}
                   </div>
-                  <div className="flex-1 overflow-auto px-4 py-3">
+                  <div className="flex-1 min-h-0">
                     {activeFileContent !== null ? (
-                      <pre className="font-code text-xs leading-relaxed text-[#cdd6f4]">
-                        {activeFileContent}
-                      </pre>
+                      <CodeEditor value={activeFileContent} />
                     ) : (
-                      <p className="text-xs text-[#9399b2]">
-                        {fileError
-                          ? "Unable to display file contents."
-                          : "Select a file to preview its contents."}
-                      </p>
+                      <div className="px-4 py-3">
+                        <p className="text-xs text-[#9399b2]">
+                          {fileError
+                            ? "Unable to display file contents."
+                            : "Select a file to preview its contents."}
+                        </p>
+                      </div>
                     )}
                   </div>
                 </div>
