@@ -82,9 +82,7 @@ function EditorShell() {
           setFileError("An unexpected error occurred while loading the file.");
         }
       } finally {
-        if (workspacePathRef.current === startingPath) {
-          setIsReading(false);
-        }
+        setIsReading(false);
       }
     },
     [isReading, workspacePath]
