@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { readWorkspaceFile } from "../../lib/ipc/client";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
 
@@ -11,6 +12,10 @@ const TEXT_MUTED = "text-[#a6adc8]";
 function EditorShell() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
+  const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
+  const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [isReading, setIsReading] = useState(false);
 
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
@@ -32,6 +37,9 @@ function EditorShell() {
       const resolvedPath = Array.isArray(selected) ? selected[0] : selected;
       if (typeof resolvedPath === "string") {
         setWorkspacePath(resolvedPath);
+        setActiveFilePath(null);
+        setActiveFileContent(null);
+        setFileError(null);
       }
     } catch (error) {
       console.error("Failed to open workspace dialog:", error);
@@ -40,20 +48,57 @@ function EditorShell() {
     }
   }, [isOpening]);
 
+  const handleOpenFile = useCallback(
+    async (relativePath: string) => {
+      if (!workspacePath || isReading) {
+        return;
+      }
+
+      setIsReading(true);
+      setFileError(null);
+      const response = await readWorkspaceFile(workspacePath, relativePath);
+      if (!response.ok || response.data === undefined) {
+        setActiveFilePath(relativePath);
+        setActiveFileContent(null);
+        setFileError(response.error?.message ?? "Unable to open file");
+        setIsReading(false);
+        return;
+      }
+
+      setActiveFilePath(relativePath);
+      setActiveFileContent(response.data);
+      setIsReading(false);
+    },
+    [isReading, workspacePath]
+  );
+
+  const editorTitle = useMemo(() => {
+    if (!activeFilePath) {
+      return "Editor";
+    }
+
+    const segments = activeFilePath.split(/[\\/]/);
+    return segments[segments.length - 1] ?? activeFilePath;
+  }, [activeFilePath]);
+
   return (
     <div className={`flex h-full w-full flex-col ${EDITOR_BG} text-[#cdd6f4]`}>
       <div className="flex flex-1 overflow-hidden">
         <aside
           className={`flex min-w-[220px] basis-[22%] flex-col border-r ${BORDER} ${PANEL_BG}`}
         >
-          <SourceTree workspacePath={workspacePath} />
+          <SourceTree
+            workspacePath={workspacePath}
+            activeFilePath={activeFilePath}
+            onOpenFile={handleOpenFile}
+          />
         </aside>
 
         <section className="flex min-w-0 flex-1 basis-[78%] flex-col">
           <header
             className={`flex items-center justify-between border-b ${BORDER} px-4 py-2 text-[11px] uppercase tracking-[0.18em] ${TEXT_MUTED}`}
           >
-            <span>Editor</span>
+            <span>{editorTitle}</span>
             <button
               className={`rounded border ${BORDER} px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
                 isOpening
@@ -68,20 +113,8 @@ function EditorShell() {
             </button>
           </header>
 
-          <div className="flex flex-1 items-center justify-center p-6">
-            {workspacePath ? (
-              <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6">
-                <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
-                  Workspace Loaded
-                </p>
-                <p className="mt-3 break-all text-sm text-[#cdd6f4]">
-                  {workspacePath}
-                </p>
-                <p className="mt-3 text-xs text-[#9399b2]">
-                  File tree and editor tabs will appear in the next story.
-                </p>
-              </div>
-            ) : (
+          <div className="flex flex-1 flex-col p-6">
+            {!workspacePath && (
               <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6 text-center">
                 <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
                   No Workspace Open
@@ -107,11 +140,52 @@ function EditorShell() {
                 </p>
               </div>
             )}
+            {workspacePath && !activeFilePath && (
+              <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6">
+                <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
+                  Workspace Loaded
+                </p>
+                <p className="mt-3 text-sm text-[#cdd6f4]">
+                  Select a file from the source tree to view its contents.
+                </p>
+              </div>
+            )}
+            {workspacePath && activeFilePath && (
+              <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+                <div className="flex items-center justify-between text-xs text-[#9399b2]">
+                  <span className="uppercase tracking-[0.16em]">Active File</span>
+                  {isReading && <span>Loading…</span>}
+                </div>
+                {fileError && (
+                  <div className="rounded border border-[#f38ba8] bg-[#1a1b26] px-3 py-2 text-xs text-[#f38ba8]">
+                    {fileError}
+                  </div>
+                )}
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[#313244] bg-[#11111b]">
+                  <div className="border-b border-[#313244] px-3 py-2 text-xs text-[#cdd6f4]">
+                    {activeFilePath}
+                  </div>
+                  <div className="flex-1 overflow-auto px-4 py-3">
+                    {activeFileContent ? (
+                      <pre className="font-code text-xs leading-relaxed text-[#cdd6f4]">
+                        {activeFileContent}
+                      </pre>
+                    ) : (
+                      <p className="text-xs text-[#9399b2]">
+                        {fileError
+                          ? "Unable to display file contents."
+                          : "Select a file to preview its contents."}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         </section>
       </div>
 
-      <StatusBar workspacePath={workspacePath} />
+      <StatusBar workspacePath={workspacePath} activeFilePath={activeFilePath} />
     </div>
   );
 }
