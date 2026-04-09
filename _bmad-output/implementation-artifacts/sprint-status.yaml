@@ -1,7 +1,5 @@
-# generated: 2026-04-08T14:59:42.622104
-# last_updated: 2026-04-08T17:05:06+07:00
+# last_updated: 2026-04-09T11:05:00+07:00
 # project: goide
-# project_key: NOKEY
 # tracking_system: file-system
 # story_location: C:\Users\t15\Training\goide\_bmad-output\implementation-artifacts
 
@@ -26,16 +24,9 @@
 # Retrospective Status:
 #   - optional: Can be completed but not required
 #   - done: Retrospective has been completed
-#
-# WORKFLOW NOTES:
-# ===============
-# - Epic transitions to 'in-progress' automatically when first story is created
-# - Stories can be worked in parallel if team capacity allows
-# - SM typically creates next story after previous one is 'done' to incorporate learnings
-# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-09T09:22:23+07:00
+last_updated: 2026-04-09T10:53:11+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -46,7 +37,7 @@ development_status:
   1-1-set-up-project-from-starter-template: done
   1-2-initialize-app-shell-workspace-open: done
   1-3-source-tree-file-open: done
-  1-4-editor-rendering-syntax-highlighting: backlog
+  1-4-editor-rendering-syntax-highlighting: done
   1-5-optional-panels-default-state: backlog
   1-6-status-bar-indicators-command-palette-trigger: backlog
   epic-2: backlog
