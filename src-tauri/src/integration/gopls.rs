@@ -1,4 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
+use serde::Deserialize;
+use std::io;
 use std::process::Command;
 
 use crate::integration::fs;
@@ -28,11 +30,32 @@ pub struct DetectedConstruct {
 }
 
 pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
-    ensure_gopls_available()?;
-
     let source = fs::read_file(workspace_root, relative_path)?;
     let tokens = tokenize_identifiers(&source);
 
+    let mut results = detect_from_tokens(tokens);
+
+    if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
+        for gopls_construct in gopls_results {
+            if let Some(existing) = results.iter_mut().find(|item| {
+                item.kind == gopls_construct.kind
+                    && item.line == gopls_construct.line
+                    && item.column == gopls_construct.column
+            }) {
+                existing.confidence = Confidence::Confirmed;
+                if existing.symbol.is_none() {
+                    existing.symbol = gopls_construct.symbol.clone();
+                }
+            } else {
+                results.push(gopls_construct);
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
     let mut results = Vec::new();
     for token in tokens {
         match token.text.as_str() {
@@ -76,42 +99,7 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
         }
     }
 
-    Ok(results)
-}
-
-fn ensure_gopls_available() -> Result<()> {
-    let output = Command::new("gopls")
-        .arg("version")
-        .output()
-        .context("failed to execute gopls; ensure it is installed and available in PATH")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(anyhow!(
-            "gopls version command failed: {}",
-            stderr.trim()
-        ));
-    }
-
-    Ok(())
-}
-
-fn run_gopls_symbols(workspace_root: &str, relative_path: &str) -> Result<()> {
-    let output = Command::new("gopls")
-        .arg("symbols")
-        .arg(relative_path)
-        .current_dir(workspace_root)
-        .output()
-        .context("failed to execute gopls symbols command")?;
-
-    if !output.status.success() {
-        return Err(anyhow!(
-            "gopls symbols command failed for {}",
-            relative_path
-        ));
-    }
-
-    Ok(())
+    results
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +256,89 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
     advance_one(i, line, column, second);
 }
 
+#[derive(Debug, Deserialize)]
+struct GoplsSymbol {
+    name: String,
+    #[serde(default)]
+    range: Option<GoplsRange>,
+    #[serde(default, rename = "selectionRange")]
+    selection_range: Option<GoplsRange>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoplsRange {
+    start: GoplsPosition,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoplsPosition {
+    line: u32,
+    character: u32,
+}
+
+fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
+    let output = Command::new("gopls")
+        .arg("symbols")
+        .arg(relative_path)
+        .current_dir(workspace_root)
+        .output();
+
+    let output = match output {
+        Ok(out) => out,
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(Vec::new());
+            }
+            return Err(err).context("failed to execute gopls symbols command");
+        }
+    };
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    let parsed: Vec<GoplsSymbol> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+
+    let mut results = Vec::new();
+    for symbol in parsed {
+        let range = symbol
+            .selection_range
+            .as_ref()
+            .or(symbol.range.as_ref())
+            .map(|r| &r.start);
+
+        let position = match range {
+            Some(pos) => pos,
+            None => continue,
+        };
+
+        let (line, column) = (
+            position.line.saturating_add(1) as usize,
+            position.character.saturating_add(1) as usize,
+        );
+
+        match symbol.name.as_str() {
+            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+                kind: ConstructKind::Mutex,
+                line,
+                column,
+                symbol: Some("sync.Mutex".to_string()),
+                confidence: Confidence::Confirmed,
+            }),
+            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+                kind: ConstructKind::WaitGroup,
+                line,
+                column,
+                symbol: Some("sync.WaitGroup".to_string()),
+                confidence: Confidence::Confirmed,
+            }),
+            _ => {}
+        }
+    }
+
+    Ok(results)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -302,11 +373,15 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
             .expect("analysis should succeed");
 
         assert!(
-            results.iter().any(|item| item.kind == ConstructKind::Channel),
+            results
+                .iter()
+                .any(|item| item.kind == ConstructKind::Channel),
             "expected channel detection"
         );
         assert!(
-            results.iter().any(|item| item.kind == ConstructKind::Select),
+            results
+                .iter()
+                .any(|item| item.kind == ConstructKind::Select),
             "expected select detection"
         );
         assert!(
@@ -314,7 +389,9 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
             "expected mutex detection"
         );
         assert!(
-            results.iter().any(|item| item.kind == ConstructKind::WaitGroup),
+            results
+                .iter()
+                .any(|item| item.kind == ConstructKind::WaitGroup),
             "expected waitgroup detection"
         );
     }
