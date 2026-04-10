@@ -28,6 +28,22 @@ pub struct DetectedConstruct {
     pub confidence: Confidence,
 }
 
+fn is_mutex_name(text: &str) -> bool {
+    text == "Mutex" || text.ends_with(".Mutex")
+}
+
+fn is_waitgroup_name(text: &str) -> bool {
+    text == "WaitGroup" || text.ends_with(".WaitGroup")
+}
+
+fn confidence_for_identifier(text: &str) -> Confidence {
+    if text.contains('.') {
+        Confidence::Likely
+    } else {
+        Confidence::Predicted
+    }
+}
+
 pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let source = fs::read_file(workspace_root, relative_path)?;
     let tokens = tokenize_identifiers(&source);
@@ -44,12 +60,12 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
             }) {
                 // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
                 existing.confidence = Confidence::Confirmed;
-                if existing.symbol.is_none() || existing.symbol.as_deref() == Some("sync.Mutex") || existing.symbol.as_deref() == Some("sync.WaitGroup") {
+                if existing.symbol.is_none()
+                    || existing.symbol.as_deref() == Some("sync.Mutex")
+                    || existing.symbol.as_deref() == Some("sync.WaitGroup")
+                {
                     existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
                 }
-            } else {
-                // If gopls found something the lexer missed (unlikely but possible), add it.
-                // results.push(gopls_construct);
             }
         }
     }
@@ -75,27 +91,19 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 confidence: Confidence::Predicted,
             }),
-            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+            name if is_mutex_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
-                confidence: if token.text.starts_with("sync.") {
-                    Confidence::Likely
-                } else {
-                    Confidence::Predicted
-                },
+                confidence: confidence_for_identifier(&token.text),
             }),
-            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+            name if is_waitgroup_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.WaitGroup".to_string()),
-                confidence: if token.text.starts_with("sync.") {
-                    Confidence::Likely
-                } else {
-                    Confidence::Predicted
-                },
+                confidence: confidence_for_identifier(&token.text),
             }),
             _ => {}
         }
@@ -329,7 +337,7 @@ mod tests {
 
     #[test]
     fn detects_required_concurrency_constructs() {
-        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v2");
+        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v3");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let file_path = temp_dir.join("sample.go");
@@ -379,11 +387,8 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
         );
 
         // Verify that confidence is Confirmed for Mutex/WaitGroup when gopls is available
-        // (Note: this depends on gopls being in PATH during test)
         for res in &results {
             if res.kind == ConstructKind::Mutex || res.kind == ConstructKind::WaitGroup {
-                // If gopls symbols command worked, confidence should be Confirmed.
-                // We check if symbol name was captured (m, wg).
                 if let Some(ref sym) = res.symbol {
                     if sym == "m" || sym == "wg" {
                         assert_eq!(res.confidence, Confidence::Confirmed);
@@ -391,5 +396,40 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
                 }
             }
         }
+    }
+
+    #[test]
+    fn detects_sync_aliases_from_tokens() {
+        let source = r#"package main
+import s "sync"
+
+func main() {
+    var m s.Mutex
+    var wg s.WaitGroup
+}
+"#;
+
+        let tokens = tokenize_identifiers(source);
+        let constructs = detect_from_tokens(tokens);
+
+        let mutex = constructs.iter().find(|c| c.kind == ConstructKind::Mutex);
+        let waitgroup = constructs
+            .iter()
+            .find(|c| c.kind == ConstructKind::WaitGroup);
+
+        assert!(mutex.is_some(), "expected mutex detection for alias");
+        assert!(
+            matches!(mutex.unwrap().confidence, Confidence::Likely),
+            "qualified alias should be marked as likely"
+        );
+
+        assert!(
+            waitgroup.is_some(),
+            "expected waitgroup detection for alias"
+        );
+        assert!(
+            matches!(waitgroup.unwrap().confidence, Confidence::Likely),
+            "qualified alias should be marked as likely"
+        );
     }
 }
