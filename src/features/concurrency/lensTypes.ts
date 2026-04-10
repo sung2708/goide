@@ -13,6 +13,14 @@ export type LensConstruct = {
   confidence: ConcurrencyConfidence;
 };
 
+export type LensHoverHint = {
+  kind: LensConstructKind;
+  line: number;
+  column: number;
+  symbol: string | null;
+  confidence: ConcurrencyConfidence.Predicted;
+};
+
 export function mapApiConstructToLensConstruct(
   construct: ConcurrencyConstruct
 ): LensConstruct {
