@@ -1,5 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
 import BottomPanel from "../panels/BottomPanel";
@@ -31,6 +32,11 @@ function EditorShell() {
     useState<HTMLElement | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+  useLensSignals({
+    workspacePath,
+    activeFilePath,
+    workspacePathRef,
+  });
 
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {

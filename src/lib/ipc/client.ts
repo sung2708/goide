@@ -1,5 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { ApiResponse, FsEntry } from "./types";
+import type {
+  AnalyzeConcurrencyRequest,
+  ApiResponse,
+  ConcurrencyConstruct,
+  FsEntry,
+} from "./types";
 
 export async function listWorkspaceEntries(
   workspaceRoot: string,
@@ -19,4 +24,15 @@ export async function readWorkspaceFile(
     workspaceRoot,
     relativePath,
   });
+}
+
+export async function analyzeActiveFileConcurrency(
+  request: AnalyzeConcurrencyRequest
+): Promise<ApiResponse<ConcurrencyConstruct[]>> {
+  return invoke<ApiResponse<ConcurrencyConstruct[]>>(
+    "analyze_active_file_concurrency",
+    {
+      request,
+    }
+  );
 }
