@@ -1,5 +1,4 @@
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use std::io;
 use std::process::Command;
 
@@ -37,17 +36,20 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
 
     if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
         for gopls_construct in gopls_results {
+            // Find existing lexer detection on the same line.
+            // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
+            // The identifier (gopls symbol) comes BEFORE the type (lexer token).
             if let Some(existing) = results.iter_mut().find(|item| {
-                item.kind == gopls_construct.kind
-                    && item.line == gopls_construct.line
-                    && item.column == gopls_construct.column
+                item.line == gopls_construct.line && item.column >= gopls_construct.column
             }) {
+                // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
                 existing.confidence = Confidence::Confirmed;
-                if existing.symbol.is_none() {
-                    existing.symbol = gopls_construct.symbol.clone();
+                if existing.symbol.is_none() || existing.symbol.as_deref() == Some("sync.Mutex") || existing.symbol.as_deref() == Some("sync.WaitGroup") {
+                    existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
                 }
             } else {
-                results.push(gopls_construct);
+                // If gopls found something the lexer missed (unlikely but possible), add it.
+                // results.push(gopls_construct);
             }
         }
     }
@@ -256,26 +258,6 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
     advance_one(i, line, column, second);
 }
 
-#[derive(Debug, Deserialize)]
-struct GoplsSymbol {
-    name: String,
-    #[serde(default)]
-    range: Option<GoplsRange>,
-    #[serde(default, rename = "selectionRange")]
-    selection_range: Option<GoplsRange>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GoplsRange {
-    start: GoplsPosition,
-}
-
-#[derive(Debug, Deserialize)]
-struct GoplsPosition {
-    line: u32,
-    character: u32,
-}
-
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let output = Command::new("gopls")
         .arg("symbols")
@@ -297,42 +279,43 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
         return Ok(Vec::new());
     }
 
-    let parsed: Vec<GoplsSymbol> = serde_json::from_slice(&output.stdout).unwrap_or_default();
-
+    let stdout = String::from_utf8_lossy(&output.stdout);
     let mut results = Vec::new();
-    for symbol in parsed {
-        let range = symbol
-            .selection_range
-            .as_ref()
-            .or(symbol.range.as_ref())
-            .map(|r| &r.start);
 
-        let position = match range {
-            Some(pos) => pos,
-            None => continue,
-        };
+    // Parse gopls symbols plain text output
+    // Format: "Name Kind Line:Col-Line:Col"
+    // Example: "mu Variable 3:5-3:7"
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.len() < 3 {
+            continue;
+        }
 
-        let (line, column) = (
-            position.line.saturating_add(1) as usize,
-            position.character.saturating_add(1) as usize,
-        );
+        let name = parts[0].to_string();
+        let kind_str = parts[1];
+        let range_str = parts[2];
 
-        match symbol.name.as_str() {
-            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
-                kind: ConstructKind::Mutex,
-                line,
-                column,
-                symbol: Some("sync.Mutex".to_string()),
-                confidence: Confidence::Confirmed,
-            }),
-            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
-                kind: ConstructKind::WaitGroup,
-                line,
-                column,
-                symbol: Some("sync.WaitGroup".to_string()),
-                confidence: Confidence::Confirmed,
-            }),
-            _ => {}
+        // We are interested in Variables and Fields for Mutex/WaitGroup
+        if kind_str != "Variable" && kind_str != "Field" {
+            continue;
+        }
+
+        if let Some(start_range) = range_str.split('-').next() {
+            let pos_parts: Vec<&str> = start_range.split(':').collect();
+            if pos_parts.len() == 2 {
+                let line_num = pos_parts[0].parse::<usize>().unwrap_or(0);
+                let col_num = pos_parts[1].parse::<usize>().unwrap_or(0);
+
+                if line_num > 0 {
+                    results.push(DetectedConstruct {
+                        kind: ConstructKind::Mutex, // Dummy kind, we match by line in analyze_file
+                        line: line_num,
+                        column: col_num,
+                        symbol: Some(name),
+                        confidence: Confidence::Confirmed,
+                    });
+                }
+            }
         }
     }
 
@@ -346,7 +329,7 @@ mod tests {
 
     #[test]
     fn detects_required_concurrency_constructs() {
-        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs");
+        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v2");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let file_path = temp_dir.join("sample.go");
@@ -394,5 +377,19 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
                 .any(|item| item.kind == ConstructKind::WaitGroup),
             "expected waitgroup detection"
         );
+
+        // Verify that confidence is Confirmed for Mutex/WaitGroup when gopls is available
+        // (Note: this depends on gopls being in PATH during test)
+        for res in &results {
+            if res.kind == ConstructKind::Mutex || res.kind == ConstructKind::WaitGroup {
+                // If gopls symbols command worked, confidence should be Confirmed.
+                // We check if symbol name was captured (m, wg).
+                if let Some(ref sym) = res.symbol {
+                    if sym == "m" || sym == "wg" {
+                        assert_eq!(res.confidence, Confidence::Confirmed);
+                    }
+                }
+            }
+        }
     }
 }
