@@ -43,3 +43,37 @@ pub struct FsEntryDto {
     pub path: String,
     pub is_dir: bool,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum ConcurrencyConfidenceDto {
+    Predicted,
+    Likely,
+    Confirmed,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub enum ConcurrencyConstructKindDto {
+    Channel,
+    Select,
+    Mutex,
+    WaitGroup,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ConcurrencyConstructDto {
+    pub kind: ConcurrencyConstructKindDto,
+    pub line: usize,
+    pub column: usize,
+    pub symbol: Option<String>,
+    pub confidence: ConcurrencyConfidenceDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct AnalyzeConcurrencyRequest {
+    pub workspace_root: String,
+    pub relative_path: String,
+}
