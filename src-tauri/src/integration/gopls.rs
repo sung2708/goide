@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use std::collections::HashSet;
 use std::io;
 use std::process::Command;
 
@@ -28,12 +29,21 @@ pub struct DetectedConstruct {
     pub confidence: Confidence,
 }
 
-fn is_mutex_name(text: &str) -> bool {
-    text == "Mutex" || text.ends_with(".Mutex")
+fn is_mutex_name(text: &str, sync_aliases: &HashSet<String>) -> bool {
+    text == "Mutex" || has_allowed_qualified_suffix(text, "Mutex", sync_aliases)
 }
 
-fn is_waitgroup_name(text: &str) -> bool {
-    text == "WaitGroup" || text.ends_with(".WaitGroup")
+fn is_waitgroup_name(text: &str, sync_aliases: &HashSet<String>) -> bool {
+    text == "WaitGroup" || has_allowed_qualified_suffix(text, "WaitGroup", sync_aliases)
+}
+
+fn has_allowed_qualified_suffix(text: &str, suffix: &str, sync_aliases: &HashSet<String>) -> bool {
+    let (qualifier, found_suffix) = match text.rsplit_once('.') {
+        Some(parts) => parts,
+        None => return false,
+    };
+
+    found_suffix == suffix && sync_aliases.contains(qualifier)
 }
 
 fn confidence_for_identifier(text: &str) -> Confidence {
@@ -47,33 +57,21 @@ fn confidence_for_identifier(text: &str) -> Confidence {
 pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let source = fs::read_file(workspace_root, relative_path)?;
     let tokens = tokenize_identifiers(&source);
+    let sync_aliases = parse_sync_aliases(&source);
 
-    let mut results = detect_from_tokens(tokens);
+    let mut results = detect_from_tokens(tokens, &sync_aliases);
 
     if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
-        for gopls_construct in gopls_results {
-            // Find existing lexer detection on the same line.
-            // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
-            // The identifier (gopls symbol) comes BEFORE the type (lexer token).
-            if let Some(existing) = results.iter_mut().find(|item| {
-                item.line == gopls_construct.line && item.column >= gopls_construct.column
-            }) {
-                // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
-                existing.confidence = Confidence::Confirmed;
-                if existing.symbol.is_none()
-                    || existing.symbol.as_deref() == Some("sync.Mutex")
-                    || existing.symbol.as_deref() == Some("sync.WaitGroup")
-                {
-                    existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
-                }
-            }
-        }
+        merge_gopls_results(&mut results, gopls_results);
     }
 
     Ok(results)
 }
 
-fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
+fn detect_from_tokens(
+    tokens: Vec<WordToken>,
+    sync_aliases: &HashSet<String>,
+) -> Vec<DetectedConstruct> {
     let mut results = Vec::new();
     for token in tokens {
         match token.text.as_str() {
@@ -91,14 +89,14 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 confidence: Confidence::Predicted,
             }),
-            name if is_mutex_name(name) => results.push(DetectedConstruct {
+            name if is_mutex_name(name, sync_aliases) => results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
                 confidence: confidence_for_identifier(&token.text),
             }),
-            name if is_waitgroup_name(name) => results.push(DetectedConstruct {
+            name if is_waitgroup_name(name, sync_aliases) => results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
                 line: token.line,
                 column: token.column,
@@ -110,6 +108,52 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
     }
 
     results
+}
+
+fn parse_sync_aliases(source: &str) -> HashSet<String> {
+    let mut aliases = HashSet::from([String::from("sync")]);
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with("//") {
+            continue;
+        }
+
+        if let Some(import_path_start) = trimmed.find("\"sync\"") {
+            let before = trimmed[..import_path_start].trim();
+            if before == "import" {
+                aliases.insert(String::from("sync"));
+                continue;
+            }
+
+            if let Some(alias) = before.strip_prefix("import ") {
+                let alias = alias.trim();
+                if !alias.is_empty() && alias != "_" && alias != "." {
+                    aliases.insert(alias.to_string());
+                }
+            }
+        }
+    }
+
+    aliases
+}
+
+fn merge_gopls_results(results: &mut [DetectedConstruct], gopls_results: Vec<DetectedConstruct>) {
+    for gopls_construct in gopls_results {
+        if let Some(existing) = results
+            .iter_mut()
+            .filter(|item| {
+                item.line == gopls_construct.line
+                    && item.column >= gopls_construct.column
+                    && item.kind != ConstructKind::Channel
+                    && item.kind != ConstructKind::Select
+            })
+            .min_by_key(|item| item.column.saturating_sub(gopls_construct.column))
+        {
+            existing.confidence = Confidence::Confirmed;
+            existing.symbol = gopls_construct.symbol.clone();
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -410,7 +454,8 @@ func main() {
 "#;
 
         let tokens = tokenize_identifiers(source);
-        let constructs = detect_from_tokens(tokens);
+        let aliases = parse_sync_aliases(source);
+        let constructs = detect_from_tokens(tokens, &aliases);
 
         let mutex = constructs.iter().find(|c| c.kind == ConstructKind::Mutex);
         let waitgroup = constructs
@@ -431,5 +476,67 @@ func main() {
             matches!(waitgroup.unwrap().confidence, Confidence::Likely),
             "qualified alias should be marked as likely"
         );
+    }
+
+    #[test]
+    fn does_not_detect_non_sync_qualified_mutex_or_waitgroup() {
+        let source = r#"package main
+import "custom"
+
+func main() {
+    var m custom.Mutex
+    var wg custom.WaitGroup
+}
+"#;
+
+        let tokens = tokenize_identifiers(source);
+        let aliases = parse_sync_aliases(source);
+        let constructs = detect_from_tokens(tokens, &aliases);
+
+        assert!(
+            !constructs.iter().any(|c| c.kind == ConstructKind::Mutex),
+            "custom.Mutex must not be treated as sync.Mutex"
+        );
+        assert!(
+            !constructs
+                .iter()
+                .any(|c| c.kind == ConstructKind::WaitGroup),
+            "custom.WaitGroup must not be treated as sync.WaitGroup"
+        );
+    }
+
+    #[test]
+    fn merge_gopls_results_only_confirms_mutex_and_waitgroup() {
+        let mut results = vec![
+            DetectedConstruct {
+                kind: ConstructKind::Channel,
+                line: 5,
+                column: 16,
+                symbol: None,
+                confidence: Confidence::Predicted,
+            },
+            DetectedConstruct {
+                kind: ConstructKind::WaitGroup,
+                line: 5,
+                column: 30,
+                symbol: Some("sync.WaitGroup".to_string()),
+                confidence: Confidence::Likely,
+            },
+        ];
+
+        let gopls_results = vec![DetectedConstruct {
+            kind: ConstructKind::Mutex,
+            line: 5,
+            column: 10,
+            symbol: Some("wg".to_string()),
+            confidence: Confidence::Confirmed,
+        }];
+
+        merge_gopls_results(&mut results, gopls_results);
+
+        assert_eq!(results[0].confidence, Confidence::Predicted);
+        assert_eq!(results[0].symbol, None);
+        assert_eq!(results[1].confidence, Confidence::Confirmed);
+        assert_eq!(results[1].symbol.as_deref(), Some("wg"));
     }
 }
