@@ -13,6 +13,22 @@ pub enum ConstructKind {
     WaitGroup,
 }
 
+fn is_mutex_name(text: &str) -> bool {
+    text == "Mutex" || text.ends_with(".Mutex")
+}
+
+fn is_waitgroup_name(text: &str) -> bool {
+    text == "WaitGroup" || text.ends_with(".WaitGroup")
+}
+
+fn confidence_for_identifier(text: &str) -> Confidence {
+    if text.contains('.') {
+        Confidence::Likely
+    } else {
+        Confidence::Predicted
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confidence {
     Predicted,
@@ -73,27 +89,19 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 confidence: Confidence::Predicted,
             }),
-            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+            name if is_mutex_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
-                confidence: if token.text.starts_with("sync.") {
-                    Confidence::Likely
-                } else {
-                    Confidence::Predicted
-                },
+                confidence: confidence_for_identifier(&token.text),
             }),
-            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+            name if is_waitgroup_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.WaitGroup".to_string()),
-                confidence: if token.text.starts_with("sync.") {
-                    Confidence::Likely
-                } else {
-                    Confidence::Predicted
-                },
+                confidence: confidence_for_identifier(&token.text),
             }),
             _ => {}
         }
@@ -297,10 +305,25 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
         return Ok(Vec::new());
     }
 
-    let parsed: Vec<GoplsSymbol> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+    Ok(parse_gopls_symbols_output(&output.stdout))
+}
 
+fn parse_gopls_symbols_output(output: &[u8]) -> Vec<DetectedConstruct> {
+    if let Ok(parsed_json) = serde_json::from_slice::<Vec<GoplsSymbol>>(output) {
+        let mapped = map_gopls_json_symbols(parsed_json);
+        if !mapped.is_empty() {
+            return mapped;
+        }
+    }
+
+    let plaintext = String::from_utf8_lossy(output);
+    parse_gopls_plaintext_symbols(&plaintext)
+}
+
+fn map_gopls_json_symbols(symbols: Vec<GoplsSymbol>) -> Vec<DetectedConstruct> {
     let mut results = Vec::new();
-    for symbol in parsed {
+
+    for symbol in symbols {
         let range = symbol
             .selection_range
             .as_ref()
@@ -317,26 +340,89 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
             position.character.saturating_add(1) as usize,
         );
 
-        match symbol.name.as_str() {
-            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+        if is_mutex_name(&symbol.name) {
+            results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
                 line,
                 column,
                 symbol: Some("sync.Mutex".to_string()),
                 confidence: Confidence::Confirmed,
-            }),
-            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+            });
+        } else if is_waitgroup_name(&symbol.name) {
+            results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
                 line,
                 column,
                 symbol: Some("sync.WaitGroup".to_string()),
                 confidence: Confidence::Confirmed,
-            }),
-            _ => {}
+            });
         }
     }
 
-    Ok(results)
+    results
+}
+
+fn parse_gopls_plaintext_symbols(output: &str) -> Vec<DetectedConstruct> {
+    output
+        .lines()
+        .filter_map(parse_plaintext_symbol_line)
+        .collect()
+}
+
+fn parse_plaintext_symbol_line(line: &str) -> Option<DetectedConstruct> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.splitn(3, ':');
+    parts.next()?; // path
+    let line_part = parts.next()?;
+    let rest = parts.next()?;
+
+    let line = line_part.parse::<usize>().ok()?;
+
+    let mut column_and_rest = rest.splitn(2, ':');
+    let column_part = column_and_rest.next().unwrap_or_default();
+    let trailing = column_and_rest.next().unwrap_or_default();
+
+    let column_str = column_part
+        .split(|c| c == '-' || c == ' ')
+        .next()
+        .unwrap_or_default();
+    let column = column_str.parse::<usize>().ok()?;
+
+    let symbol_segment = if let Some((_, after_end_col)) = trailing.split_once(':') {
+        after_end_col
+    } else {
+        trailing
+    };
+
+    for raw in symbol_segment.split_whitespace() {
+        let token = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.');
+
+        if is_mutex_name(token) {
+            return Some(DetectedConstruct {
+                kind: ConstructKind::Mutex,
+                line,
+                column,
+                symbol: Some("sync.Mutex".to_string()),
+                confidence: Confidence::Confirmed,
+            });
+        }
+
+        if is_waitgroup_name(token) {
+            return Some(DetectedConstruct {
+                kind: ConstructKind::WaitGroup,
+                line,
+                column,
+                symbol: Some("sync.WaitGroup".to_string()),
+                confidence: Confidence::Confirmed,
+            });
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -394,5 +480,71 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
                 .any(|item| item.kind == ConstructKind::WaitGroup),
             "expected waitgroup detection"
         );
+    }
+
+    #[test]
+    fn detects_sync_aliases_from_tokens() {
+        let source = r#"package main
+import s "sync"
+
+func main() {
+    var m s.Mutex
+    var wg s.WaitGroup
+}
+"#;
+
+        let tokens = tokenize_identifiers(source);
+        let constructs = detect_from_tokens(tokens);
+
+        let mutex = constructs.iter().find(|c| c.kind == ConstructKind::Mutex);
+        let waitgroup = constructs
+            .iter()
+            .find(|c| c.kind == ConstructKind::WaitGroup);
+
+        assert!(mutex.is_some(), "expected mutex detection for alias");
+        assert!(
+            matches!(mutex.unwrap().confidence, Confidence::Likely),
+            "qualified alias should be marked as likely"
+        );
+
+        assert!(
+            waitgroup.is_some(),
+            "expected waitgroup detection for alias"
+        );
+        assert!(
+            matches!(waitgroup.unwrap().confidence, Confidence::Likely),
+            "qualified alias should be marked as likely"
+        );
+    }
+
+    #[test]
+    fn parses_plaintext_gopls_symbols_output() {
+        let output = r#"
+main.go:5:2-5:14: var wg *sync.WaitGroup
+main.go:6:2-6:10: var m s.Mutex
+"#;
+
+        let constructs = parse_gopls_symbols_output(output.as_bytes());
+
+        let mutex = constructs.iter().find(|c| c.kind == ConstructKind::Mutex);
+        let waitgroup = constructs
+            .iter()
+            .find(|c| c.kind == ConstructKind::WaitGroup);
+
+        assert!(mutex.is_some(), "expected mutex from plaintext symbols");
+        assert_eq!(mutex.unwrap().line, 6);
+        assert_eq!(mutex.unwrap().column, 2);
+        assert!(matches!(mutex.unwrap().confidence, Confidence::Confirmed));
+
+        assert!(
+            waitgroup.is_some(),
+            "expected waitgroup from plaintext symbols"
+        );
+        assert_eq!(waitgroup.unwrap().line, 5);
+        assert_eq!(waitgroup.unwrap().column, 2);
+        assert!(matches!(
+            waitgroup.unwrap().confidence,
+            Confidence::Confirmed
+        ));
     }
 }
