@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn detects_required_concurrency_constructs() {
-        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v7");
+        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v9");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let file_path = temp_dir.join("sample.go");
