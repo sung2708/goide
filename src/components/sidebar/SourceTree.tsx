@@ -148,13 +148,15 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
                 onOpenFile(entry.path);
               }
             }}
-            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition ${
-              isActive ? "bg-[#313244] text-[#f5e0dc]" : "text-[#cdd6f4]"
-            } hover:bg-[#2b2f3a]`}
+            className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-xs transition-all duration-200 ${
+              isActive
+                ? "bg-[var(--mocha-surface0)] text-[var(--mocha-rosewater)] shadow-sm"
+                : "text-[var(--mocha-text)] hover:bg-[var(--mocha-surface0)]/40 hover:text-white"
+            }`}
             style={{ paddingLeft: padding }}
           >
-            <span className="text-[11px] text-[#9399b2]">
-              {entry.isDir ? (isExpanded ? "▾" : "▸") : "•"}
+            <span className="text-[11px] text-[var(--mocha-overlay0)]">
+              {entry.isDir ? (isExpanded ? "▼" : "▶") : "•"}
             </span>
             <span className="truncate">{entry.name}</span>
           </button>
@@ -170,7 +172,7 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
               )}
               {state?.entries.map((child) => renderEntry(child, depth + 1))}
               {state && !state.loading && state.entries.length === 0 && !state.error && (
-                <div className="px-6 py-2 text-[11px] text-[#6c7086]">Empty folder</div>
+                <div className="px-6 py-2 text-[11px] text-[var(--mocha-overlay0)]">Empty folder</div>
               )}
             </div>
           )}
@@ -195,11 +197,13 @@ function SourceTree({ workspacePath, activeFilePath, onOpenFile }: SourceTreePro
 
   return (
     <div className="flex h-full flex-col">
-      <div className="border-b border-[#313244] px-4 py-3">
-        <p className="text-[11px] uppercase tracking-[0.16em] text-[#a6adc8]">
+      <div className="premium-border-b px-4 py-3 bg-[var(--mocha-crust)]/30">
+        <p className="text-[11px] uppercase tracking-[0.2em] font-semibold text-[var(--mocha-subtext0)]">
           Source Tree
         </p>
-        <p className="mt-2 text-xs text-[#cdd6f4]">{headerMeta}</p>
+        <p className="mt-1.5 text-[10px] uppercase tracking-[0.1em] text-[var(--mocha-overlay1)] font-medium">
+          {headerMeta}
+        </p>
       </div>
       {!workspacePath && (
         <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-xs text-[#9399b2]">

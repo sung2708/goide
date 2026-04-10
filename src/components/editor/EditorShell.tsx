@@ -13,10 +13,10 @@ import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
 import CodeEditor from "./CodeEditor";
 
-const EDITOR_BG = "bg-[#1e1e2e]";
-const PANEL_BG = "bg-[#181825]";
-const BORDER = "border-[#313244]";
-const TEXT_MUTED = "text-[#a6adc8]";
+const EDITOR_BG = "bg-[var(--mocha-base)]";
+const PANEL_BG = "glass-panel";
+const BORDER = "premium-border";
+const TEXT_MUTED = "text-[var(--mocha-subtext0)]";
 
 function EditorShell() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -193,11 +193,11 @@ function EditorShell() {
 
   return (
     <div
-      className={`relative flex h-full w-full flex-col ${EDITOR_BG} text-[#cdd6f4]`}
+      className={`relative flex h-full w-full flex-col ${EDITOR_BG} text-[var(--mocha-text)] grainy`}
     >
       <div className="flex flex-1 overflow-hidden">
         <aside
-          className={`flex min-w-[220px] basis-[22%] flex-col border-r ${BORDER} ${PANEL_BG}`}
+          className={`flex min-w-[220px] basis-[22%] flex-col premium-border-r ${PANEL_BG}`}
         >
           <SourceTree
             workspacePath={workspacePath}
@@ -210,14 +210,14 @@ function EditorShell() {
           <div className="flex min-h-0 flex-1 overflow-hidden">
             <section className="flex min-w-0 flex-1 flex-col">
               <header
-                className={`flex items-center justify-between border-b ${BORDER} px-4 py-2 text-[11px] uppercase tracking-[0.18em] ${TEXT_MUTED}`}
+                className={`flex items-center justify-between premium-border-b px-4 py-2 text-[11px] uppercase tracking-[0.18em] ${TEXT_MUTED} ${PANEL_BG}`}
               >
                 <span>{editorTitle}</span>
                 <button
-                  className={`rounded border ${BORDER} px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
+                  className={`rounded border border-[var(--mocha-surface0)] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--mocha-text)] transition ${
                     isOpening
                       ? "cursor-not-allowed opacity-60"
-                      : "hover:border-[#45475a] hover:text-white"
+                      : "hover:border-[var(--mocha-surface1)] hover:bg-[var(--mocha-surface0)]/50 hover:text-white"
                   }`}
                   onClick={handleOpenWorkspace}
                   type="button"
@@ -229,19 +229,19 @@ function EditorShell() {
 
               <div className="flex flex-1 flex-col p-6">
                 {!workspacePath && (
-                  <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6 text-center">
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
+                  <div className="max-w-xl rounded border border-[var(--mocha-surface1)] bg-[var(--mocha-mantle)]/40 p-6 text-center backdrop-blur-sm">
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--mocha-subtext0)]">
                       No Workspace Open
                     </p>
-                    <p className="mt-3 text-sm text-[#cdd6f4]">
+                    <p className="mt-3 text-sm text-[var(--mocha-text)]">
                       Choose a folder to start. The shell is ready and will remain
                       instant.
                     </p>
                     <button
-                      className={`mt-5 rounded border ${BORDER} px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
+                      className={`mt-5 rounded border border-[var(--mocha-surface1)] px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[var(--mocha-text)] transition ${
                         isOpening
                           ? "cursor-not-allowed opacity-60"
-                          : "hover:border-[#45475a] hover:text-white"
+                          : "hover:border-[var(--mocha-surface2)] hover:bg-[var(--mocha-surface0)]/50 hover:text-white"
                       }`}
                       onClick={handleOpenWorkspace}
                       type="button"
@@ -249,17 +249,17 @@ function EditorShell() {
                     >
                       {isOpening ? "Opening..." : "Open Workspace"}
                     </button>
-                    <p className="mt-3 text-xs text-[#9399b2]">
+                    <p className="mt-3 text-xs text-[var(--mocha-overlay2)]">
                       Canceling keeps this empty state visible so you can retry.
                     </p>
                   </div>
                 )}
                 {workspacePath && !activeFilePath && (
-                  <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6">
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
+                  <div className="max-w-xl rounded border border-[var(--mocha-surface1)] bg-[var(--mocha-mantle)]/40 p-6 backdrop-blur-sm">
+                    <p className="text-xs uppercase tracking-[0.16em] text-[var(--mocha-subtext0)]">
                       Workspace Loaded
                     </p>
-                    <p className="mt-3 text-sm text-[#cdd6f4]">
+                    <p className="mt-3 text-sm text-[var(--mocha-text)]">
                       Select a file from the source tree to view its contents.
                     </p>
                   </div>
@@ -275,8 +275,8 @@ function EditorShell() {
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[#313244] bg-[#11111b]">
-                      <div className="border-b border-[#313244] px-3 py-2 text-xs text-[#cdd6f4]">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[var(--mocha-surface1)] bg-[var(--mocha-crust)] shadow-2xl shadow-black/50">
+                      <div className="border-b border-[var(--mocha-surface0)] px-3 py-2 text-xs text-[var(--mocha-text)] bg-[var(--mocha-mantle)]/50">
                         {activeFilePath}
                       </div>
                       <div className="relative flex-1 min-h-0">

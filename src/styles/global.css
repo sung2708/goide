@@ -1,34 +1,133 @@
 @import "tailwindcss";
 
 :root {
-  font-family: "Geist", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  /* Font Families */
+  --font-sans: "Geist", "Inter", "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  
+  /* Catppuccin Mocha Palette */
+  --mocha-base: #1e1e2e;
+  --mocha-mantle: #181825;
+  --mocha-crust: #11111b;
+  --mocha-text: #cdd6f4;
+  --mocha-subtext1: #bac2de;
+  --mocha-subtext0: #a6adc8;
+  --mocha-overlay2: #9399b2;
+  --mocha-overlay1: #7f849c;
+  --mocha-overlay0: #6c7086;
+  --mocha-surface2: #585b70;
+  --mocha-surface1: #45475a;
+  --mocha-surface0: #313244;
+  
+  --mocha-blue: #89b4fa;
+  --mocha-lavender: #b4befe;
+  --mocha-sapphire: #74c7ec;
+  --mocha-sky: #89dceb;
+  --mocha-teal: #94e2d5;
+  --mocha-green: #a6e3a1;
+  --mocha-yellow: #f9e2af;
+  --mocha-peach: #fab387;
+  --mocha-maroon: #eba0ac;
+  --mocha-red: #f38ba8;
+  --mocha-mauve: #cba6f7;
+  --mocha-pink: #f5c2e7;
+  --mocha-flamingo: #f2cdcd;
+  --mocha-rosewater: #f5e0dc;
+
+  /* App Specific Tokens */
+  --goide-signal-predicted: var(--mocha-subtext0);
+  --goide-signal-predicted-bg: color-mix(in srgb, var(--mocha-subtext0), transparent 84%);
+  --goide-signal-likely: var(--mocha-blue);
+  --goide-signal-likely-bg: color-mix(in srgb, var(--mocha-blue), transparent 84%);
+  --goide-signal-confirmed: var(--mocha-green);
+  --goide-signal-confirmed-bg: color-mix(in srgb, var(--mocha-green), transparent 84%);
+  --goide-signal-blocked: var(--mocha-red);
+  --goide-signal-warning: var(--mocha-yellow);
+  --goide-border-muted: var(--mocha-surface0);
+  
+  --app-bg: var(--mocha-base);
+  --panel-bg: color-mix(in srgb, var(--mocha-mantle), transparent 20%);
+  --panel-blur: 12px;
+  
+  font-family: var(--font-sans);
   font-size: 13px;
-  --goide-signal-predicted: #a6adc8; /* Mocha Subtext0 */
-  --goide-signal-predicted-bg: rgb(166 173 200 / 0.16);
-  --goide-signal-likely: #89b4fa;    /* Mocha Blue */
-  --goide-signal-likely-bg: rgb(137 180 250 / 0.16);
-  --goide-signal-confirmed: #a6e3a1; /* Mocha Green */
-  --goide-signal-confirmed-bg: rgb(166 227 161 / 0.16);
-  --goide-signal-blocked: #f38ba8;   /* Mocha Red */
-  --goide-signal-warning: #f9e2af;   /* Mocha Yellow */
-  --goide-border-muted: #313244;    /* Mocha Surface0 */
+  color-scheme: dark;
 }
 
-code,
-pre,
-.font-code {
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace,
-    monospace;
+@theme {
+  --color-mocha-base: var(--mocha-base);
+  --color-mocha-mantle: var(--mocha-mantle);
+  --color-mocha-crust: var(--mocha-crust);
+  --color-mocha-text: var(--mocha-text);
+  --color-mocha-blue: var(--mocha-blue);
+  --color-mocha-surface0: var(--mocha-surface0);
+  --color-mocha-surface1: var(--mocha-surface1);
+  --color-mocha-surface2: var(--mocha-surface2);
 }
 
-html,
-body,
-#root {
+html, body, #root {
   height: 100%;
   margin: 0;
+  background-color: var(--mocha-base);
+  color: var(--mocha-text);
+  overflow: hidden;
 }
 
-body {
-  background-color: #1e1e2e;
-  color: #cdd6f4;
+code, pre, .font-code {
+  font-family: var(--font-mono);
+}
+
+/* Glassmorphism Utilities */
+.glass-panel {
+  background-color: var(--panel-bg);
+  backdrop-filter: blur(var(--panel-blur));
+  -webkit-backdrop-filter: blur(var(--panel-blur));
+}
+
+.premium-border {
+  border: 1px solid color-mix(in srgb, var(--mocha-surface1), transparent 50%);
+}
+
+.premium-border-b {
+  border-bottom: 1px solid color-mix(in srgb, var(--mocha-surface1), transparent 50%);
+}
+
+.premium-border-r {
+  border-right: 1px solid color-mix(in srgb, var(--mocha-surface1), transparent 50%);
+}
+
+/* Noise Texture Overlay */
+.grainy {
+  position: relative;
+}
+
+.grainy::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  opacity: 0.035;
+  z-index: 50;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--mocha-surface0);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--mocha-surface1);
 }
