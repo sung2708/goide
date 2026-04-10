@@ -249,7 +249,7 @@ function EditorShell() {
                       <div className="border-b border-[#313244] px-3 py-2 text-xs text-[#cdd6f4]">
                         {activeFilePath}
                       </div>
-                      <div className="flex-1 min-h-0">
+                      <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={activeHint} />
                         {activeFileContent !== null ? (
                           <CodeEditor
