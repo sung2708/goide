@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use serde::Deserialize;
 use std::collections::HashSet;
 use std::io;
 use std::process::Command;
@@ -56,12 +57,12 @@ fn confidence_for_identifier(text: &str) -> Confidence {
 
 pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let source = fs::read_file(workspace_root, relative_path)?;
-    let tokens = tokenize_identifiers(&source);
     let sync_aliases = parse_sync_aliases(&source);
+    let tokens = tokenize_identifiers(&source);
 
     let mut results = detect_from_tokens(tokens, &sync_aliases);
 
-    if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
+    if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path, &sync_aliases) {
         merge_gopls_results(&mut results, gopls_results);
     }
 
@@ -151,7 +152,15 @@ fn merge_gopls_results(results: &mut [DetectedConstruct], gopls_results: Vec<Det
             .min_by_key(|item| item.column.saturating_sub(gopls_construct.column))
         {
             existing.confidence = Confidence::Confirmed;
-            existing.symbol = gopls_construct.symbol.clone();
+            if gopls_construct.symbol.is_some()
+                && (existing.symbol.is_none()
+                    || matches!(
+                        existing.symbol.as_deref(),
+                        Some("sync.Mutex") | Some("sync.WaitGroup")
+                    ))
+            {
+                existing.symbol = gopls_construct.symbol.clone();
+            }
         }
     }
 }
@@ -310,7 +319,31 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
     advance_one(i, line, column, second);
 }
 
-fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
+#[derive(Debug, Deserialize)]
+struct GoplsSymbol {
+    name: String,
+    #[serde(default)]
+    range: Option<GoplsRange>,
+    #[serde(default, rename = "selectionRange")]
+    selection_range: Option<GoplsRange>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoplsRange {
+    start: GoplsPosition,
+}
+
+#[derive(Debug, Deserialize)]
+struct GoplsPosition {
+    line: u32,
+    character: u32,
+}
+
+fn analyze_with_gopls(
+    workspace_root: &str,
+    relative_path: &str,
+    sync_aliases: &HashSet<String>,
+) -> Result<Vec<DetectedConstruct>> {
     let output = Command::new("gopls")
         .arg("symbols")
         .arg(relative_path)
@@ -331,47 +364,150 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
         return Ok(Vec::new());
     }
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut results = Vec::new();
+    Ok(parse_gopls_symbols_output(&output.stdout, sync_aliases))
+}
 
-    // Parse gopls symbols plain text output
-    // Format: "Name Kind Line:Col-Line:Col"
-    // Example: "mu Variable 3:5-3:7"
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let name = parts[0].to_string();
-        let kind_str = parts[1];
-        let range_str = parts[2];
-
-        // We are interested in Variables and Fields for Mutex/WaitGroup
-        if kind_str != "Variable" && kind_str != "Field" {
-            continue;
-        }
-
-        if let Some(start_range) = range_str.split('-').next() {
-            let pos_parts: Vec<&str> = start_range.split(':').collect();
-            if pos_parts.len() == 2 {
-                let line_num = pos_parts[0].parse::<usize>().unwrap_or(0);
-                let col_num = pos_parts[1].parse::<usize>().unwrap_or(0);
-
-                if line_num > 0 {
-                    results.push(DetectedConstruct {
-                        kind: ConstructKind::Mutex, // Dummy kind, we match by line in analyze_file
-                        line: line_num,
-                        column: col_num,
-                        symbol: Some(name),
-                        confidence: Confidence::Confirmed,
-                    });
-                }
-            }
+fn parse_gopls_symbols_output(
+    output: &[u8],
+    sync_aliases: &HashSet<String>,
+) -> Vec<DetectedConstruct> {
+    if let Ok(parsed_json) = serde_json::from_slice::<Vec<GoplsSymbol>>(output) {
+        let mapped = map_gopls_json_symbols(parsed_json, sync_aliases);
+        if !mapped.is_empty() {
+            return mapped;
         }
     }
 
-    Ok(results)
+    let plaintext = String::from_utf8_lossy(output);
+    parse_gopls_plaintext_symbols(&plaintext, sync_aliases)
+}
+
+fn map_gopls_json_symbols(
+    symbols: Vec<GoplsSymbol>,
+    sync_aliases: &HashSet<String>,
+) -> Vec<DetectedConstruct> {
+    let mut results = Vec::new();
+
+    for symbol in symbols {
+        let range = symbol
+            .selection_range
+            .as_ref()
+            .or(symbol.range.as_ref())
+            .map(|r| &r.start);
+
+        let position = match range {
+            Some(pos) => pos,
+            None => continue,
+        };
+
+        let (line, column) = (
+            position.line.saturating_add(1) as usize,
+            position.character.saturating_add(1) as usize,
+        );
+
+        if is_mutex_name(&symbol.name, sync_aliases) || is_waitgroup_name(&symbol.name, sync_aliases)
+        {
+            let kind = if is_mutex_name(&symbol.name, sync_aliases) {
+                ConstructKind::Mutex
+            } else {
+                ConstructKind::WaitGroup
+            };
+
+            results.push(DetectedConstruct {
+                kind,
+                line,
+                column,
+                symbol: Some(symbol.name.clone()),
+                confidence: Confidence::Confirmed,
+            });
+        }
+    }
+
+    results
+}
+
+fn parse_gopls_plaintext_symbols(
+    output: &str,
+    sync_aliases: &HashSet<String>,
+) -> Vec<DetectedConstruct> {
+    output
+        .lines()
+        .filter_map(|line| parse_plaintext_symbol_line(line, sync_aliases))
+        .collect()
+}
+
+fn parse_plaintext_symbol_line(
+    line: &str,
+    sync_aliases: &HashSet<String>,
+) -> Option<DetectedConstruct> {
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut parts = trimmed.splitn(3, ':');
+    parts.next()?; // path
+    let line_part = parts.next()?;
+    let rest = parts.next()?;
+
+    let line = line_part.parse::<usize>().ok()?;
+
+    let mut column_and_rest = rest.splitn(2, ':');
+    let column_part = column_and_rest.next().unwrap_or_default();
+    let trailing = column_and_rest.next().unwrap_or_default();
+
+    let column_str = column_part
+        .split(|c| c == '-' || c == ' ')
+        .next()
+        .unwrap_or_default();
+    let column = column_str.parse::<usize>().ok()?;
+
+    let symbol_segment = if let Some((_, after_end_col)) = trailing.split_once(':') {
+        after_end_col
+    } else {
+        trailing
+    };
+
+    let mut fields = symbol_segment.split_whitespace();
+    let mut identifier = fields.next().unwrap_or_default();
+    if identifier == "var" || identifier == "const" || identifier == "field" {
+        identifier = fields.next().unwrap_or_default();
+    }
+    let identifier = identifier.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_');
+
+    for raw in fields {
+        let token = raw.trim_matches(|c: char| !c.is_ascii_alphanumeric() && c != '_' && c != '.');
+
+        if is_mutex_name(token, sync_aliases) {
+            return Some(DetectedConstruct {
+                kind: ConstructKind::Mutex,
+                line,
+                column,
+                symbol: if identifier.is_empty() {
+                    None
+                } else {
+                    Some(identifier.to_string())
+                },
+                confidence: Confidence::Confirmed,
+            });
+        }
+
+        if is_waitgroup_name(token, sync_aliases) {
+            return Some(DetectedConstruct {
+                kind: ConstructKind::WaitGroup,
+                line,
+                column,
+                symbol: if identifier.is_empty() {
+                    None
+                } else {
+                    Some(identifier.to_string())
+                },
+                confidence: Confidence::Confirmed,
+            });
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
@@ -429,17 +565,6 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
                 .any(|item| item.kind == ConstructKind::WaitGroup),
             "expected waitgroup detection"
         );
-
-        // Verify that confidence is Confirmed for Mutex/WaitGroup when gopls is available
-        for res in &results {
-            if res.kind == ConstructKind::Mutex || res.kind == ConstructKind::WaitGroup {
-                if let Some(ref sym) = res.symbol {
-                    if sym == "m" || sym == "wg" {
-                        assert_eq!(res.confidence, Confidence::Confirmed);
-                    }
-                }
-            }
-        }
     }
 
     #[test]
@@ -538,5 +663,39 @@ func main() {
         assert_eq!(results[0].symbol, None);
         assert_eq!(results[1].confidence, Confidence::Confirmed);
         assert_eq!(results[1].symbol.as_deref(), Some("wg"));
+    }
+
+    #[test]
+    fn parses_plaintext_gopls_symbols_output() {
+        let output = r#"
+main.go:5:2-5:14: var wg *sync.WaitGroup
+main.go:6:2-6:10: var m s.Mutex
+"#;
+
+        let aliases = HashSet::from([String::from("sync"), String::from("s")]);
+        let constructs = parse_gopls_symbols_output(output.as_bytes(), &aliases);
+
+        let mutex = constructs.iter().find(|c| c.kind == ConstructKind::Mutex);
+        let waitgroup = constructs
+            .iter()
+            .find(|c| c.kind == ConstructKind::WaitGroup);
+
+        assert!(mutex.is_some(), "expected mutex from plaintext symbols");
+        assert_eq!(mutex.unwrap().line, 6);
+        assert_eq!(mutex.unwrap().column, 2);
+        assert_eq!(mutex.unwrap().symbol.as_deref(), Some("m"));
+        assert!(matches!(mutex.unwrap().confidence, Confidence::Confirmed));
+
+        assert!(
+            waitgroup.is_some(),
+            "expected waitgroup from plaintext symbols"
+        );
+        assert_eq!(waitgroup.unwrap().line, 5);
+        assert_eq!(waitgroup.unwrap().column, 2);
+        assert_eq!(waitgroup.unwrap().symbol.as_deref(), Some("wg"));
+        assert!(matches!(
+            waitgroup.unwrap().confidence,
+            Confidence::Confirmed
+        ));
     }
 }
