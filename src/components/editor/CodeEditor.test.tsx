@@ -32,6 +32,10 @@ const mockView = {
   domAtPos: (pos: number) => ({
     node: pos < 20 ? mockLine1 : mockLine2,
   }),
+  coordsAtPos: (pos: number) =>
+    pos < 20
+      ? { left: 16, right: 28, top: 12, bottom: 24 }
+      : { left: 16, right: 28, top: 44, bottom: 56 },
 };
 
 vi.mock("@uiw/react-codemirror", () => ({
@@ -58,6 +62,71 @@ describe("CodeEditor", () => {
     expect(hoverSpy).toHaveBeenNthCalledWith(1, 1);
     expect(hoverSpy).toHaveBeenNthCalledWith(2, 2);
     expect(hoverSpy).toHaveBeenNthCalledWith(3, null);
+  });
+
+  it("emits selected line on editor click", () => {
+    const selectionSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onSelectionLineChange={selectionSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+
+    expect(selectionSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("resets dedupe state on file identity change so same line can be selected again", () => {
+    const selectionSpy = vi.fn();
+    const { container, rerender } = render(
+      <CodeEditor
+        value={"package same\nfunc same() {}\n"}
+        selectionContextKey="a.go"
+        onSelectionLineChange={selectionSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(selectionSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <CodeEditor
+        value={"package same\nfunc same() {}\n"}
+        selectionContextKey="b.go"
+        onSelectionLineChange={selectionSpy}
+      />
+    );
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(selectionSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("emits interaction anchor and clears selection on blur outside", () => {
+    const selectionSpy = vi.fn();
+    const anchorSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onSelectionLineChange={selectionSpy}
+        onInteractionAnchorChange={anchorSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(anchorSpy).toHaveBeenCalledWith(expect.objectContaining({ top: 44 }));
+
+    fireEvent.mouseLeave(editorContainer);
+    expect(anchorSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ top: 44 })
+    );
+
+    fireEvent.blur(editorContainer, { relatedTarget: document.body });
+    expect(selectionSpy).toHaveBeenCalledWith(null);
+    expect(anchorSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("adds and removes predicted underline class for active hint line", () => {
