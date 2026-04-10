@@ -1,30 +1,57 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import HintUnderline from "./HintUnderline";
+import type { LensHoverHint } from "../../features/concurrency/lensTypes";
 
 describe("HintUnderline", () => {
-  it("renders nothing when there is no active hint", () => {
-    render(<HintUnderline hint={null} />);
-    expect(screen.queryByTestId("hint-underline-state")).toBeNull();
+  it("renders the confidence label when a hint is present", () => {
+    const mockHint: LensHoverHint = {
+      line: 10,
+      confidence: "Predicted",
+    } as any;
+
+    render(<HintUnderline hint={mockHint} />);
+
+    const label = screen.getByTestId("hint-confidence-label");
+    expect(label).toBeInTheDocument();
+    expect(label).toHaveTextContent(/⚡/);
+    expect(label).toHaveTextContent(/Predicted/i);
   });
 
-  it("renders accessibility state when a predicted hint is active", () => {
-    render(
-      <HintUnderline
-        hint={{
-          kind: "channel",
-          line: 12,
-          column: 2,
-          symbol: null,
-          confidence: ConcurrencyConfidence.Predicted,
-        }}
-      />
-    );
+  it("renders different icons for different confidence levels", () => {
+    const confirmedHint: LensHoverHint = {
+      line: 10,
+      confidence: "Confirmed",
+    } as any;
 
-    expect(screen.getByTestId("hint-underline-state")).toHaveTextContent(
-      "Predicted hint active on line 12"
-    );
+    const { rerender } = render(<HintUnderline hint={confirmedHint} />);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(/✅/);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(/Confirmed/i);
+
+    const likelyHint: LensHoverHint = {
+      line: 10,
+      confidence: "Likely",
+    } as any;
+
+    rerender(<HintUnderline hint={likelyHint} />);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(/🔍/);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(/Likely/i);
+  });
+
+  it("returns null when no hint is provided", () => {
+    const { container } = render(<HintUnderline hint={null} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("includes confidence level in screen reader announcement", () => {
+    const mockHint: LensHoverHint = {
+      line: 10,
+      confidence: "Predicted",
+    } as any;
+
+    render(<HintUnderline hint={mockHint} />);
+
+    const srState = screen.getByTestId("hint-underline-state");
+    expect(srState).toHaveTextContent(/Confidence: Predicted/i);
   });
 });
-
