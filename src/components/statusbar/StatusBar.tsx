@@ -1,20 +1,32 @@
 type StatusBarProps = {
   workspacePath: string | null;
   activeFilePath: string | null;
+  mode: "quick-insight" | "deep-trace";
+  runtimeAvailability: "available" | "unavailable";
   isSummaryOpen: boolean;
   isBottomPanelOpen: boolean;
+  isCommandPaletteOpen: boolean;
   onToggleSummary: () => void;
   onToggleBottomPanel: () => void;
+  onToggleCommandPalette: () => void;
 };
 
 function StatusBar({
   workspacePath,
   activeFilePath,
+  mode,
+  runtimeAvailability,
   isSummaryOpen,
   isBottomPanelOpen,
+  isCommandPaletteOpen,
   onToggleSummary,
   onToggleBottomPanel,
+  onToggleCommandPalette,
 }: StatusBarProps) {
+  const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
+  const runtimeLabel =
+    runtimeAvailability === "available" ? "Available" : "Unavailable";
+
   return (
     <div className="flex h-8 items-center justify-between border-t border-[#313244] bg-[#11111b] px-4 text-[11px] text-[#a6adc8]">
       <div className="flex items-center gap-3">
@@ -32,6 +44,24 @@ function StatusBar({
         </span>
       </div>
       <div className="flex items-center gap-3">
+        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
+          Mode: {modeLabel}
+        </span>
+        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
+          Runtime: {runtimeLabel}
+        </span>
+        <button
+          type="button"
+          className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={onToggleCommandPalette}
+          aria-expanded={isCommandPaletteOpen}
+          aria-controls="command-palette"
+          aria-label="Toggle command palette"
+          aria-keyshortcuts="Control+K Meta+K"
+        >
+          Command Palette
+        </button>
         <button
           type="button"
           className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
