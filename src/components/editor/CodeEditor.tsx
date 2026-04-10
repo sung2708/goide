@@ -7,10 +7,17 @@ import {
 import type { EditorView } from "@codemirror/view";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 
+type InteractionAnchor = {
+  top: number;
+  left: number;
+};
+
 type CodeEditorProps = {
   value: string;
   hintLine?: number | null;
   onHoverLineChange?: (line: number | null) => void;
+  onSelectionLineChange?: (line: number | null) => void;
+  onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
 };
 
@@ -18,13 +25,17 @@ function CodeEditor({
   value,
   hintLine = null,
   onHoverLineChange,
+  onSelectionLineChange,
+  onInteractionAnchorChange,
   onViewportRangeChange,
 }: CodeEditorProps) {
   const extensions = useMemo(() => goideEditorExtensions, []);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
+  const selectedLineRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
 
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
@@ -82,8 +93,48 @@ function CodeEditor({
     }
   }, [hintLine, value]);
 
+  const emitSelectionLine = (line: number | null) => {
+    if (!onSelectionLineChange) {
+      return;
+    }
+
+    if (selectedLineRef.current === line) {
+      return;
+    }
+
+    selectedLineRef.current = line;
+    onSelectionLineChange(line);
+  };
+
+  const emitInteractionAnchor = (line: number | null) => {
+    if (!onInteractionAnchorChange) {
+      return;
+    }
+
+    const view = viewRef.current;
+    const container = containerRef.current;
+    if (!view || !container || line === null || line < 1 || line > view.state.doc.lines) {
+      onInteractionAnchorChange(null);
+      return;
+    }
+
+    const from = view.state.doc.line(line).from;
+    const coords = view.coordsAtPos(from);
+    if (!coords) {
+      onInteractionAnchorChange(null);
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    onInteractionAnchorChange({
+      top: Math.max(8, Math.round(coords.top - rect.top)),
+      left: Math.max(8, Math.round(coords.left - rect.left + 16)),
+    });
+  };
+
   return (
     <div
+      ref={containerRef}
       className="h-full w-full"
       onMouseMove={(event) => {
         const view = viewRef.current;
@@ -106,11 +157,44 @@ function CodeEditor({
         if (nextLine !== hoveredLineRef.current) {
           hoveredLineRef.current = nextLine;
           onHoverLineChange(nextLine);
+          emitInteractionAnchor(nextLine);
         }
       }}
       onMouseLeave={() => {
         hoveredLineRef.current = null;
         onHoverLineChange?.(null);
+        emitInteractionAnchor(null);
+      }}
+      onBlurCapture={(event) => {
+        const nextFocused = event.relatedTarget as Node | null;
+        if (!event.currentTarget.contains(nextFocused)) {
+          emitSelectionLine(null);
+        }
+      }}
+      onMouseDown={(event) => {
+        const view = viewRef.current;
+        if (!view) {
+          return;
+        }
+
+        const pos = view.posAtCoords({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
+        emitSelectionLine(nextLine);
+        emitInteractionAnchor(nextLine);
+      }}
+      onKeyUp={() => {
+        const view = viewRef.current;
+        if (!view || !("selection" in view.state)) {
+          return;
+        }
+
+        const head = view.state.selection.main.head;
+        const nextLine = view.state.doc.lineAt(head).number;
+        emitSelectionLine(nextLine);
+        emitInteractionAnchor(nextLine);
       }}
     >
       <CodeMirror

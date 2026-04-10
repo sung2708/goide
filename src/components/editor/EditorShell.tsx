@@ -6,6 +6,7 @@ import { useHoverHint } from "../../hooks/useHoverHint";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
+import InlineActions from "../overlays/InlineActions";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
@@ -34,6 +35,11 @@ function EditorShell() {
   const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
     useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
+  const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  const [interactionAnchor, setInteractionAnchor] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const { detectedConstructs } = useLensSignals({
@@ -41,13 +47,18 @@ function EditorShell() {
     activeFilePath,
     workspacePathRef,
   });
-  const { activeHint, activeHintLine, setHoveredLine } = useHoverHint({
+  const { hoveredLine, activeHint, activeHintLine, setHoveredLine } = useHoverHint({
     workspacePath,
     activeFilePath,
     runtimeAvailability,
+    selectedLine,
     visibleRange,
     detectedConstructs,
   });
+
+  const isInlineActionsVisible =
+    activeHint !== null &&
+    (hoveredLine !== null || selectedLine === activeHintLine);
 
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {
@@ -109,6 +120,8 @@ function EditorShell() {
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
+        setSelectedLine(null);
+        setInteractionAnchor(null);
         setFileError(null);
       }
     } catch (error) {
@@ -127,6 +140,8 @@ function EditorShell() {
       const startingPath = workspacePath;
       setIsReading(true);
       setFileError(null);
+      setSelectedLine(null);
+      setInteractionAnchor(null);
 
       try {
         const response = await readWorkspaceFile(workspacePath, relativePath);
@@ -255,11 +270,20 @@ function EditorShell() {
                       </div>
                       <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={activeHint} />
+                        <InlineActions
+                          visible={isInlineActionsVisible}
+                          runtimeAvailability={runtimeAvailability}
+                          hasCounterpart={activeHint !== null}
+                          anchorTop={interactionAnchor?.top ?? null}
+                          anchorLeft={interactionAnchor?.left ?? null}
+                        />
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
                             hintLine={activeHintLine}
                             onHoverLineChange={setHoveredLine}
+                            onSelectionLineChange={setSelectedLine}
+                            onInteractionAnchorChange={setInteractionAnchor}
                             onViewportRangeChange={setVisibleRange}
                           />
                         ) : (

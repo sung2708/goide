@@ -121,5 +121,21 @@ describe("useHoverHint", () => {
       ConcurrencyConfidence.Predicted
     );
   });
+
+  it("supports keyboard/selection reveal when no hover line is active", () => {
+    const { result } = renderHook(() =>
+      useHoverHint({
+        workspacePath: "C:/repo",
+        activeFilePath: "main.go",
+        runtimeAvailability: "unavailable",
+        selectedLine: 9,
+        visibleRange: { fromLine: 1, toLine: 20 },
+        detectedConstructs: [makeConstruct(9, ConcurrencyConfidence.Predicted)],
+      })
+    );
+
+    expect(result.current.activeHint?.line).toBe(9);
+    expect(result.current.activeHintLine).toBe(9);
+  });
 });
 
