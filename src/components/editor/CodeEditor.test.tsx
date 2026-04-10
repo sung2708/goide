@@ -79,6 +79,29 @@ describe("CodeEditor", () => {
     expect(selectionSpy).toHaveBeenCalledWith(2);
   });
 
+  it("resets dedupe state on value change so same line can be selected again", () => {
+    const selectionSpy = vi.fn();
+    const { container, rerender } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onSelectionLineChange={selectionSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(selectionSpy).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <CodeEditor
+        value={"package next\nfunc next() {}\n"}
+        onSelectionLineChange={selectionSpy}
+      />
+    );
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(selectionSpy).toHaveBeenCalledTimes(2);
+  });
+
   it("emits interaction anchor and clears selection on blur outside", () => {
     const selectionSpy = vi.fn();
     const anchorSpy = vi.fn();
@@ -94,8 +117,14 @@ describe("CodeEditor", () => {
     fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
     expect(anchorSpy).toHaveBeenCalledWith(expect.objectContaining({ top: 44 }));
 
+    fireEvent.mouseLeave(editorContainer);
+    expect(anchorSpy).toHaveBeenLastCalledWith(
+      expect.objectContaining({ top: 44 })
+    );
+
     fireEvent.blur(editorContainer, { relatedTarget: document.body });
     expect(selectionSpy).toHaveBeenCalledWith(null);
+    expect(anchorSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("adds and removes predicted underline class for active hint line", () => {

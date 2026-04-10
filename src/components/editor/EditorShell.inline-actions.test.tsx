@@ -108,5 +108,6 @@ describe("EditorShell inline actions", () => {
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
     expect(screen.getByTestId("inline-actions")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /jump/i })).toBeDisabled();
   });
 });

@@ -273,7 +273,7 @@ function EditorShell() {
                         <InlineActions
                           visible={isInlineActionsVisible}
                           runtimeAvailability={runtimeAvailability}
-                          hasCounterpart={activeHint !== null}
+                          hasCounterpart={false}
                           anchorTop={interactionAnchor?.top ?? null}
                           anchorLeft={interactionAnchor?.left ?? null}
                         />

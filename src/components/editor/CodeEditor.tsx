@@ -93,6 +93,11 @@ function CodeEditor({
     }
   }, [hintLine, value]);
 
+  useEffect(() => {
+    // New file/content context should not inherit previous-line dedupe state.
+    selectedLineRef.current = null;
+  }, [value]);
+
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {
       return;
@@ -163,12 +168,13 @@ function CodeEditor({
       onMouseLeave={() => {
         hoveredLineRef.current = null;
         onHoverLineChange?.(null);
-        emitInteractionAnchor(null);
+        emitInteractionAnchor(selectedLineRef.current);
       }}
       onBlurCapture={(event) => {
         const nextFocused = event.relatedTarget as Node | null;
         if (!event.currentTarget.contains(nextFocused)) {
           emitSelectionLine(null);
+          emitInteractionAnchor(null);
         }
       }}
       onMouseDown={(event) => {
