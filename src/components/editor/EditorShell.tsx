@@ -33,9 +33,12 @@ function EditorShell() {
   workspacePathRef.current = workspacePath;
 
   const openCommandPalette = useCallback(() => {
+    if (isCommandPaletteOpen) {
+      return;
+    }
     setPaletteReturnFocusEl(document.activeElement as HTMLElement | null);
     setIsCommandPaletteOpen(true);
-  }, []);
+  }, [isCommandPaletteOpen]);
 
   const closeCommandPalette = useCallback(() => {
     setIsCommandPaletteOpen(false);
@@ -46,18 +49,13 @@ function EditorShell() {
 
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
-      const isInputFocused =
-        document.activeElement?.tagName === "INPUT" ||
-        document.activeElement?.tagName === "TEXTAREA" ||
-        (document.activeElement as HTMLElement | null)?.isContentEditable;
-
-      if (
+      const isCommandPaletteShortcut =
         event.key.toLowerCase() === "k" &&
         (event.ctrlKey || event.metaKey) &&
         !event.shiftKey &&
-        !event.altKey &&
-        !isInputFocused
-      ) {
+        !event.altKey;
+
+      if (isCommandPaletteShortcut) {
         event.preventDefault();
         openCommandPalette();
       }
