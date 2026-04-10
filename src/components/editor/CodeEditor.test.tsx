@@ -9,6 +9,10 @@ const mockLine2 = document.createElement("div");
 mockLine2.className = "cm-line";
 
 const mockView = {
+  viewport: {
+    from: 1,
+    to: 40,
+  },
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
       return 5;
@@ -71,6 +75,29 @@ describe("CodeEditor", () => {
     expect(mockLine2.classList.contains(PREDICTED_HINT_UNDERLINE_CLASS)).toBe(
       false
     );
+  });
+
+  it("emits viewport range changes only when viewport changes", () => {
+    const viewportSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onViewportRangeChange={viewportSpy}
+      />
+    );
+
+    expect(viewportSpy).toHaveBeenCalledTimes(1);
+    expect(viewportSpy).toHaveBeenNthCalledWith(1, { fromLine: 1, toLine: 2 });
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 20 });
+    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 60 });
+    expect(viewportSpy).toHaveBeenCalledTimes(1);
+
+    mockView.viewport = { from: 20, to: 70 };
+    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 60 });
+    expect(viewportSpy).toHaveBeenCalledTimes(2);
+    expect(viewportSpy).toHaveBeenNthCalledWith(2, { fromLine: 2, toLine: 2 });
   });
 });
 
