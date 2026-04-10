@@ -79,11 +79,12 @@ describe("CodeEditor", () => {
     expect(selectionSpy).toHaveBeenCalledWith(2);
   });
 
-  it("resets dedupe state on value change so same line can be selected again", () => {
+  it("resets dedupe state on file identity change so same line can be selected again", () => {
     const selectionSpy = vi.fn();
     const { container, rerender } = render(
       <CodeEditor
-        value={"package main\nfunc main() {}\n"}
+        value={"package same\nfunc same() {}\n"}
+        selectionContextKey="a.go"
         onSelectionLineChange={selectionSpy}
       />
     );
@@ -94,7 +95,8 @@ describe("CodeEditor", () => {
 
     rerender(
       <CodeEditor
-        value={"package next\nfunc next() {}\n"}
+        value={"package same\nfunc same() {}\n"}
+        selectionContextKey="b.go"
         onSelectionLineChange={selectionSpy}
       />
     );

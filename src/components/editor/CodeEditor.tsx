@@ -14,6 +14,7 @@ type InteractionAnchor = {
 
 type CodeEditorProps = {
   value: string;
+  selectionContextKey?: string | null;
   hintLine?: number | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
@@ -23,6 +24,7 @@ type CodeEditorProps = {
 
 function CodeEditor({
   value,
+  selectionContextKey = null,
   hintLine = null,
   onHoverLineChange,
   onSelectionLineChange,
@@ -96,7 +98,7 @@ function CodeEditor({
   useEffect(() => {
     // New file/content context should not inherit previous-line dedupe state.
     selectedLineRef.current = null;
-  }, [value]);
+  }, [selectionContextKey, value]);
 
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {

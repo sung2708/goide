@@ -60,6 +60,17 @@ function EditorShell() {
     activeHint !== null &&
     (hoveredLine !== null || selectedLine === activeHintLine);
 
+  const hasCounterpart = useMemo(() => {
+    if (!activeHint?.symbol) {
+      return false;
+    }
+
+    return detectedConstructs.some(
+      (construct) =>
+        construct.symbol === activeHint.symbol && construct.line !== activeHint.line
+    );
+  }, [activeHint, detectedConstructs]);
+
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {
       return;
@@ -273,13 +284,14 @@ function EditorShell() {
                         <InlineActions
                           visible={isInlineActionsVisible}
                           runtimeAvailability={runtimeAvailability}
-                          hasCounterpart={false}
+                          hasCounterpart={hasCounterpart}
                           anchorTop={interactionAnchor?.top ?? null}
                           anchorLeft={interactionAnchor?.left ?? null}
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
+                            selectionContextKey={activeFilePath}
                             hintLine={activeHintLine}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
