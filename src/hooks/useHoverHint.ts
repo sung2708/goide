@@ -9,6 +9,7 @@ import {
 type UseHoverHintArgs = {
   workspacePath: string | null;
   activeFilePath: string | null;
+  runtimeAvailability: "available" | "unavailable";
   visibleRange?: VisibleLineRange | null;
   detectedConstructs: LensConstruct[];
 };
@@ -23,6 +24,7 @@ type UseHoverHintResult = {
 export function useHoverHint({
   workspacePath,
   activeFilePath,
+  runtimeAvailability,
   visibleRange = null,
   detectedConstructs,
 }: UseHoverHintArgs): UseHoverHintResult {
@@ -46,6 +48,12 @@ export function useHoverHint({
       return null;
     }
 
+    // Explicitly consume runtime availability so degraded-mode fallback is part
+    // of the hint pipeline contract even when only predicted hints are present.
+    if (runtimeAvailability !== "available" && runtimeAvailability !== "unavailable") {
+      return null;
+    }
+
     const match = visiblePredictedConstructs.find(
       (construct) =>
         construct.line === hoveredLine &&
@@ -62,7 +70,13 @@ export function useHoverHint({
       symbol: match.symbol,
       confidence: ConcurrencyConfidence.Predicted,
     };
-  }, [activeFilePath, hoveredLine, visiblePredictedConstructs, workspacePath]);
+  }, [
+    activeFilePath,
+    hoveredLine,
+    runtimeAvailability,
+    visiblePredictedConstructs,
+    workspacePath,
+  ]);
 
   return {
     hoveredLine,
