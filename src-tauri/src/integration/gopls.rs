@@ -13,6 +13,7 @@ pub enum ConstructKind {
     WaitGroup,
 }
 
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
 fn is_mutex_name(text: &str) -> bool {
     text == "Mutex" || text.ends_with(".Mutex")
 }
@@ -29,6 +30,8 @@ fn confidence_for_identifier(text: &str) -> Confidence {
     }
 }
 
+=======
+>>>>>>> develop
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Confidence {
     Predicted,
@@ -89,19 +92,41 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 confidence: Confidence::Predicted,
             }),
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
             name if is_mutex_name(name) => results.push(DetectedConstruct {
+=======
+            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+>>>>>>> develop
                 kind: ConstructKind::Mutex,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
                 confidence: confidence_for_identifier(&token.text),
             }),
             name if is_waitgroup_name(name) => results.push(DetectedConstruct {
+=======
+                confidence: if token.text.starts_with("sync.") {
+                    Confidence::Likely
+                } else {
+                    Confidence::Predicted
+                },
+            }),
+            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+>>>>>>> develop
                 kind: ConstructKind::WaitGroup,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.WaitGroup".to_string()),
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
                 confidence: confidence_for_identifier(&token.text),
+=======
+                confidence: if token.text.starts_with("sync.") {
+                    Confidence::Likely
+                } else {
+                    Confidence::Predicted
+                },
+>>>>>>> develop
             }),
             _ => {}
         }
@@ -305,6 +330,7 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
         return Ok(Vec::new());
     }
 
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
     Ok(parse_gopls_symbols_output(&output.stdout))
 }
 
@@ -324,6 +350,12 @@ fn map_gopls_json_symbols(symbols: Vec<GoplsSymbol>) -> Vec<DetectedConstruct> {
     let mut results = Vec::new();
 
     for symbol in symbols {
+=======
+    let parsed: Vec<GoplsSymbol> = serde_json::from_slice(&output.stdout).unwrap_or_default();
+
+    let mut results = Vec::new();
+    for symbol in parsed {
+>>>>>>> develop
         let range = symbol
             .selection_range
             .as_ref()
@@ -340,6 +372,7 @@ fn map_gopls_json_symbols(symbols: Vec<GoplsSymbol>) -> Vec<DetectedConstruct> {
             position.character.saturating_add(1) as usize,
         );
 
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
         if is_mutex_name(&symbol.name) {
             results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
@@ -403,26 +436,44 @@ fn parse_plaintext_symbol_line(line: &str) -> Option<DetectedConstruct> {
 
         if is_mutex_name(token) {
             return Some(DetectedConstruct {
+=======
+        match symbol.name.as_str() {
+            "Mutex" | "sync.Mutex" => results.push(DetectedConstruct {
+>>>>>>> develop
                 kind: ConstructKind::Mutex,
                 line,
                 column,
                 symbol: Some("sync.Mutex".to_string()),
                 confidence: Confidence::Confirmed,
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
             });
         }
 
         if is_waitgroup_name(token) {
             return Some(DetectedConstruct {
+=======
+            }),
+            "WaitGroup" | "sync.WaitGroup" => results.push(DetectedConstruct {
+>>>>>>> develop
                 kind: ConstructKind::WaitGroup,
                 line,
                 column,
                 symbol: Some("sync.WaitGroup".to_string()),
                 confidence: Confidence::Confirmed,
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
             });
         }
     }
 
     None
+=======
+            }),
+            _ => {}
+        }
+    }
+
+    Ok(results)
+>>>>>>> develop
 }
 
 #[cfg(test)]
@@ -481,6 +532,7 @@ func worker(ch chan int, wg *sync.WaitGroup, m *sync.Mutex) {
             "expected waitgroup detection"
         );
     }
+<<<<<<< feat/2-1-static-concurrency-detection-gopls
 
     #[test]
     fn detects_sync_aliases_from_tokens() {
@@ -547,4 +599,6 @@ main.go:6:2-6:10: var m s.Mutex
             Confidence::Confirmed
         ));
     }
+=======
+>>>>>>> develop
 }
