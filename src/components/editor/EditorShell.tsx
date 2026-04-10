@@ -1,8 +1,10 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
+import { useHoverHint } from "../../hooks/useHoverHint";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
+import HintUnderline from "../overlays/HintUnderline";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
@@ -32,10 +34,15 @@ function EditorShell() {
     useState<HTMLElement | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
-  useLensSignals({
+  const { detectedConstructs } = useLensSignals({
     workspacePath,
     activeFilePath,
     workspacePathRef,
+  });
+  const { activeHint, activeHintLine, setHoveredLine } = useHoverHint({
+    workspacePath,
+    activeFilePath,
+    detectedConstructs,
   });
 
   const openCommandPalette = useCallback(() => {
@@ -243,8 +250,13 @@ function EditorShell() {
                         {activeFilePath}
                       </div>
                       <div className="flex-1 min-h-0">
+                        <HintUnderline hint={activeHint} />
                         {activeFileContent !== null ? (
-                          <CodeEditor value={activeFileContent} />
+                          <CodeEditor
+                            value={activeFileContent}
+                            hintLine={activeHintLine}
+                            onHoverLineChange={setHoveredLine}
+                          />
                         ) : (
                           <div className="px-4 py-3">
                             <p className="text-xs text-[#9399b2]">

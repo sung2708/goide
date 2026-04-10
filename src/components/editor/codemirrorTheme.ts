@@ -23,6 +23,13 @@ const editorTheme = EditorView.theme(
     ".cm-line": {
       padding: "0 12px",
     },
+    ".cm-line.goide-predicted-hint-underline": {
+      textDecorationLine: "underline",
+      textDecorationStyle: "dotted",
+      textDecorationColor: "#6c7086",
+      textDecorationThickness: "1px",
+      textUnderlineOffset: "3px",
+    },
     ".cm-gutters": {
       backgroundColor: "#11111b",
       color: "#6c7086",
