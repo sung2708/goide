@@ -122,4 +122,56 @@ describe("useLensSignals", () => {
       expect(result.current.detectedConstructs[0]?.kind).toBe("select");
     });
   });
+
+  it("clears constructs when analysis fails after switching to a different file", async () => {
+    const analyzeMock = vi.mocked(analyzeActiveFileConcurrency);
+    analyzeMock.mockResolvedValueOnce({
+      ok: true,
+      data: [
+        {
+          kind: "channel",
+          line: 9,
+          column: 1,
+          symbol: "ch",
+          confidence: ConcurrencyConfidence.Predicted,
+        },
+      ],
+    });
+    analyzeMock.mockResolvedValueOnce({
+      ok: false,
+      error: { code: "analysis_failed", message: "analysis failed" },
+    });
+
+    const { result, rerender } = renderHook(
+      ({ workspacePath, activeFilePath }) => {
+        const workspacePathRef = useWorkspaceRef(workspacePath);
+        return useLensSignals({
+          workspacePath,
+          activeFilePath,
+          workspacePathRef,
+        });
+      },
+      {
+        initialProps: {
+          workspacePath: "C:/repo",
+          activeFilePath: "a.go",
+        },
+      }
+    );
+
+    await waitFor(() => {
+      expect(result.current.detectedConstructs).toHaveLength(1);
+      expect(result.current.detectedConstructs[0]?.line).toBe(9);
+    });
+
+    rerender({
+      workspacePath: "C:/repo",
+      activeFilePath: "b.go",
+    });
+
+    await waitFor(() => {
+      expect(result.current.analysisError).toBe("analysis failed");
+      expect(result.current.detectedConstructs).toHaveLength(0);
+    });
+  });
 });
