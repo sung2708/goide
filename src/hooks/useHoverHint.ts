@@ -10,6 +10,7 @@ type UseHoverHintArgs = {
   workspacePath: string | null;
   activeFilePath: string | null;
   runtimeAvailability: "available" | "unavailable";
+  selectedLine?: number | null;
   visibleRange?: VisibleLineRange | null;
   detectedConstructs: LensConstruct[];
 };
@@ -25,6 +26,7 @@ export function useHoverHint({
   workspacePath,
   activeFilePath,
   runtimeAvailability,
+  selectedLine = null,
   visibleRange = null,
   detectedConstructs,
 }: UseHoverHintArgs): UseHoverHintResult {
@@ -43,8 +45,10 @@ export function useHoverHint({
     [detectedConstructs, visibleRange]
   );
 
+  const interactionLine = hoveredLine ?? selectedLine;
+
   const activeHint = useMemo<LensHoverHint | null>(() => {
-    if (!workspacePath || !activeFilePath || hoveredLine === null) {
+    if (!workspacePath || !activeFilePath || interactionLine === null) {
       return null;
     }
 
@@ -56,7 +60,7 @@ export function useHoverHint({
 
     const match = visiblePredictedConstructs.find(
       (construct) =>
-        construct.line === hoveredLine &&
+        construct.line === interactionLine &&
         construct.confidence === ConcurrencyConfidence.Predicted
     );
     if (!match) {
@@ -72,7 +76,7 @@ export function useHoverHint({
     };
   }, [
     activeFilePath,
-    hoveredLine,
+    interactionLine,
     runtimeAvailability,
     visiblePredictedConstructs,
     workspacePath,
