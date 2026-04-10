@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { goideEditorExtensions } from "./codemirrorTheme";
+import {
+  goideEditorExtensions,
+  PREDICTED_HINT_UNDERLINE_CLASS,
+} from "./codemirrorTheme";
 import type { EditorView } from "@codemirror/view";
 
 type CodeEditorProps = {
@@ -40,13 +43,15 @@ function CodeEditor({
     const previousLine = highlightedLineRef.current;
     if (previousLine !== null) {
       getLineElement(view, previousLine)?.classList.remove(
-        "goide-predicted-hint-underline"
+        PREDICTED_HINT_UNDERLINE_CLASS
       );
       highlightedLineRef.current = null;
     }
 
     if (hintLine !== null) {
-      getLineElement(view, hintLine)?.classList.add("goide-predicted-hint-underline");
+      getLineElement(view, hintLine)?.classList.add(
+        PREDICTED_HINT_UNDERLINE_CLASS
+      );
       highlightedLineRef.current = hintLine;
     }
   }, [hintLine, value]);

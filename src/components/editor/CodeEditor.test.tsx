@@ -1,6 +1,7 @@
 import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import CodeEditor from "./CodeEditor";
+import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
 
 const mockLine1 = document.createElement("div");
 mockLine1.className = "cm-line";
@@ -62,10 +63,14 @@ describe("CodeEditor", () => {
     const { rerender } = render(
       <CodeEditor value={"package main\nfunc main() {}\n"} hintLine={2} />
     );
-    expect(mockLine2.classList.contains("goide-predicted-hint-underline")).toBe(true);
+    expect(mockLine2.classList.contains(PREDICTED_HINT_UNDERLINE_CLASS)).toBe(
+      true
+    );
 
     rerender(<CodeEditor value={"package main\nfunc main() {}\n"} hintLine={null} />);
-    expect(mockLine2.classList.contains("goide-predicted-hint-underline")).toBe(false);
+    expect(mockLine2.classList.contains(PREDICTED_HINT_UNDERLINE_CLASS)).toBe(
+      false
+    );
   });
 });
 

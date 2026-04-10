@@ -1,30 +1,52 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import HintUnderline from "./HintUnderline";
+import type { LensHoverHint } from "../../features/concurrency/lensTypes";
+
+function makeHint(confidence: LensHoverHint["confidence"]): LensHoverHint {
+  return {
+    kind: "channel",
+    line: 10,
+    column: 1,
+    symbol: null,
+    confidence,
+  };
+}
 
 describe("HintUnderline", () => {
-  it("renders nothing when there is no active hint", () => {
-    render(<HintUnderline hint={null} />);
-    expect(screen.queryByTestId("hint-underline-state")).toBeNull();
+  it("renders the confidence label when a hint is present", () => {
+    render(<HintUnderline hint={makeHint("predicted")} />);
+
+    const label = screen.getByTestId("hint-confidence-label");
+    expect(label).toBeInTheDocument();
+    expect(label).toHaveTextContent(/Predicted/i);
+    expect(label).toHaveStyle({
+      backgroundColor: "var(--goide-signal-predicted-bg)",
+    });
+    expect(label.className).not.toContain("bg-opacity-10");
   });
 
-  it("renders accessibility state when a predicted hint is active", () => {
-    render(
-      <HintUnderline
-        hint={{
-          kind: "channel",
-          line: 12,
-          column: 2,
-          symbol: null,
-          confidence: ConcurrencyConfidence.Predicted,
-        }}
-      />
+  it("renders different labels for different confidence levels", () => {
+    const { rerender } = render(<HintUnderline hint={makeHint("confirmed")} />);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(
+      /Confirmed/i
     );
 
-    expect(screen.getByTestId("hint-underline-state")).toHaveTextContent(
-      "Predicted hint active on line 12"
+    rerender(<HintUnderline hint={makeHint("likely")} />);
+    expect(screen.getByTestId("hint-confidence-label")).toHaveTextContent(
+      /Likely/i
     );
+  });
+
+  it("returns null when no hint is provided", () => {
+    const { container } = render(<HintUnderline hint={null} />);
+    expect(container.firstChild).toBeNull();
+  });
+
+  it("includes confidence level in screen reader announcement", () => {
+    render(<HintUnderline hint={makeHint("predicted")} />);
+
+    const srState = screen.getByTestId("hint-underline-state");
+    expect(srState).toHaveTextContent(/Confidence: Predicted/i);
   });
 });
-

@@ -4,6 +4,9 @@ import { go } from "@codemirror/lang-go";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
+export const PREDICTED_HINT_UNDERLINE_CLASS = "goide-predicted-hint-underline";
+export const GOIDE_SIGNAL_PREDICTED_TOKEN = "var(--goide-signal-predicted)";
+
 const editorTheme = EditorView.theme(
   {
     "&": {
@@ -23,10 +26,10 @@ const editorTheme = EditorView.theme(
     ".cm-line": {
       padding: "0 12px",
     },
-    ".cm-line.goide-predicted-hint-underline": {
+    [`.cm-line.${PREDICTED_HINT_UNDERLINE_CLASS}`]: {
       textDecorationLine: "underline",
       textDecorationStyle: "dotted",
-      textDecorationColor: "#6c7086",
+      textDecorationColor: GOIDE_SIGNAL_PREDICTED_TOKEN,
       textDecorationThickness: "1px",
       textUnderlineOffset: "3px",
     },
