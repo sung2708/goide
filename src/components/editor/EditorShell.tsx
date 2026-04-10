@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { readWorkspaceFile } from "../../lib/ipc/client";
+import CommandPalette from "../command-palette/CommandPalette";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
@@ -21,8 +22,53 @@ function EditorShell() {
   const [isReading, setIsReading] = useState(false);
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [mode] = useState<"quick-insight" | "deep-trace">("quick-insight");
+  const [runtimeAvailability] = useState<"available" | "unavailable">(
+    "unavailable"
+  );
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
+    useState<HTMLElement | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+
+  const openCommandPalette = useCallback(() => {
+    if (isCommandPaletteOpen) {
+      return;
+    }
+    setPaletteReturnFocusEl(document.activeElement as HTMLElement | null);
+    setIsCommandPaletteOpen(true);
+  }, [isCommandPaletteOpen]);
+
+  const closeCommandPalette = useCallback(() => {
+    setIsCommandPaletteOpen(false);
+    if (paletteReturnFocusEl instanceof HTMLElement) {
+      requestAnimationFrame(() => paletteReturnFocusEl.focus());
+    }
+  }, [paletteReturnFocusEl]);
+
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const isCommandPaletteShortcut =
+        event.key.toLowerCase() === "k" &&
+        (event.ctrlKey || event.metaKey) &&
+        !event.shiftKey &&
+        !event.altKey;
+
+      if (isCommandPaletteShortcut) {
+        event.preventDefault();
+        openCommandPalette();
+      }
+
+      if (event.key === "Escape" && isCommandPaletteOpen) {
+        event.preventDefault();
+        closeCommandPalette();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [closeCommandPalette, isCommandPaletteOpen, openCommandPalette]);
 
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
@@ -103,7 +149,9 @@ function EditorShell() {
   }, [activeFilePath]);
 
   return (
-    <div className={`flex h-full w-full flex-col ${EDITOR_BG} text-[#cdd6f4]`}>
+    <div
+      className={`relative flex h-full w-full flex-col ${EDITOR_BG} text-[#cdd6f4]`}
+    >
       <div className="flex flex-1 overflow-hidden">
         <aside
           className={`flex min-w-[220px] basis-[22%] flex-col border-r ${BORDER} ${PANEL_BG}`}
@@ -221,11 +269,19 @@ function EditorShell() {
       <StatusBar
         workspacePath={workspacePath}
         activeFilePath={activeFilePath}
+        mode={mode}
+        runtimeAvailability={runtimeAvailability}
         isSummaryOpen={isSummaryOpen}
         isBottomPanelOpen={isBottomPanelOpen}
+        isCommandPaletteOpen={isCommandPaletteOpen}
+        onToggleCommandPalette={() =>
+          isCommandPaletteOpen ? closeCommandPalette() : openCommandPalette()
+        }
         onToggleSummary={() => setIsSummaryOpen((prev) => !prev)}
         onToggleBottomPanel={() => setIsBottomPanelOpen((prev) => !prev)}
       />
+
+      {isCommandPaletteOpen && <CommandPalette onClose={closeCommandPalette} />}
     </div>
   );
 }
