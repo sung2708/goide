@@ -37,7 +37,8 @@ function StatusBar({
           className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
           onMouseDown={(event) => event.preventDefault()}
           onClick={onToggleSummary}
-          aria-pressed={isSummaryOpen}
+          aria-expanded={isSummaryOpen}
+          aria-controls="summary-panel"
           aria-label="Toggle summary panel"
         >
           Summary
@@ -47,7 +48,8 @@ function StatusBar({
           className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
           onMouseDown={(event) => event.preventDefault()}
           onClick={onToggleBottomPanel}
-          aria-pressed={isBottomPanelOpen}
+          aria-expanded={isBottomPanelOpen}
+          aria-controls="bottom-panel"
           aria-label="Toggle bottom panel"
         >
           Bottom

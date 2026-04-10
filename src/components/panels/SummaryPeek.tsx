@@ -5,6 +5,7 @@ type SummaryPeekProps = {
 function SummaryPeek({ onClose }: SummaryPeekProps) {
   return (
     <aside
+      id="summary-panel"
       aria-label="Summary panel"
       className="flex h-full w-[260px] max-w-[320px] flex-col border-l border-[#313244] bg-[#181825]"
       data-testid="summary-panel"

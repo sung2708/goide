@@ -16,16 +16,26 @@ describe("EditorShell panels", () => {
     expect(screen.queryByTestId("summary-panel")).toBeNull();
     expect(screen.queryByTestId("bottom-panel")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /summary/i }));
+    const summaryBtn = screen.getByRole("button", { name: /summary/i });
+    const bottomBtn = screen.getByRole("button", { name: /bottom/i });
+
+    expect(summaryBtn).toHaveAttribute("aria-expanded", "false");
+    expect(bottomBtn).toHaveAttribute("aria-expanded", "false");
+
+    await user.click(summaryBtn);
+    expect(summaryBtn).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("summary-panel")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /bottom/i }));
+    await user.click(bottomBtn);
+    expect(bottomBtn).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /close/i }));
+    expect(summaryBtn).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /hide/i }));
+    expect(bottomBtn).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByTestId("bottom-panel")).toBeNull();
   });
 });

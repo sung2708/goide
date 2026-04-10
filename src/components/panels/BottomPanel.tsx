@@ -5,6 +5,7 @@ type BottomPanelProps = {
 function BottomPanel({ onClose }: BottomPanelProps) {
   return (
     <section
+      id="bottom-panel"
       aria-label="Bottom panel"
       className="border-t border-[#313244] bg-[#181825]"
       data-testid="bottom-panel"
