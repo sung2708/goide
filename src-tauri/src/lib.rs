@@ -15,7 +15,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             greet,
             ui_bridge::commands::list_workspace_entries,
-            ui_bridge::commands::read_workspace_file
+            ui_bridge::commands::read_workspace_file,
+            ui_bridge::commands::analyze_active_file_concurrency
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

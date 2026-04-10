@@ -1,7 +1,7 @@
-# last_updated: 2026-04-10T09:04:03.0990158+07:00
+# last_updated: 2026-04-10T10:21:05.1111440+07:00
 # project: goide
 # tracking_system: file-system
-# story_location: C:\Users\t15\Training\goide\_bmad-output\implementation-artifacts
+# story_location: _bmad-output\implementation-artifacts
 
 # STATUS DEFINITIONS:
 # ==================
@@ -26,11 +26,11 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-10T09:04:03.0990158+07:00
+last_updated: 2026-04-10T10:21:05.1111440+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
-story_location: C:\Users\t15\Training\goide\_bmad-output\implementation-artifacts
+story_location: _bmad-output\implementation-artifacts
 
 development_status:
   epic-1: in-progress
@@ -40,7 +40,8 @@ development_status:
   1-4-editor-rendering-syntax-highlighting: done
   1-5-optional-panels-default-state: done
   1-6-status-bar-indicators-command-palette-trigger: done
-  epic-2: backlog
+  epic-2: in-progress
+  2-1-static-concurrency-detection-gopls: done
   2-2-hover-hint-underline-predicted: backlog
   2-3-confidence-labels-styling-tokens: backlog
   2-4-density-guard: backlog
@@ -61,6 +62,3 @@ development_status:
   4-4-causal-correlation-runtime: backlog
   4-5-runtime-failure-fallback: backlog
   epic-4-retrospective: optional
-
-
-
