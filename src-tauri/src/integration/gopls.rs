@@ -288,12 +288,17 @@ fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<D
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    parse_gopls_symbols_output(stdout.as_bytes())
+}
+
+fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
+    let stdout_str = String::from_utf8_lossy(stdout);
     let mut results = Vec::new();
 
     // Parse gopls symbols plain text output
     // Format: "Name Kind Line:Col-Line:Col"
     // Example: "mu Variable 3:5-3:7"
-    for line in stdout.lines() {
+    for line in stdout_str.lines() {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 3 {
             continue;
@@ -337,7 +342,7 @@ mod tests {
 
     #[test]
     fn detects_required_concurrency_constructs() {
-        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v3");
+        let temp_dir = std::env::temp_dir().join("goide_gopls_detect_constructs_v5");
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("create temp dir");
         let file_path = temp_dir.join("sample.go");
@@ -431,5 +436,29 @@ func main() {
             matches!(waitgroup.unwrap().confidence, Confidence::Likely),
             "qualified alias should be marked as likely"
         );
+    }
+
+    #[test]
+    fn parses_plaintext_gopls_symbols_output() {
+        let output = r#"
+wg Variable 5:2-5:14
+m Variable 6:2-6:10
+"#;
+
+        let constructs = parse_gopls_symbols_output(output.as_bytes()).unwrap();
+
+        let mutex = constructs.iter().find(|c| c.symbol == Some("m".to_string()));
+        let waitgroup = constructs.iter().find(|c| c.symbol == Some("wg".to_string()));
+
+        assert!(mutex.is_some(), "expected mutex from plaintext symbols");
+        assert_eq!(mutex.unwrap().line, 6);
+        assert_eq!(mutex.unwrap().column, 2);
+
+        assert!(
+            waitgroup.is_some(),
+            "expected waitgroup from plaintext symbols"
+        );
+        assert_eq!(waitgroup.unwrap().line, 5);
+        assert_eq!(waitgroup.unwrap().column, 2);
     }
 }
