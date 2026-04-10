@@ -23,6 +23,7 @@ describe("useHoverHint", () => {
       useHoverHint({
         workspacePath: "C:/repo",
         activeFilePath: "main.go",
+        runtimeAvailability: "unavailable",
         visibleRange: { fromLine: 1, toLine: 40 },
         detectedConstructs: [
           makeConstruct(2, ConcurrencyConfidence.Likely),
@@ -53,6 +54,7 @@ describe("useHoverHint", () => {
         useHoverHint({
           workspacePath: "C:/repo",
           activeFilePath,
+          runtimeAvailability: "unavailable",
           visibleRange: { fromLine: 1, toLine: 40 },
           detectedConstructs: [makeConstruct(5, ConcurrencyConfidence.Predicted)],
         }),
@@ -85,6 +87,7 @@ describe("useHoverHint", () => {
       useHoverHint({
         workspacePath: "C:/repo",
         activeFilePath: "main.go",
+        runtimeAvailability: "unavailable",
         visibleRange: { fromLine: 1, toLine: 30 },
         detectedConstructs: constructs,
       })
@@ -96,6 +99,27 @@ describe("useHoverHint", () => {
 
     expect(result.current.activeHint).toBeNull();
     expect(result.current.activeHintLine).toBeNull();
+  });
+
+  it("keeps predicted fallback hints active when runtime is unavailable", () => {
+    const { result } = renderHook(() =>
+      useHoverHint({
+        workspacePath: "C:/repo",
+        activeFilePath: "main.go",
+        runtimeAvailability: "unavailable",
+        visibleRange: { fromLine: 1, toLine: 20 },
+        detectedConstructs: [makeConstruct(7, ConcurrencyConfidence.Predicted)],
+      })
+    );
+
+    act(() => {
+      result.current.setHoveredLine(7);
+    });
+
+    expect(result.current.activeHint?.line).toBe(7);
+    expect(result.current.activeHint?.confidence).toBe(
+      ConcurrencyConfidence.Predicted
+    );
   });
 });
 
