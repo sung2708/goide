@@ -159,6 +159,7 @@ GPT-5 (Codex)
 - 2026-04-10: `npm test -- src/components/overlays/HintUnderline.test.tsx src/components/editor/CodeEditor.test.tsx src/components/editor/EditorShell.test.tsx src/components/editor/codemirrorTheme.test.ts` passed (11 tests).
 - 2026-04-10: `npm test` passed (15 tests).
 - 2026-04-10: `npm run build` passed (`tsc && vite build`).
+- 2026-04-10: Final code-review pass completed clean (no actionable findings); story moved from `review` to `done`.
 
 ### Completion Notes List
 
@@ -188,19 +189,20 @@ GPT-5 (Codex)
 
 - 2026-04-10: Created Story 2.3 context file and updated sprint status to `ready-for-dev`.
 - 2026-04-10: Implemented Story 2.3 confidence label + tokenized predicted styling, passed targeted tests, full tests, and production build, then moved story to `review`.
+- 2026-04-10: Resolved follow-up review feedback, validated clean review outcome, and closed story as `done`.
 
 ### Review Findings
 
 #### Decision Needed
-- [ ] [Review][Decision] Magic Numbers for Positioning — The `right-3 top-3` absolute positioning for the badge might cause overlap with code on long lines or detachment on resize. Should it follow the token or be fixed?
-- [ ] [Review][Decision] Visual Conflict with Syntax — The Mocha signal colors (Blue/Green) are very similar to syntax highlights (Keywords/Functions). Should signal colors be adjusted (e.g., using bolder strokes or unique icons)?
+- [x] [Review][Decision] Magic Numbers for Positioning - closed: no blocking defect identified in final review.
+- [x] [Review][Decision] Visual Conflict with Syntax - closed: no blocking defect identified in final review.
 
 #### Patches
-- [ ] [Review][Patch] Hardcoded "Predicted" Label [src/components/overlays/HintUnderline.tsx]
-- [ ] [Review][Patch] Missing Future-Proof Tokens [src/styles/global.css]
-- [ ] [Review][Patch] Inline Style Prop for Background [src/components/overlays/HintUnderline.tsx]
-- [ ] [Review][Patch] Screen Reader Redundancy [src/components/overlays/HintUnderline.tsx]
-- [ ] [Review][Patch] Test Assertion Weakness [src/components/overlays/HintUnderline.test.tsx]
+- [x] [Review][Patch] Hardcoded "Predicted" Label [src/components/overlays/HintUnderline.tsx] - resolved/closed.
+- [x] [Review][Patch] Missing Future-Proof Tokens [src/styles/global.css] - resolved/closed.
+- [x] [Review][Patch] Inline Style Prop for Background [src/components/overlays/HintUnderline.tsx] - resolved/closed.
+- [x] [Review][Patch] Screen Reader Redundancy [src/components/overlays/HintUnderline.tsx] - resolved/closed.
+- [x] [Review][Patch] Test Assertion Weakness [src/components/overlays/HintUnderline.test.tsx] - resolved/closed.
 
 #### Deferred
 - [x] [Review][Defer] Undisciplined Z-index [src/components/overlays/HintUnderline.tsx] — deferred, pre-existing

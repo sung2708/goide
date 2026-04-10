@@ -9,16 +9,19 @@ const CONFIDENCE_CONFIG = {
     label: "Predicted",
     icon: "⚡",
     color: "var(--goide-signal-predicted)",
+    backgroundColor: "var(--goide-signal-predicted-bg)",
   },
   likely: {
     label: "Likely",
     icon: "🔍",
     color: "var(--goide-signal-likely)",
+    backgroundColor: "var(--goide-signal-likely-bg)",
   },
   confirmed: {
     label: "Confirmed",
     icon: "✅",
     color: "var(--goide-signal-confirmed)",
+    backgroundColor: "var(--goide-signal-confirmed-bg)",
   },
 };
 
@@ -27,19 +30,21 @@ function HintUnderline({ hint }: HintUnderlineProps) {
     return null;
   }
 
-  // Fallback to predicted if confidence is missing or unknown
-  const confidence = (hint.confidence?.toLowerCase() as keyof typeof CONFIDENCE_CONFIG) || "predicted";
-  const { label, icon, color } = CONFIDENCE_CONFIG[confidence] || CONFIDENCE_CONFIG.predicted;
+  const confidence =
+    (hint.confidence?.toLowerCase() as keyof typeof CONFIDENCE_CONFIG) ||
+    "predicted";
+  const { label, icon, color, backgroundColor } =
+    CONFIDENCE_CONFIG[confidence] || CONFIDENCE_CONFIG.predicted;
 
   return (
     <>
       <div
-        className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em] bg-opacity-10"
+        className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em]"
         data-testid="hint-confidence-label"
         style={{
           color,
           borderColor: color,
-          backgroundColor: color, // Tailwind's bg-opacity-10 will handle the transparency
+          backgroundColor,
         }}
         aria-hidden="true"
       >

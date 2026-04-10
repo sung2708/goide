@@ -4,8 +4,11 @@
   font-family: "Geist", "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
   font-size: 13px;
   --goide-signal-predicted: #a6adc8; /* Mocha Subtext0 */
+  --goide-signal-predicted-bg: rgb(166 173 200 / 0.16);
   --goide-signal-likely: #89b4fa;    /* Mocha Blue */
+  --goide-signal-likely-bg: rgb(137 180 250 / 0.16);
   --goide-signal-confirmed: #a6e3a1; /* Mocha Green */
+  --goide-signal-confirmed-bg: rgb(166 227 161 / 0.16);
   --goide-signal-blocked: #f38ba8;   /* Mocha Red */
   --goide-signal-warning: #f9e2af;   /* Mocha Yellow */
   --goide-border-muted: #313244;    /* Mocha Surface0 */
