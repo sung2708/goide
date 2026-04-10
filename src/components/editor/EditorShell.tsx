@@ -44,6 +44,7 @@ function EditorShell() {
   const { activeHint, activeHintLine, setHoveredLine } = useHoverHint({
     workspacePath,
     activeFilePath,
+    runtimeAvailability,
     visibleRange,
     detectedConstructs,
   });
