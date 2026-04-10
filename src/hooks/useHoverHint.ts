@@ -1,10 +1,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { ConcurrencyConfidence } from "../lib/ipc/types";
 import type { LensConstruct, LensHoverHint } from "../features/concurrency/lensTypes";
+import {
+  selectVisiblePredictedConstructs,
+  type VisibleLineRange,
+} from "../features/concurrency/signalDensity";
 
 type UseHoverHintArgs = {
   workspacePath: string | null;
   activeFilePath: string | null;
+  visibleRange?: VisibleLineRange | null;
   detectedConstructs: LensConstruct[];
 };
 
@@ -18,6 +23,7 @@ type UseHoverHintResult = {
 export function useHoverHint({
   workspacePath,
   activeFilePath,
+  visibleRange = null,
   detectedConstructs,
 }: UseHoverHintArgs): UseHoverHintResult {
   const [hoveredLine, setHoveredLine] = useState<number | null>(null);
@@ -26,12 +32,21 @@ export function useHoverHint({
     setHoveredLine(null);
   }, [workspacePath, activeFilePath]);
 
+  const visiblePredictedConstructs = useMemo(
+    () =>
+      selectVisiblePredictedConstructs({
+        constructs: detectedConstructs,
+        visibleRange,
+      }),
+    [detectedConstructs, visibleRange]
+  );
+
   const activeHint = useMemo<LensHoverHint | null>(() => {
     if (!workspacePath || !activeFilePath || hoveredLine === null) {
       return null;
     }
 
-    const match = detectedConstructs.find(
+    const match = visiblePredictedConstructs.find(
       (construct) =>
         construct.line === hoveredLine &&
         construct.confidence === ConcurrencyConfidence.Predicted
@@ -47,7 +62,7 @@ export function useHoverHint({
       symbol: match.symbol,
       confidence: ConcurrencyConfidence.Predicted,
     };
-  }, [activeFilePath, detectedConstructs, hoveredLine, workspacePath]);
+  }, [activeFilePath, hoveredLine, visiblePredictedConstructs, workspacePath]);
 
   return {
     hoveredLine,
