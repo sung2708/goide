@@ -1,8 +1,8 @@
 use crate::integration::fs;
-use crate::integration::gopls::{self, ConstructKind};
+use crate::integration::gopls;
 use crate::ui_bridge::types::{
-    AnalyzeConcurrencyRequest, ApiResponse, ConcurrencyConstructDto, ConcurrencyConstructKindDto,
-    FsEntryDto,
+    AnalyzeConcurrencyRequest, ApiResponse, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
+    ConcurrencyConstructKindDto, FsEntryDto,
 };
 use std::path::{Component, Path};
 
