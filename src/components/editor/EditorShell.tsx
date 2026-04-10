@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
+import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
 import { readWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -32,6 +33,7 @@ function EditorShell() {
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
     useState<HTMLElement | null>(null);
+  const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const { detectedConstructs } = useLensSignals({
@@ -42,6 +44,7 @@ function EditorShell() {
   const { activeHint, activeHintLine, setHoveredLine } = useHoverHint({
     workspacePath,
     activeFilePath,
+    visibleRange,
     detectedConstructs,
   });
 
@@ -256,6 +259,7 @@ function EditorShell() {
                             value={activeFileContent}
                             hintLine={activeHintLine}
                             onHoverLineChange={setHoveredLine}
+                            onViewportRangeChange={setVisibleRange}
                           />
                         ) : (
                           <div className="px-4 py-3">

@@ -23,6 +23,7 @@ describe("useHoverHint", () => {
       useHoverHint({
         workspacePath: "C:/repo",
         activeFilePath: "main.go",
+        visibleRange: { fromLine: 1, toLine: 40 },
         detectedConstructs: [
           makeConstruct(2, ConcurrencyConfidence.Likely),
           makeConstruct(3, ConcurrencyConfidence.Predicted),
@@ -52,6 +53,7 @@ describe("useHoverHint", () => {
         useHoverHint({
           workspacePath: "C:/repo",
           activeFilePath,
+          visibleRange: { fromLine: 1, toLine: 40 },
           detectedConstructs: [makeConstruct(5, ConcurrencyConfidence.Predicted)],
         }),
       { initialProps: { activeFilePath: "a.go" } }
@@ -64,6 +66,34 @@ describe("useHoverHint", () => {
 
     rerender({ activeFilePath: "b.go" });
     expect(result.current.hoveredLine).toBeNull();
+    expect(result.current.activeHint).toBeNull();
+    expect(result.current.activeHintLine).toBeNull();
+  });
+
+  it("suppresses active hint when hovered line is outside capped viewport set", () => {
+    const constructs: LensConstruct[] = [
+      makeConstruct(2, ConcurrencyConfidence.Predicted),
+      makeConstruct(4, ConcurrencyConfidence.Predicted),
+      makeConstruct(6, ConcurrencyConfidence.Predicted),
+      makeConstruct(8, ConcurrencyConfidence.Predicted),
+      makeConstruct(10, ConcurrencyConfidence.Predicted),
+      makeConstruct(12, ConcurrencyConfidence.Predicted),
+      makeConstruct(14, ConcurrencyConfidence.Predicted),
+    ];
+
+    const { result } = renderHook(() =>
+      useHoverHint({
+        workspacePath: "C:/repo",
+        activeFilePath: "main.go",
+        visibleRange: { fromLine: 1, toLine: 30 },
+        detectedConstructs: constructs,
+      })
+    );
+
+    act(() => {
+      result.current.setHoveredLine(14);
+    });
+
     expect(result.current.activeHint).toBeNull();
     expect(result.current.activeHintLine).toBeNull();
   });

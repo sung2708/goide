@@ -5,22 +5,26 @@ import {
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
 import type { EditorView } from "@codemirror/view";
+import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 
 type CodeEditorProps = {
   value: string;
   hintLine?: number | null;
   onHoverLineChange?: (line: number | null) => void;
+  onViewportRangeChange?: (range: VisibleLineRange | null) => void;
 };
 
 function CodeEditor({
   value,
   hintLine = null,
   onHoverLineChange,
+  onViewportRangeChange,
 }: CodeEditorProps) {
   const extensions = useMemo(() => goideEditorExtensions, []);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
+  const viewportRangeRef = useRef<VisibleLineRange | null>(null);
 
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
@@ -32,6 +36,28 @@ function CodeEditor({
     const anchor =
       domAtPos.node instanceof Element ? domAtPos.node : domAtPos.node.parentElement;
     return anchor?.closest(".cm-line");
+  };
+
+  const emitViewportRange = (view: EditorView) => {
+    if (!onViewportRangeChange) {
+      return;
+    }
+
+    const fromLine = view.state.doc.lineAt(view.viewport.from).number;
+    const toPosition = Math.max(view.viewport.from, view.viewport.to - 1);
+    const toLine = view.state.doc.lineAt(toPosition).number;
+    const nextRange: VisibleLineRange = { fromLine, toLine };
+    const previousRange = viewportRangeRef.current;
+
+    if (
+      previousRange?.fromLine === nextRange.fromLine &&
+      previousRange?.toLine === nextRange.toLine
+    ) {
+      return;
+    }
+
+    viewportRangeRef.current = nextRange;
+    onViewportRangeChange(nextRange);
   };
 
   useEffect(() => {
@@ -61,7 +87,13 @@ function CodeEditor({
       className="h-full w-full"
       onMouseMove={(event) => {
         const view = viewRef.current;
-        if (!view || !onHoverLineChange) {
+        if (!view) {
+          return;
+        }
+
+        emitViewportRange(view);
+
+        if (!onHoverLineChange) {
           return;
         }
 
@@ -89,6 +121,7 @@ function CodeEditor({
         extensions={extensions}
         onCreateEditor={(view) => {
           viewRef.current = view;
+          emitViewportRange(view);
         }}
         editable={false}
         readOnly
