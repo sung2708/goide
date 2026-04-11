@@ -206,6 +206,17 @@ fn prev_non_whitespace_char(chars: &[char], mut from_exclusive: usize) -> Option
     None
 }
 
+fn is_first_non_whitespace_on_line(chars: &[char], line_start: usize, idx: usize) -> bool {
+    let mut cursor = line_start;
+    while cursor < idx {
+        if !chars[cursor].is_ascii_whitespace() {
+            return false;
+        }
+        cursor += 1;
+    }
+    true
+}
+
 fn is_receive_leading_keyword(text: &str) -> bool {
     matches!(text, "case" | "return" | "go" | "defer" | "if" | "for" | "switch" | "select")
 }
@@ -275,7 +286,9 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                             && matches!(
                                 prev_non_ws,
                                 Some('=') | Some(':') | Some('(') | Some(',') | Some('{') | Some('[')
-                            );
+                            )
+                        || left.is_none()
+                            && is_first_non_whitespace_on_line(&chars, line_start, i);
 
                     let marker = if let Some((start_idx, symbol)) = left.as_ref() {
                         if !is_receive_leading_keyword(symbol) {
@@ -1009,6 +1022,30 @@ func worker(channels []chan int, job int) {
         assert!(
             constructs.iter().all(|item| item.symbol.as_deref() != Some("job")),
             "complex-lhs sends must not be inferred as receive markers on rhs symbol"
+        );
+    }
+
+    #[test]
+    fn detects_standalone_receive_at_line_start() {
+        let source = r#"package main
+
+func worker(done <-chan struct{}) {
+    x := 1
+    <-done
+    _ = x
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().any(|item| {
+                item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("done")
+                    && item.line == 5
+                    && item.channel_operation == Some(ChannelOperation::Receive)
+            }),
+            "standalone <-done at line start must be detected as receive"
         );
     }
 }
