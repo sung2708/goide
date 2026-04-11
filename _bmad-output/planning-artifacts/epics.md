@@ -24,6 +24,9 @@ FR5: Maintain static hints on runtime failure and override predicted signals wit
 FR6: Keep editor dominant (70-80% width), bottom panel hidden by default, right summary panel collapsed by default, and right panel text-only.
 FR7: Render dotted underline hints, soft pulse for blocked ops, thin causal connectors, trace bubbles with wait time + confidence, and clear overlays immediately on intent end.
 FR8: Expose mode and runtime availability in status bar and enable jump-to-counterpart from summary panel items.
+FR9: Support basic code editing (typing, save, undo/redo) to enable the "Fix" loop of the Concurrency Lens.
+FR10: Integrate LSP diagnostics (error/warning squiggles) to provide immediate feedback during code modification.
+FR11: Provide a baseline execution capability (`go run/test`) with race detector integration for real-world verification.
 
 ### NonFunctional Requirements
 
@@ -75,16 +78,19 @@ FR5: Epic 2 + Epic 4 - Fallback and signal override
 FR6: Epic 1 - Editor-first layout and optional panels
 FR7: Epic 2 + Epic 3 - Inline elements and overlays
 FR8: Epic 1 + Epic 3 + Epic 4 - Status + jump behaviors
+FR9: Epic 1 - Basic code editing foundations
+FR10: Epic 2 - Feedback diagnostics
+FR11: Epic 1 + Epic 4 - Code execution and race detector
 
 ## Epic List
 
 ### Epic 1: Editor Shell & Workspace Foundations
 Users can open a Go workspace and work inside a stable, editor-first shell with status indicators and optional panels.
-**FRs covered:** FR1, FR6, FR8
+**FRs covered:** FR1, FR6, FR8, FR9, FR11
 
 ### Epic 2: Quick Insight (Static Concurrency Lens)
 Users can hover and immediately see accurate static concurrency hints with confidence labels and density guard.
-**FRs covered:** FR2, FR5, FR7
+**FRs covered:** FR2, FR5, FR7, FR10
 
 ### Epic 3: Single-File Causal Navigation
 Users can jump between related sender/receiver ops and see causal flow lines in the same file.
@@ -92,7 +98,7 @@ Users can jump between related sender/receiver ops and see causal flow lines in 
 
 ### Epic 4: Deep Trace Runtime Signals
 Users can activate Deep Trace to see confirmed runtime signals and blocked ops with causal correlation.
-**FRs covered:** FR4, FR5, FR8
+**FRs covered:** FR4, FR5, FR8, FR11
 
 <!-- Repeat for each epic in epics_list (N = 1, 2, 3...) -->
 
@@ -178,6 +184,32 @@ So that I can see runtime mode and access commands quickly.
 **Then** it displays mode (Quick Insight/Deep Trace) and runtime availability
 **And** a command palette trigger is available (keyboard or UI entry)
 
+### Story 1.7: Write & Save
+
+As a Go developer,
+I want to edit and save my Go files,
+So that I can fix identified concurrency issues without leaving the IDE.
+
+**Acceptance Criteria:**
+
+**Given** a Go file is open in the editor
+**When** I type code and press Cmd/Ctrl+S
+**Then** the file is saved to the local filesystem via Tauri FS bridge
+**And** basic undo/redo functionality is available within the session
+
+### Story 1.8: Run Baseline
+
+As a Go developer,
+I want to run the current file and see the output,
+So that I can verify that my fix or logic works as expected.
+
+**Acceptance Criteria:**
+
+**Given** a Go file is open
+**When** I trigger the "Run" command
+**Then** `go run {file}` is executed in the workspace directory
+**And** stdout/stderr is captured and displayed in a scrollable bottom panel
+
 ## Epic 2: Quick Insight (Static Concurrency Lens)
 
 Users can hover and immediately see accurate static concurrency hints with confidence labels and density guard.
@@ -259,6 +291,32 @@ So that the UI stays clean by default.
 **When** inline actions appear
 **Then** they are minimal and contextual
 **And** they disappear immediately on hover out
+
+### Story 2.7: LSP Diagnostics
+
+As a Go developer,
+I want to see error and warning squiggles in the editor,
+So that I get immediate feedback on my code changes.
+
+**Acceptance Criteria:**
+
+**Given** an LSP (gopls) is connected
+**When** I save a file with errors or warnings
+**Then** diagnostics are rendered in the editor gutter and as squiggles on the code
+**And** hover details show the specific diagnostic message
+
+### Story 2.8: Basic Autocomplete
+
+As a Go developer,
+I want basic code completion from the LSP,
+So that I can write code more accurately during the "Fix" phase.
+
+**Acceptance Criteria:**
+
+**Given** a cursor is within an active file
+**When** I trigger completion (e.g., via typing '.' or explicit shortcut)
+**Then** a list of completion candidates from `gopls` is displayed
+**And** selecting a candidate inserts it at the cursor
 
 ## Epic 3: Single-File Causal Navigation
 
@@ -397,6 +455,19 @@ So that the editor remains trustworthy and usable.
 **When** I continue interacting
 **Then** predicted static hints remain available
 **And** any confirmed signals are removed cleanly without UI errors
+
+### Story 4.6: Run-with-Race-Detector
+
+As a Go developer,
+I want to run my code with the Go race detector enabled,
+So that I can get data-driven internal confirmation of race conditions.
+
+**Acceptance Criteria:**
+
+**Given** Deep Trace mode is available
+**When** I trigger a "Run with Race Detector" command
+**Then** the command executes `go run -race {file}`
+**And** any race warnings detected are captured and piped into the Concurrency Lens as Confirmed signals
 
 <!-- Repeat for each epic in epics_list (N = 1, 2, 3...) -->
 

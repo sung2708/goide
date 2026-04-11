@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
-import { readWorkspaceFile } from "../../lib/ipc/client";
+import { readWorkspaceFile, writeWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -42,6 +42,12 @@ function EditorShell() {
     "unavailable"
   );
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [isDirty, setIsDirty] = useState(false);
+  const isSavingRef = useRef(false);
+  const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const savedContentRef = useRef<string | null>(null);
+  const latestEditorContentRef = useRef<string | null>(null);
   const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
     useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
@@ -58,10 +64,22 @@ function EditorShell() {
   const jumpRequestIdRef = useRef(0);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+  const activeFilePathRef = useRef(activeFilePath);
+  activeFilePathRef.current = activeFilePath;
 
   useEffect(() => {
     setJumpRequest(null);
   }, [workspacePath, activeFilePath]);
+
+  // Clear the auto-dismiss timer on unmount to prevent setState on unmounted component
+  useEffect(() => {
+    return () => {
+      if (saveStatusTimerRef.current !== null) {
+        clearTimeout(saveStatusTimerRef.current);
+      }
+    };
+  }, []);
+
   const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
     activeFilePath,
@@ -147,6 +165,73 @@ function EditorShell() {
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint());
   }, [requestJump, resolveCounterpartFromActiveHint]);
+
+  const handleSaveFile = useCallback(
+    async (content: string) => {
+      const currentPath = activeFilePath;
+      if (!workspacePath || !currentPath) {
+        return;
+      }
+      // Guard: ignore concurrent save requests
+      if (isSavingRef.current) {
+        return;
+      }
+
+      isSavingRef.current = true;
+      latestEditorContentRef.current = content;
+      if (saveStatusTimerRef.current !== null) {
+        clearTimeout(saveStatusTimerRef.current);
+        saveStatusTimerRef.current = null;
+      }
+
+      const saveWorkspacePath = workspacePath;
+      const saveFilePath = currentPath;
+      setSaveStatus("saving");
+      try {
+        const response = await writeWorkspaceFile(workspacePath, currentPath, content);
+        if (
+          workspacePathRef.current !== saveWorkspacePath ||
+          activeFilePathRef.current !== saveFilePath
+        ) {
+          return;
+        }
+        if (response.ok) {
+          savedContentRef.current = content;
+          const hasNewerEdits = latestEditorContentRef.current !== content;
+          setIsDirty(hasNewerEdits);
+          if (hasNewerEdits) {
+            setSaveStatus("idle");
+          } else {
+            setSaveStatus("saved");
+            saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
+          }
+        } else {
+          setSaveStatus("error");
+          saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
+        }
+      } catch (error) {
+        if (
+          workspacePathRef.current !== saveWorkspacePath ||
+          activeFilePathRef.current !== saveFilePath
+        ) {
+          return;
+        }
+        setSaveStatus("error");
+        saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
+        console.error("Failed to save file:", error);
+      } finally {
+        isSavingRef.current = false;
+      }
+    },
+    [workspacePath, activeFilePath]
+  );
+
+  const handleEditorChange = useCallback((value: string) => {
+    latestEditorContentRef.current = value;
+    setIsDirty(value !== savedContentRef.current);
+    // Reset transient statuses when the user starts editing again
+    setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
+  }, []);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -265,6 +350,10 @@ function EditorShell() {
 
         setActiveFilePath(relativePath);
         setActiveFileContent(response.data);
+        savedContentRef.current = response.data;
+        latestEditorContentRef.current = response.data;
+        setIsDirty(false);
+        setSaveStatus("idle");
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
           setFileError("An unexpected error occurred while loading the file.");
@@ -282,8 +371,9 @@ function EditorShell() {
     }
 
     const segments = activeFilePath.split(/[\\/]/);
-    return segments[segments.length - 1] ?? activeFilePath;
-  }, [activeFilePath]);
+    const baseName = segments[segments.length - 1] ?? activeFilePath;
+    return `${baseName}${isDirty ? " *" : ""}`;
+  }, [activeFilePath, isDirty]);
 
   return (
     <div
@@ -408,6 +498,8 @@ function EditorShell() {
                             onInteractionAnchorChange={setInteractionAnchor}
                             onCounterpartAnchorChange={setCounterpartAnchor}
                             onViewportRangeChange={setVisibleRange}
+                            onSave={handleSaveFile}
+                            onChange={handleEditorChange}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -441,6 +533,7 @@ function EditorShell() {
         activeFilePath={activeFilePath}
         mode={mode}
         runtimeAvailability={runtimeAvailability}
+        saveStatus={saveStatus}
         isSummaryOpen={isSummaryOpen}
         isBottomPanelOpen={isBottomPanelOpen}
         isCommandPaletteOpen={isCommandPaletteOpen}

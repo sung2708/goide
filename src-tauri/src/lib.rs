@@ -16,6 +16,7 @@ pub fn run() {
             greet,
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
+            ui_bridge::commands::write_workspace_file,
             ui_bridge::commands::analyze_active_file_concurrency
         ])
         .run(tauri::generate_context!())
