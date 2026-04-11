@@ -11,7 +11,7 @@ import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
-import CodeEditor from "./CodeEditor";
+import CodeEditor, { type JumpRequest } from "./CodeEditor";
 
 const EDITOR_BG = "bg-[#1e1e2e]";
 const PANEL_BG = "bg-[#181825]";
@@ -36,10 +36,12 @@ function EditorShell() {
     useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
+  const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
     left: number;
   } | null>(null);
+  const jumpRequestIdRef = useRef(0);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const { detectedConstructs, counterpartMappings } = useLensSignals({
@@ -60,21 +62,70 @@ function EditorShell() {
     activeHint !== null &&
     (hoveredLine !== null || selectedLine === activeHintLine);
 
-  const hasCounterpart = useMemo(() => {
+  const resolveCounterpartLine = useCallback(
+    (sourceLine: number, hintSymbol?: string | null) => {
+      const candidates = counterpartMappings.filter(
+        (mapping) => mapping.sourceLine === sourceLine
+      );
+      if (candidates.length === 0) {
+        return null;
+      }
+
+      const normalizedSymbol =
+        typeof hintSymbol === "string" ? hintSymbol.trim() : "";
+      const filtered = normalizedSymbol
+        ? candidates.filter((mapping) => mapping.symbol === normalizedSymbol)
+        : candidates;
+
+      if (filtered.length === 0) {
+        return null;
+      }
+
+      const uniqueCounterpartLines = [...new Set(filtered.map((m) => m.counterpartLine))];
+      return uniqueCounterpartLines.length === 1 ? uniqueCounterpartLines[0] : null;
+    },
+    [counterpartMappings]
+  );
+
+  const resolveCounterpartFromActiveHint = useCallback(() => {
     if (activeHintLine === null || activeHint?.kind !== "channel") {
-      return false;
-    }
-    const hintSymbol =
-      typeof activeHint.symbol === "string" ? activeHint.symbol.trim() : "";
-    if (!hintSymbol) {
-      return false;
+      return null;
     }
 
-    return counterpartMappings.some(
-      (mapping) =>
-        mapping.sourceLine === activeHintLine && mapping.symbol === hintSymbol
-    );
-  }, [activeHint, activeHintLine, counterpartMappings]);
+    return resolveCounterpartLine(activeHintLine, activeHint.symbol);
+  }, [activeHint, activeHintLine, resolveCounterpartLine]);
+
+  const hasCounterpart = useMemo(
+    () => resolveCounterpartFromActiveHint() !== null,
+    [resolveCounterpartFromActiveHint]
+  );
+
+  const requestJump = useCallback((targetLine: number | null) => {
+    if (targetLine === null) {
+      return;
+    }
+
+    jumpRequestIdRef.current += 1;
+    setJumpRequest({
+      line: targetLine,
+      requestId: jumpRequestIdRef.current,
+    });
+  }, []);
+
+  const handleJump = useCallback(() => {
+    requestJump(resolveCounterpartFromActiveHint());
+  }, [requestJump, resolveCounterpartFromActiveHint]);
+
+  const handleModifierClickLine = useCallback(
+    (line: number) => {
+      const symbolForLine =
+        activeHintLine === line && activeHint?.kind === "channel"
+          ? activeHint.symbol
+          : null;
+      requestJump(resolveCounterpartLine(line, symbolForLine));
+    },
+    [activeHint, activeHintLine, requestJump, resolveCounterpartLine]
+  );
 
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {
@@ -292,14 +343,17 @@ function EditorShell() {
                           hasCounterpart={hasCounterpart}
                           anchorTop={interactionAnchor?.top ?? null}
                           anchorLeft={interactionAnchor?.left ?? null}
+                          onJump={handleJump}
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
                             selectionContextKey={activeFilePath}
                             hintLine={activeHintLine}
+                            jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
+                            onModifierClickLine={handleModifierClickLine}
                             onInteractionAnchorChange={setInteractionAnchor}
                             onViewportRangeChange={setVisibleRange}
                           />

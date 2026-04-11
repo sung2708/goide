@@ -2,11 +2,12 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
+import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
 
 const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
-let mockConstructs = [
+let mockConstructs: LensConstruct[] = [
   {
     kind: "channel" as const,
     line: 1,
@@ -66,9 +67,13 @@ vi.mock("./CodeEditor", () => ({
   default: ({
     onHoverLineChange,
     onSelectionLineChange,
+    onModifierClickLine,
+    jumpRequest,
   }: {
     onHoverLineChange?: (line: number | null) => void;
     onSelectionLineChange?: (line: number | null) => void;
+    onModifierClickLine?: (line: number) => void;
+    jumpRequest?: { line: number; requestId: number } | null;
   }) => (
     <div
       data-testid="mock-code-editor"
@@ -78,6 +83,10 @@ vi.mock("./CodeEditor", () => ({
       <button type="button" onClick={() => onSelectionLineChange?.(1)}>
         Select Line 1
       </button>
+      <button type="button" onClick={() => onModifierClickLine?.(1)}>
+        Modifier Click Line 1
+      </button>
+      <output data-testid="jump-request-line">{jumpRequest?.line ?? "none"}</output>
     </div>
   ),
 }));
@@ -172,6 +181,75 @@ describe("EditorShell inline actions", () => {
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
     expect(screen.getByRole("button", { name: /jump/i })).toBeEnabled();
+  });
+
+  it("executes Jump action to counterpart line when mapping exists", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: "jobs",
+        scopeKey: "S1",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(screen.getByRole("button", { name: /jump/i }));
+
+    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("2");
+  });
+
+  it("executes counterpart jump via modifier-click and keeps plain click as non-jump selection", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: "jobs",
+        scopeKey: "S1",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("none");
+
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("none");
+
+    await user.click(await screen.findByRole("button", { name: /modifier click line 1/i }));
+    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("2");
   });
 
   it("keeps Jump disabled when active hint is not the mapped channel construct", async () => {

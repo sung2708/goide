@@ -4,7 +4,7 @@ import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 
 type InteractionAnchor = {
@@ -12,12 +12,19 @@ type InteractionAnchor = {
   left: number;
 };
 
+export type JumpRequest = {
+  line: number;
+  requestId: number;
+};
+
 type CodeEditorProps = {
   value: string;
   selectionContextKey?: string | null;
   hintLine?: number | null;
+  jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
+  onModifierClickLine?: (line: number) => void;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
 };
@@ -26,8 +33,10 @@ function CodeEditor({
   value,
   selectionContextKey = null,
   hintLine = null,
+  jumpRequest = null,
   onHoverLineChange,
   onSelectionLineChange,
+  onModifierClickLine,
   onInteractionAnchorChange,
   onViewportRangeChange,
 }: CodeEditorProps) {
@@ -99,6 +108,27 @@ function CodeEditor({
     // New file/content context should not inherit previous-line dedupe state.
     selectedLineRef.current = null;
   }, [selectionContextKey, value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view || jumpRequest === null) {
+      return;
+    }
+
+    const line = jumpRequest.line;
+    if (line < 1 || line > view.state.doc.lines) {
+      return;
+    }
+
+    const from = view.state.doc.line(line).from;
+    view.dispatch({
+      selection: { anchor: from },
+      effects: EditorView.scrollIntoView(from, { y: "center" }),
+    });
+    view.focus();
+    emitSelectionLine(line);
+    emitInteractionAnchor(line);
+  }, [jumpRequest]);
 
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {
@@ -190,6 +220,10 @@ function CodeEditor({
           y: event.clientY,
         });
         const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
+        if (nextLine !== null && (event.metaKey || event.ctrlKey)) {
+          onModifierClickLine?.(nextLine);
+          return;
+        }
         emitSelectionLine(nextLine);
         emitInteractionAnchor(nextLine);
       }}

@@ -26,7 +26,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-11T16:21:42+07:00
+last_updated: 2026-04-11T17:46:51+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -50,7 +50,7 @@ development_status:
   epic-2-retrospective: optional
   epic-3: in-progress
   3-1-counterpart-mapping-static: done
-  3-2-clickcmd-ctrl-click-jump-to-counterpart: backlog
+  3-2-clickcmd-ctrl-click-jump-to-counterpart: done
   3-3-causal-thread-line: backlog
   3-4-trace-bubble-static-details: backlog
   3-5-jump-from-summary-panel-item: backlog
