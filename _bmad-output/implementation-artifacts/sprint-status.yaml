@@ -51,7 +51,7 @@ development_status:
   epic-3: in-progress
   3-1-counterpart-mapping-static: done
   3-2-clickcmd-ctrl-click-jump-to-counterpart: done
-  3-3-causal-thread-line: backlog
+  3-3-causal-thread-line: done
   3-4-trace-bubble-static-details: backlog
   3-5-jump-from-summary-panel-item: backlog
   epic-3-retrospective: optional

@@ -21,10 +21,12 @@ type CodeEditorProps = {
   value: string;
   selectionContextKey?: string | null;
   hintLine?: number | null;
+  counterpartLine?: number | null;
   jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
   onModifierClickLine?: (line: number) => boolean;
+  onCounterpartAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
 };
@@ -34,13 +36,59 @@ function CodeEditor({
   selectionContextKey = null,
   hintLine = null,
   jumpRequest = null,
+  counterpartLine = null,
   onHoverLineChange,
   onSelectionLineChange,
   onModifierClickLine,
+  onCounterpartAnchorChange,
   onInteractionAnchorChange,
   onViewportRangeChange,
 }: CodeEditorProps) {
-  const extensions = useMemo(() => goideEditorExtensions, []);
+  const extensions = useMemo(() => [
+    ...goideEditorExtensions,
+    EditorView.updateListener.of((update) => {
+      if (update.geometryChanged || update.viewportChanged) {
+        // Schedule anchor sync on the next microtask to avoid read-during-render layout thrashing
+        queueMicrotask(() => {
+          const view = update.view;
+          const container = containerRef.current;
+          if (!view || !container) return;
+
+          if (onCounterpartAnchorChange && counterpartLine !== null && counterpartLine >= 1 && counterpartLine <= view.state.doc.lines) {
+            const cFrom = view.state.doc.line(counterpartLine).from;
+            const cCoords = view.coordsAtPos(cFrom);
+            if (cCoords) {
+              const rect = container.getBoundingClientRect();
+              onCounterpartAnchorChange({
+                top: Math.max(8, Math.round(cCoords.top - rect.top)),
+                left: Math.max(8, Math.round(cCoords.left - rect.left + 16)), // Offset to nudge anchor into text area
+              });
+            } else {
+              onCounterpartAnchorChange(null);
+            }
+          }
+
+          if (onInteractionAnchorChange) {
+            let activeLineNum = hoveredLineRef.current ?? selectedLineRef.current;
+            if (activeLineNum !== null && activeLineNum >= 1 && activeLineNum <= view.state.doc.lines) {
+              const aFrom = view.state.doc.line(activeLineNum).from;
+              const aCoords = view.coordsAtPos(aFrom);
+              if (aCoords) {
+                const rect = container.getBoundingClientRect();
+                onInteractionAnchorChange({
+                  top: Math.max(8, Math.round(aCoords.top - rect.top)),
+                  left: Math.max(8, Math.round(aCoords.left - rect.left + 16)),
+                });
+              } else {
+                // Out of view
+                onInteractionAnchorChange(null);
+              }
+            }
+          }
+        });
+      }
+    })
+  ], [counterpartLine, onCounterpartAnchorChange, onInteractionAnchorChange]);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
@@ -130,6 +178,31 @@ function CodeEditor({
     emitSelectionLine(line);
     emitInteractionAnchor(line);
   }, [jumpRequest]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const container = containerRef.current;
+    if (!onCounterpartAnchorChange) return;
+
+    if (!view || !container || counterpartLine === null || counterpartLine < 1 || counterpartLine > view.state.doc.lines) {
+      onCounterpartAnchorChange(null);
+      return;
+    }
+
+    // Remove the window.requestAnimationFrame here; we will handle position updates via EditorView.updateListener
+    const from = view.state.doc.line(counterpartLine).from;
+    const coords = view.coordsAtPos(from);
+    if (!coords) {
+      onCounterpartAnchorChange(null);
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    onCounterpartAnchorChange({
+      top: Math.max(8, Math.round(coords.top - rect.top)),
+      left: Math.max(8, Math.round(coords.left - rect.left + 16)),
+    });
+  }, [counterpartLine, value, onCounterpartAnchorChange]);
 
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {
