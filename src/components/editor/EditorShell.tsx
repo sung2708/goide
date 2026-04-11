@@ -42,7 +42,7 @@ function EditorShell() {
   } | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
-  const { detectedConstructs } = useLensSignals({
+  const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
     activeFilePath,
     workspacePathRef,
@@ -61,15 +61,14 @@ function EditorShell() {
     (hoveredLine !== null || selectedLine === activeHintLine);
 
   const hasCounterpart = useMemo(() => {
-    if (!activeHint?.symbol) {
+    if (activeHintLine === null) {
       return false;
     }
 
-    return detectedConstructs.some(
-      (construct) =>
-        construct.symbol === activeHint.symbol && construct.line !== activeHint.line
+    return counterpartMappings.some(
+      (mapping) => mapping.sourceLine === activeHintLine
     );
-  }, [activeHint, detectedConstructs]);
+  }, [activeHintLine, counterpartMappings]);
 
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {

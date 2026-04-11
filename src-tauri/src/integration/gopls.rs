@@ -25,6 +25,7 @@ pub struct DetectedConstruct {
     pub line: usize,
     pub column: usize,
     pub symbol: Option<String>,
+    pub scope_key: Option<String>,
     pub confidence: Confidence,
 }
 
@@ -49,6 +50,7 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
     let tokens = tokenize_identifiers(&source);
 
     let mut results = detect_from_tokens(tokens);
+    results.extend(detect_channel_flow_markers(&source));
 
     if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
         for gopls_construct in gopls_results {
@@ -56,7 +58,9 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
             // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
             // The identifier (gopls symbol) comes BEFORE the type (lexer token).
             if let Some(existing) = results.iter_mut().find(|item| {
-                item.line == gopls_construct.line && item.column >= gopls_construct.column
+                item.kind != ConstructKind::Channel
+                    && item.line == gopls_construct.line
+                    && item.column >= gopls_construct.column
             }) {
                 // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
                 existing.confidence = Confidence::Confirmed;
@@ -70,6 +74,21 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
         }
     }
 
+    results.sort_by(|a, b| {
+        a.line
+            .cmp(&b.line)
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.kind_name().cmp(b.kind_name()))
+            .then_with(|| a.symbol.as_deref().unwrap_or("").cmp(b.symbol.as_deref().unwrap_or("")))
+    });
+    results.dedup_by(|a, b| {
+        a.kind == b.kind
+            && a.line == b.line
+            && a.column == b.column
+            && a.symbol == b.symbol
+            && a.scope_key == b.scope_key
+    });
+
     Ok(results)
 }
 
@@ -82,6 +101,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 line: token.line,
                 column: token.column,
                 symbol: None,
+                scope_key: None,
                 confidence: Confidence::Predicted,
             }),
             "select" => results.push(DetectedConstruct {
@@ -89,6 +109,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 line: token.line,
                 column: token.column,
                 symbol: None,
+                scope_key: None,
                 confidence: Confidence::Predicted,
             }),
             name if is_mutex_name(name) => results.push(DetectedConstruct {
@@ -96,6 +117,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
+                scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
             }),
             name if is_waitgroup_name(name) => results.push(DetectedConstruct {
@@ -103,6 +125,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.WaitGroup".to_string()),
+                scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
             }),
             _ => {}
@@ -110,6 +133,249 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
     }
 
     results
+}
+
+fn is_symbol_char(ch: char) -> bool {
+    ch == '_' || ch == '.' || ch.is_ascii_alphanumeric()
+}
+
+fn scan_left_identifier(chars: &[char], line_start: usize, op_start: usize) -> Option<(usize, String)> {
+    if op_start <= line_start {
+        return None;
+    }
+
+    let mut i = op_start;
+    while i > line_start && chars[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i <= line_start {
+        return None;
+    }
+
+    let end = i;
+    while i > line_start && is_symbol_char(chars[i - 1]) {
+        i -= 1;
+    }
+    if i == end {
+        return None;
+    }
+
+    Some((i, chars[i..end].iter().collect()))
+}
+
+fn scan_right_identifier(chars: &[char], op_start: usize) -> Option<(usize, String)> {
+    let mut i = op_start + 2;
+    while i < chars.len() && chars[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] == '\n' {
+        return None;
+    }
+
+    let start = i;
+    while i < chars.len() && chars[i] != '\n' && is_symbol_char(chars[i]) {
+        i += 1;
+    }
+    if i == start {
+        return None;
+    }
+
+    Some((start, chars[start..i].iter().collect()))
+}
+
+fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
+    let mut results = Vec::new();
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0usize;
+    let mut line = 1usize;
+    let mut state = LexState::Normal;
+    let mut line_start = 0usize;
+    let mut block_stack: Vec<usize> = Vec::new();
+    let mut next_scope_id = 1usize;
+    let mut pending_block_scope: Option<usize> = None;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+
+        match state {
+            LexState::Normal => {
+                if ch == '/' && next == Some('/') {
+                    state = LexState::LineComment;
+                    i += 2;
+                    continue;
+                }
+                if ch == '/' && next == Some('*') {
+                    state = LexState::BlockComment;
+                    i += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    state = LexState::DoubleQuoteString;
+                    i += 1;
+                    continue;
+                }
+                if ch == '`' {
+                    state = LexState::RawString;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\'' {
+                    state = LexState::RuneLiteral;
+                    i += 1;
+                    continue;
+                }
+
+                if ch == '<' && next == Some('-') {
+                    let left = scan_left_identifier(&chars, line_start, i);
+                    let right = scan_right_identifier(&chars, i);
+
+                    // Ignore type direction markers: chan<- T or <-chan T
+                    if left.as_ref().map(|(_, s)| s.as_str()) == Some("chan")
+                        || right.as_ref().map(|(_, s)| s.as_str()) == Some("chan")
+                    {
+                        i += 2;
+                        continue;
+                    }
+
+                    let marker = left.or(right);
+                    if let Some((start_idx, symbol)) = marker {
+                        if symbol != "case" {
+                            let column = start_idx.saturating_sub(line_start) + 1;
+                            results.push(DetectedConstruct {
+                                kind: ConstructKind::Channel,
+                                line,
+                                column,
+                                symbol: Some(symbol),
+                                scope_key: Some(build_scope_key(line, &block_stack)),
+                                confidence: Confidence::Predicted,
+                            });
+                        }
+                    }
+
+                    i += 2;
+                    continue;
+                }
+
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                if ch == '{' {
+                    let scope_id = pending_block_scope.take().unwrap_or_else(|| {
+                        let id = next_scope_id;
+                        next_scope_id += 1;
+                        id
+                    });
+                    block_stack.push(scope_id);
+                } else if ch == '}' {
+                    block_stack.pop();
+                } else if ch == ')' && next_non_whitespace_char(&chars, i + 1) == Some('{') {
+                    let scope_id = next_scope_id;
+                    next_scope_id += 1;
+                    pending_block_scope = Some(scope_id);
+                }
+                i += 1;
+            }
+            LexState::LineComment => {
+                if ch == '\n' {
+                    state = LexState::Normal;
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::BlockComment => {
+                if ch == '*' && next == Some('/') {
+                    state = LexState::Normal;
+                    i += 2;
+                    continue;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::DoubleQuoteString => {
+                if ch == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::RawString => {
+                if ch == '`' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::RuneLiteral => {
+                if ch == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if ch == '\'' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+        }
+    }
+
+    results
+}
+
+fn next_non_whitespace_char(chars: &[char], mut from: usize) -> Option<char> {
+    while from < chars.len() {
+        let ch = chars[from];
+        if !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+        from += 1;
+    }
+    None
+}
+
+fn build_scope_key(line: usize, block_stack: &[usize]) -> String {
+    if block_stack.is_empty() {
+        return format!("L{}::global", line);
+    }
+    let mut key = String::new();
+    for (index, scope_id) in block_stack.iter().enumerate() {
+        if index > 0 {
+            key.push('>');
+        }
+        key.push('S');
+        key.push_str(&scope_id.to_string());
+    }
+    key
+}
+
+impl DetectedConstruct {
+    fn kind_name(&self) -> &'static str {
+        match self.kind {
+            ConstructKind::Channel => "channel",
+            ConstructKind::Select => "select",
+            ConstructKind::Mutex => "mutex",
+            ConstructKind::WaitGroup => "waitgroup",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -325,6 +591,7 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
                         line: line_num,
                         column: col_num,
                         symbol: Some(name),
+                        scope_key: None,
                         confidence: Confidence::Confirmed,
                     });
                 }
@@ -460,5 +727,83 @@ m Variable 6:2-6:10
         );
         assert_eq!(waitgroup.unwrap().line, 5);
         assert_eq!(waitgroup.unwrap().column, 2);
+    }
+
+    #[test]
+    fn detects_channel_flow_markers_for_send_and_receive() {
+        let source = r#"package main
+
+func worker(ch chan int, in <-chan int) {
+    // comment <- not an operation
+    message := "string <- not an operation"
+    ch <- 1
+    value := <-in
+    chan<- int(nil)
+    _ = value
+    _ = message
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs
+                .iter()
+                .any(|item| item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("ch")
+                    && item.line == 6),
+            "expected send marker for channel symbol ch"
+        );
+        assert!(
+            constructs
+                .iter()
+                .any(|item| item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("in")
+                    && item.line == 7),
+            "expected receive marker for channel symbol in"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("chan")),
+            "must not treat channel type direction as a channel symbol"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("comment")),
+            "must ignore channel arrows inside comments"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("string")),
+            "must ignore channel arrows inside strings"
+        );
+    }
+
+    #[test]
+    fn channel_flow_markers_include_distinct_scope_keys_for_shadowed_symbols() {
+        let source = r#"package main
+
+func first() {
+    ch := make(chan int)
+    ch <- 1
+}
+
+func second() {
+    ch := make(chan int)
+    ch <- 2
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+        let first = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 5)
+            .expect("first ch marker should exist");
+        let second = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 10)
+            .expect("second ch marker should exist");
+
+        assert_ne!(
+            first.scope_key, second.scope_key,
+            "shadowed symbols across functions must have different scope keys"
+        );
     }
 }

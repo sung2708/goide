@@ -10,6 +10,7 @@ export type LensConstruct = {
   line: number;
   column: number;
   symbol: string | null;
+  scopeKey: string | null;
   confidence: ConcurrencyConfidence;
 };
 
@@ -18,7 +19,15 @@ export type LensHoverHint = {
   line: number;
   column: number;
   symbol: string | null;
+  scopeKey: string | null;
   confidence: ConcurrencyConfidence.Predicted;
+};
+
+export type LensCounterpartMapping = {
+  sourceLine: number;
+  counterpartLine: number;
+  symbol: string;
+  confidence: ConcurrencyConfidence;
 };
 
 export function mapApiConstructToLensConstruct(
@@ -32,6 +41,7 @@ export function mapApiConstructToLensConstruct(
     line: construct.line,
     column: construct.column,
     symbol: construct.symbol,
+    scopeKey: construct.scopeKey ?? null,
     confidence: construct.confidence,
   };
 }

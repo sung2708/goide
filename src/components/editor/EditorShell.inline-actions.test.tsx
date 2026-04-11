@@ -12,9 +12,16 @@ let mockConstructs = [
     line: 1,
     column: 1,
     symbol: null as string | null,
+    scopeKey: null as string | null,
     confidence: ConcurrencyConfidence.Predicted,
   },
 ];
+let mockCounterpartMappings: Array<{
+  sourceLine: number;
+  counterpartLine: number;
+  symbol: string;
+  confidence: ConcurrencyConfidence;
+}> = [];
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -31,6 +38,7 @@ vi.mock("../../lib/ipc/client", async () => {
 vi.mock("../../features/concurrency/useLensSignals", () => ({
   useLensSignals: () => ({
     detectedConstructs: mockConstructs,
+    counterpartMappings: mockCounterpartMappings,
     isAnalyzing: false,
     analysisError: null,
   }),
@@ -82,9 +90,11 @@ describe("EditorShell inline actions", () => {
         line: 1,
         column: 1,
         symbol: null,
+        scopeKey: null,
         confidence: ConcurrencyConfidence.Predicted,
       },
     ];
+    mockCounterpartMappings = [];
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
@@ -113,9 +123,11 @@ describe("EditorShell inline actions", () => {
         line: 1,
         column: 1,
         symbol: null,
+        scopeKey: null,
         confidence: ConcurrencyConfidence.Predicted,
       },
     ];
+    mockCounterpartMappings = [];
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
@@ -130,19 +142,21 @@ describe("EditorShell inline actions", () => {
     expect(screen.getByRole("button", { name: /jump/i })).toBeDisabled();
   });
 
-  it("enables Jump when a counterpart construct exists for the active symbol", async () => {
+  it("enables Jump when counterpart mappings contain the active line", async () => {
     mockConstructs = [
       {
         kind: "channel",
         line: 1,
         column: 1,
         symbol: "jobs",
+        scopeKey: "S1",
         confidence: ConcurrencyConfidence.Predicted,
       },
+    ];
+    mockCounterpartMappings = [
       {
-        kind: "channel",
-        line: 2,
-        column: 1,
+        sourceLine: 1,
+        counterpartLine: 2,
         symbol: "jobs",
         confidence: ConcurrencyConfidence.Predicted,
       },

@@ -68,6 +68,7 @@ pub struct ConcurrencyConstructDto {
     pub line: usize,
     pub column: usize,
     pub symbol: Option<String>,
+    pub scope_key: Option<String>,
     pub confidence: ConcurrencyConfidenceDto,
 }
 

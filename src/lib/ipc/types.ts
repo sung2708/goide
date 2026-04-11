@@ -32,6 +32,7 @@ export type ConcurrencyConstruct = {
   line: number;
   column: number;
   symbol: string | null;
+  scopeKey?: string | null;
   confidence: ConcurrencyConfidence;
 };
 

@@ -75,6 +75,7 @@ pub async fn analyze_active_file_concurrency(
                     line: item.line,
                     column: item.column,
                     symbol: item.symbol,
+                    scope_key: item.scope_key,
                     confidence: match item.confidence {
                         gopls::Confidence::Predicted => ConcurrencyConfidenceDto::Predicted,
                         gopls::Confidence::Likely => ConcurrencyConfidenceDto::Likely,

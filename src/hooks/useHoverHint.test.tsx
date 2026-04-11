@@ -13,6 +13,7 @@ function makeConstruct(
     line,
     column: 1,
     symbol: null,
+    scopeKey: null,
     confidence,
   };
 }
@@ -138,4 +139,3 @@ describe("useHoverHint", () => {
     expect(result.current.activeHintLine).toBe(9);
   });
 });
-
