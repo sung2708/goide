@@ -3,6 +3,7 @@ type StatusBarProps = {
   activeFilePath: string | null;
   mode: "quick-insight" | "deep-trace";
   runtimeAvailability: "available" | "unavailable";
+  saveStatus?: "idle" | "saving" | "saved" | "error";
   isSummaryOpen: boolean;
   isBottomPanelOpen: boolean;
   isCommandPaletteOpen: boolean;
@@ -16,6 +17,7 @@ function StatusBar({
   activeFilePath,
   mode,
   runtimeAvailability,
+  saveStatus = "idle",
   isSummaryOpen,
   isBottomPanelOpen,
   isCommandPaletteOpen,
@@ -85,7 +87,7 @@ function StatusBar({
           Bottom
         </button>
         <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Status: Ready
+          Status: {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? "Save Error" : "Ready"}
         </span>
       </div>
     </div>
