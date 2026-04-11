@@ -61,14 +61,20 @@ function EditorShell() {
     (hoveredLine !== null || selectedLine === activeHintLine);
 
   const hasCounterpart = useMemo(() => {
-    if (activeHintLine === null) {
+    if (activeHintLine === null || activeHint?.kind !== "channel") {
+      return false;
+    }
+    const hintSymbol =
+      typeof activeHint.symbol === "string" ? activeHint.symbol.trim() : "";
+    if (!hintSymbol) {
       return false;
     }
 
     return counterpartMappings.some(
-      (mapping) => mapping.sourceLine === activeHintLine
+      (mapping) =>
+        mapping.sourceLine === activeHintLine && mapping.symbol === hintSymbol
     );
-  }, [activeHintLine, counterpartMappings]);
+  }, [activeHint, activeHintLine, counterpartMappings]);
 
   const openCommandPalette = useCallback(() => {
     if (isCommandPaletteOpen) {

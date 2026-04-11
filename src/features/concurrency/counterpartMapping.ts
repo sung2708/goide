@@ -40,27 +40,27 @@ function toFunctionScopeKey(scopeKey: string | null): string | null {
   return segments[0] ?? null;
 }
 
-function toDeterministicConfidence(constructs: LensConstruct[]): ConcurrencyConfidence {
-  if (
-    constructs.some(
-      (construct) => construct.confidence === ConcurrencyConfidence.Confirmed
-    )
-  ) {
-    return ConcurrencyConfidence.Confirmed;
-  }
-  if (
-    constructs.some((construct) => construct.confidence === ConcurrencyConfidence.Likely)
-  ) {
-    return ConcurrencyConfidence.Likely;
-  }
-  return ConcurrencyConfidence.Predicted;
-}
-
 function pickNearestCounterpart(
   sourceLine: number,
-  candidates: Array<{ line: number; scopeKey: string }>
-): number | null {
-  let nearest: number | null = null;
+  candidates: Array<{
+    line: number;
+    scopeKey: string;
+    confidence: ConcurrencyConfidence;
+  }>
+):
+  | {
+      line: number;
+      scopeKey: string;
+      confidence: ConcurrencyConfidence;
+    }
+  | null {
+  let nearest:
+    | {
+        line: number;
+        scopeKey: string;
+        confidence: ConcurrencyConfidence;
+      }
+    | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
 
   for (const candidate of candidates) {
@@ -72,9 +72,9 @@ function pickNearestCounterpart(
       distance < nearestDistance ||
       (distance === nearestDistance &&
         nearest !== null &&
-        candidate.line < nearest)
+        candidate.line < nearest.line)
     ) {
-      nearest = candidate.line;
+      nearest = candidate;
       nearestDistance = distance;
     }
   }
@@ -96,6 +96,21 @@ function isScopeRelated(scopeA: string, scopeB: string): boolean {
     return true;
   }
   return scopeA.startsWith(`${scopeB}>`) || scopeB.startsWith(`${scopeA}>`);
+}
+
+function pairConfidence(
+  sourceConfidence: ConcurrencyConfidence,
+  counterpartConfidence: ConcurrencyConfidence
+): ConcurrencyConfidence {
+  const ranks = {
+    [ConcurrencyConfidence.Predicted]: 0,
+    [ConcurrencyConfidence.Likely]: 1,
+    [ConcurrencyConfidence.Confirmed]: 2,
+  } as const;
+
+  return ranks[sourceConfidence] <= ranks[counterpartConfidence]
+    ? sourceConfidence
+    : counterpartConfidence;
 }
 
 export function buildCounterpartMappings(
@@ -131,9 +146,16 @@ export function buildCounterpartMappings(
       .map((construct) => ({
         line: construct.line,
         scopeKey: toScopeKey(construct.scopeKey),
+        confidence: construct.confidence,
       }))
       .filter(
-        (point): point is { line: number; scopeKey: string } =>
+        (
+          point
+        ): point is {
+          line: number;
+          scopeKey: string;
+          confidence: ConcurrencyConfidence;
+        } =>
           typeof point.scopeKey === "string"
       );
     const receivePoints = group
@@ -141,9 +163,16 @@ export function buildCounterpartMappings(
       .map((construct) => ({
         line: construct.line,
         scopeKey: toScopeKey(construct.scopeKey),
+        confidence: construct.confidence,
       }))
       .filter(
-        (point): point is { line: number; scopeKey: string } =>
+        (
+          point
+        ): point is {
+          line: number;
+          scopeKey: string;
+          confidence: ConcurrencyConfidence;
+        } =>
           typeof point.scopeKey === "string"
       );
 
@@ -151,20 +180,19 @@ export function buildCounterpartMappings(
       continue;
     }
 
-    const confidence = toDeterministicConfidence(group);
     for (const sourcePoint of sendPoints) {
       const relatedReceives = receivePoints.filter((candidate) =>
         isScopeRelated(sourcePoint.scopeKey, candidate.scopeKey)
       );
-      const counterpartLine = pickNearestCounterpart(sourcePoint.line, relatedReceives);
-      if (counterpartLine === null) {
+      const counterpartPoint = pickNearestCounterpart(sourcePoint.line, relatedReceives);
+      if (counterpartPoint === null) {
         continue;
       }
       mappings.push({
         sourceLine: sourcePoint.line,
-        counterpartLine,
+        counterpartLine: counterpartPoint.line,
         symbol,
-        confidence,
+        confidence: pairConfidence(sourcePoint.confidence, counterpartPoint.confidence),
       });
     }
 
@@ -172,15 +200,15 @@ export function buildCounterpartMappings(
       const relatedSends = sendPoints.filter((candidate) =>
         isScopeRelated(sourcePoint.scopeKey, candidate.scopeKey)
       );
-      const counterpartLine = pickNearestCounterpart(sourcePoint.line, relatedSends);
-      if (counterpartLine === null) {
+      const counterpartPoint = pickNearestCounterpart(sourcePoint.line, relatedSends);
+      if (counterpartPoint === null) {
         continue;
       }
       mappings.push({
         sourceLine: sourcePoint.line,
-        counterpartLine,
+        counterpartLine: counterpartPoint.line,
         symbol,
-        confidence,
+        confidence: pairConfidence(sourcePoint.confidence, counterpartPoint.confidence),
       });
     }
   }

@@ -60,25 +60,7 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
     results.extend(detect_channel_flow_markers(&source));
 
     if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
-        for gopls_construct in gopls_results {
-            // Find existing lexer detection on the same line.
-            // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
-            // The identifier (gopls symbol) comes BEFORE the type (lexer token).
-            if let Some(existing) = results.iter_mut().find(|item| {
-                item.kind != ConstructKind::Channel
-                    && item.line == gopls_construct.line
-                    && item.column >= gopls_construct.column
-            }) {
-                // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
-                existing.confidence = Confidence::Confirmed;
-                if existing.symbol.is_none()
-                    || existing.symbol.as_deref() == Some("sync.Mutex")
-                    || existing.symbol.as_deref() == Some("sync.WaitGroup")
-                {
-                    existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
-                }
-            }
-        }
+        merge_gopls_constructs(&mut results, gopls_results);
     }
 
     results.sort_by(|a, b| {
@@ -98,6 +80,30 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
     });
 
     Ok(results)
+}
+
+fn merge_gopls_constructs(results: &mut [DetectedConstruct], gopls_results: Vec<DetectedConstruct>) {
+    for gopls_construct in gopls_results {
+        // Find existing lexer detection on the same line.
+        // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
+        // The identifier (gopls symbol) comes BEFORE the type (lexer token).
+        // For channels, merge only declaration tokens (channel_operation == None),
+        // never send/receive flow markers.
+        if let Some(existing) = results.iter_mut().find(|item| {
+            (item.kind != ConstructKind::Channel || item.channel_operation.is_none())
+                && item.line == gopls_construct.line
+                && item.column >= gopls_construct.column
+        }) {
+            // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
+            existing.confidence = Confidence::Confirmed;
+            if existing.symbol.is_none()
+                || existing.symbol.as_deref() == Some("sync.Mutex")
+                || existing.symbol.as_deref() == Some("sync.WaitGroup")
+            {
+                existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
+            }
+        }
+    }
 }
 
 fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
@@ -1047,5 +1053,60 @@ func worker(done <-chan struct{}) {
             }),
             "standalone <-done at line start must be detected as receive"
         );
+    }
+
+    #[test]
+    fn merges_gopls_symbol_into_channel_declaration_construct() {
+        let mut results = vec![DetectedConstruct {
+            kind: ConstructKind::Channel,
+            line: 3,
+            column: 12, // "chan" token column in e.g. `var jobs chan int`
+            symbol: None,
+            scope_key: None,
+            confidence: Confidence::Predicted,
+            channel_operation: None,
+        }];
+        let gopls_results = vec![DetectedConstruct {
+            kind: ConstructKind::Mutex, // dummy kind for parsed gopls symbol entry
+            line: 3,
+            column: 5, // identifier `jobs` appears before `chan`
+            symbol: Some("jobs".to_string()),
+            scope_key: None,
+            confidence: Confidence::Confirmed,
+            channel_operation: None,
+        }];
+
+        merge_gopls_constructs(&mut results, gopls_results);
+
+        assert_eq!(results.len(), 1, "must upgrade in place rather than duplicate");
+        assert_eq!(results[0].symbol.as_deref(), Some("jobs"));
+        assert_eq!(results[0].confidence, Confidence::Confirmed);
+    }
+
+    #[test]
+    fn does_not_merge_gopls_symbol_into_channel_flow_marker() {
+        let mut results = vec![DetectedConstruct {
+            kind: ConstructKind::Channel,
+            line: 6,
+            column: 5,
+            symbol: Some("ch".to_string()),
+            scope_key: Some("F1>B2".to_string()),
+            confidence: Confidence::Predicted,
+            channel_operation: Some(ChannelOperation::Send),
+        }];
+        let gopls_results = vec![DetectedConstruct {
+            kind: ConstructKind::Mutex, // dummy kind for parsed gopls symbol entry
+            line: 6,
+            column: 2,
+            symbol: Some("other".to_string()),
+            scope_key: None,
+            confidence: Confidence::Confirmed,
+            channel_operation: None,
+        }];
+
+        merge_gopls_constructs(&mut results, gopls_results);
+
+        assert_eq!(results[0].symbol.as_deref(), Some("ch"));
+        assert_eq!(results[0].confidence, Confidence::Predicted);
     }
 }

@@ -171,4 +171,26 @@ describe("buildCounterpartMappings", () => {
 
     expect(mappings).toEqual([]);
   });
+
+  it("uses weakest confidence from matched send/receive endpoints", () => {
+    const mappings = buildCounterpartMappings([
+      channel(10, "jobs", "send", ConcurrencyConfidence.Confirmed, "F1>B2"),
+      channel(18, "jobs", "receive", ConcurrencyConfidence.Predicted, "F1>B2"),
+    ]);
+
+    expect(mappings).toEqual([
+      {
+        sourceLine: 10,
+        counterpartLine: 18,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+      {
+        sourceLine: 18,
+        counterpartLine: 10,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ]);
+  });
 });

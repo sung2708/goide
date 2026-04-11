@@ -173,4 +173,44 @@ describe("EditorShell inline actions", () => {
 
     expect(screen.getByRole("button", { name: /jump/i })).toBeEnabled();
   });
+
+  it("keeps Jump disabled when active hint is not the mapped channel construct", async () => {
+    mockConstructs = [
+      {
+        kind: "wait-group",
+        line: 1,
+        column: 1,
+        symbol: null,
+        scopeKey: "S1",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: "jobs",
+        scopeKey: "S1",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    expect(screen.getByRole("button", { name: /jump/i })).toBeDisabled();
+  });
 });
