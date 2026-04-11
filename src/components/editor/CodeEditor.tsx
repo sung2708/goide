@@ -220,7 +220,9 @@ function CodeEditor({
           y: event.clientY,
         });
         const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
-        const isModifierClick = event.metaKey || event.ctrlKey;
+        const isMac = navigator.platform.startsWith("Mac");
+        const isModifierClick =
+          event.button === 0 && (isMac ? event.metaKey : event.ctrlKey);
         if (nextLine !== null && isModifierClick && onModifierClickLine) {
           event.preventDefault();
           event.stopPropagation();
