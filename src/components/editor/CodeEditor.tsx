@@ -24,7 +24,7 @@ type CodeEditorProps = {
   jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
-  onModifierClickLine?: (line: number) => void;
+  onModifierClickLine?: (line: number) => boolean;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
 };
@@ -126,6 +126,7 @@ function CodeEditor({
       effects: EditorView.scrollIntoView(from, { y: "center" }),
     });
     view.focus();
+    emitViewportRange(view);
     emitSelectionLine(line);
     emitInteractionAnchor(line);
   }, [jumpRequest]);
@@ -224,10 +225,12 @@ function CodeEditor({
         const isModifierClick =
           event.button === 0 && (isMac ? event.metaKey : event.ctrlKey);
         if (nextLine !== null && isModifierClick && onModifierClickLine) {
-          event.preventDefault();
-          event.stopPropagation();
-          onModifierClickLine(nextLine);
-          return;
+          const didHandleModifierClick = onModifierClickLine(nextLine) === true;
+          if (didHandleModifierClick) {
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
         }
         emitSelectionLine(nextLine);
         emitInteractionAnchor(nextLine);

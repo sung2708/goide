@@ -117,7 +117,7 @@ describe("CodeEditor", () => {
 
     try {
       const selectionSpy = vi.fn();
-      const modifierSpy = vi.fn();
+      const modifierSpy = vi.fn().mockReturnValue(true);
       const { container } = render(
         <CodeEditor
           value={"package main\nfunc main() {}\n"}
@@ -162,7 +162,7 @@ describe("CodeEditor", () => {
 
     try {
       const selectionSpy = vi.fn();
-      const modifierSpy = vi.fn();
+      const modifierSpy = vi.fn().mockReturnValue(true);
       const { container } = render(
         <CodeEditor
           value={"package main\nfunc main() {}\n"}

@@ -128,12 +128,14 @@ function EditorShell() {
   }, [requestJump, resolveCounterpartFromActiveHint]);
 
   const handleModifierClickLine = useCallback(
-    (line: number) => {
+    (line: number): boolean => {
       const symbolForLine =
         activeHintLine === line && activeHint?.kind === "channel"
           ? activeHint.symbol
           : null;
-      requestJump(resolveCounterpartLine(line, symbolForLine));
+      const targetLine = resolveCounterpartLine(line, symbolForLine);
+      requestJump(targetLine);
+      return targetLine !== null;
     },
     [activeHint, activeHintLine, requestJump, resolveCounterpartLine]
   );

@@ -72,7 +72,7 @@ vi.mock("./CodeEditor", () => ({
   }: {
     onHoverLineChange?: (line: number | null) => void;
     onSelectionLineChange?: (line: number | null) => void;
-    onModifierClickLine?: (line: number) => void;
+    onModifierClickLine?: (line: number) => boolean;
     jumpRequest?: { line: number; requestId: number } | null;
   }) => (
     <div
