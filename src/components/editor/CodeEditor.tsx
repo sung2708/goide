@@ -220,10 +220,11 @@ function CodeEditor({
           y: event.clientY,
         });
         const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
-        if (nextLine !== null && (event.metaKey || event.ctrlKey)) {
+        const isModifierClick = event.metaKey || event.ctrlKey;
+        if (nextLine !== null && isModifierClick && onModifierClickLine) {
           event.preventDefault();
           event.stopPropagation();
-          onModifierClickLine?.(nextLine);
+          onModifierClickLine(nextLine);
           return;
         }
         emitSelectionLine(nextLine);
