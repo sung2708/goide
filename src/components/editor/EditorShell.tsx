@@ -129,13 +129,17 @@ function EditorShell() {
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
-      const symbolForLine =
-        activeHintLine === line && activeHint?.kind === "channel"
-          ? activeHint.symbol
-          : null;
-      const targetLine = resolveCounterpartLine(line, symbolForLine);
+      if (activeHintLine !== line || activeHint?.kind !== "channel") {
+        return false;
+      }
+
+      const targetLine = resolveCounterpartLine(line, activeHint.symbol);
+      if (targetLine === null) {
+        return false;
+      }
+
       requestJump(targetLine);
-      return targetLine !== null;
+      return true;
     },
     [activeHint, activeHintLine, requestJump, resolveCounterpartLine]
   );
