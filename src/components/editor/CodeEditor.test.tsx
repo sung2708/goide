@@ -322,4 +322,22 @@ describe("CodeEditor", () => {
     expect(viewportSpy).toHaveBeenCalledTimes(2);
     expect(viewportSpy).toHaveBeenNthCalledWith(2, { fromLine: 2, toLine: 2 });
   });
+
+  it("emits counterpart line anchor when counterpartLine is provided and within viewport", () => {
+    const counterpartAnchorSpy = vi.fn();
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        counterpartLine={2}
+        onCounterpartAnchorChange={counterpartAnchorSpy}
+      />
+    );
+
+    // line 2 -> from: 13 -> domAtPos -> element
+    // We assume posAtCoords / coordsAtPos returns mocked values.
+    // The mock for view.coordsAtPos returns { top: 100, left: 200 } by default
+    // Container rect is { top: 0, left: 0 } in JSDOM typically
+    
+    expect(counterpartAnchorSpy).toHaveBeenCalledWith(expect.objectContaining({ top: 44 }));
+  });
 });
