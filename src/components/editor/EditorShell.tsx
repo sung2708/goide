@@ -8,6 +8,9 @@ import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
 import ThreadLine from "../overlays/ThreadLine";
+import TraceBubble from "../overlays/TraceBubble";
+import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
+import type { LensHoverHint, LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
@@ -18,6 +21,12 @@ const EDITOR_BG = "bg-[#1e1e2e]";
 const PANEL_BG = "bg-[#181825]";
 const BORDER = "border-[#313244]";
 const TEXT_MUTED = "text-[#a6adc8]";
+const KIND_LABELS: Record<LensConstructKind, string> = {
+  channel: "Channel Op",
+  select: "Select Stmt",
+  mutex: "Mutex",
+  "wait-group": "WaitGroup",
+};
 
 function EditorShell() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -70,6 +79,13 @@ function EditorShell() {
   const isInlineActionsVisible =
     activeHint !== null &&
     (hoveredLine !== null || selectedLine === activeHintLine);
+
+  const traceBubbleLabel = activeHint?.kind
+    ? (KIND_LABELS[activeHint.kind] ?? activeHint.kind)
+    : "";
+
+  const traceBubbleConfidence: TraceBubbleConfidence =
+    (activeHint?.confidence?.toLowerCase() as TraceBubbleConfidence) ?? "predicted";
 
   const resolveCounterpartLine = useCallback(
     (sourceLine: number, hintSymbol?: string | null) => {
@@ -363,6 +379,13 @@ function EditorShell() {
                           visible={isInlineActionsVisible && hasCounterpart}
                           sourceAnchor={interactionAnchor}
                           targetAnchor={counterpartAnchor}
+                        />
+                        <TraceBubble
+                          visible={isInlineActionsVisible}
+                          confidence={traceBubbleConfidence}
+                          label={traceBubbleLabel}
+                          anchorTop={Math.max(4, (interactionAnchor?.top ?? 24) - 28)}
+                          anchorLeft={interactionAnchor?.left ?? 12}
                         />
                         <InlineActions
                           visible={isInlineActionsVisible}
