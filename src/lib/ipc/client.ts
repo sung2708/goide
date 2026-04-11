@@ -26,6 +26,18 @@ export async function readWorkspaceFile(
   });
 }
 
+export async function writeWorkspaceFile(
+  workspaceRoot: string,
+  relativePath: string,
+  content: string
+): Promise<ApiResponse<void>> {
+  return invoke<ApiResponse<void>>("write_workspace_file", {
+    workspaceRoot,
+    relativePath,
+    content,
+  });
+}
+
 export async function analyzeActiveFileConcurrency(
   request: AnalyzeConcurrencyRequest
 ): Promise<ApiResponse<ConcurrencyConstruct[]>> {
