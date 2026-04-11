@@ -44,6 +44,10 @@ function EditorShell() {
   const jumpRequestIdRef = useRef(0);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+
+  useEffect(() => {
+    setJumpRequest(null);
+  }, [workspacePath, activeFilePath]);
   const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
     activeFilePath,

@@ -221,6 +221,8 @@ function CodeEditor({
         });
         const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
         if (nextLine !== null && (event.metaKey || event.ctrlKey)) {
+          event.preventDefault();
+          event.stopPropagation();
           onModifierClickLine?.(nextLine);
           return;
         }
