@@ -58,21 +58,23 @@ function toDeterministicConfidence(constructs: LensConstruct[]): ConcurrencyConf
 
 function pickNearestCounterpart(
   sourceLine: number,
-  lines: number[]
+  candidates: Array<{ line: number; scopeKey: string }>
 ): number | null {
   let nearest: number | null = null;
   let nearestDistance = Number.POSITIVE_INFINITY;
 
-  for (const candidate of lines) {
-    if (candidate === sourceLine) {
+  for (const candidate of candidates) {
+    if (candidate.line === sourceLine) {
       continue;
     }
-    const distance = Math.abs(candidate - sourceLine);
+    const distance = Math.abs(candidate.line - sourceLine);
     if (
       distance < nearestDistance ||
-      (distance === nearestDistance && nearest !== null && candidate < nearest)
+      (distance === nearestDistance &&
+        nearest !== null &&
+        candidate.line < nearest)
     ) {
-      nearest = candidate;
+      nearest = candidate.line;
       nearestDistance = distance;
     }
   }
@@ -87,6 +89,13 @@ function toChannelOperationKey(
     return operation;
   }
   return null;
+}
+
+function isScopeRelated(scopeA: string, scopeB: string): boolean {
+  if (scopeA === scopeB) {
+    return true;
+  }
+  return scopeA.startsWith(`${scopeB}>`) || scopeB.startsWith(`${scopeA}>`);
 }
 
 export function buildCounterpartMappings(
@@ -117,45 +126,58 @@ export function buildCounterpartMappings(
   for (const [groupKey, group] of grouped.entries()) {
     const separatorIndex = groupKey.lastIndexOf("::");
     const symbol = separatorIndex >= 0 ? groupKey.slice(separatorIndex + 2) : groupKey;
-    const sendLines = Array.from(
-      new Set(
-        group
-          .filter((construct) => toChannelOperationKey(construct.channelOperation) === "send")
-          .map((construct) => construct.line)
-      )
-    ).sort((a, b) => a - b);
-    const receiveLines = Array.from(
-      new Set(
-        group
-          .filter((construct) => toChannelOperationKey(construct.channelOperation) === "receive")
-          .map((construct) => construct.line)
-      )
-    ).sort((a, b) => a - b);
-    if (sendLines.length === 0 || receiveLines.length === 0) {
+    const sendPoints = group
+      .filter((construct) => toChannelOperationKey(construct.channelOperation) === "send")
+      .map((construct) => ({
+        line: construct.line,
+        scopeKey: toScopeKey(construct.scopeKey),
+      }))
+      .filter(
+        (point): point is { line: number; scopeKey: string } =>
+          typeof point.scopeKey === "string"
+      );
+    const receivePoints = group
+      .filter((construct) => toChannelOperationKey(construct.channelOperation) === "receive")
+      .map((construct) => ({
+        line: construct.line,
+        scopeKey: toScopeKey(construct.scopeKey),
+      }))
+      .filter(
+        (point): point is { line: number; scopeKey: string } =>
+          typeof point.scopeKey === "string"
+      );
+
+    if (sendPoints.length === 0 || receivePoints.length === 0) {
       continue;
     }
 
     const confidence = toDeterministicConfidence(group);
-    for (const sourceLine of sendLines) {
-      const counterpartLine = pickNearestCounterpart(sourceLine, receiveLines);
+    for (const sourcePoint of sendPoints) {
+      const relatedReceives = receivePoints.filter((candidate) =>
+        isScopeRelated(sourcePoint.scopeKey, candidate.scopeKey)
+      );
+      const counterpartLine = pickNearestCounterpart(sourcePoint.line, relatedReceives);
       if (counterpartLine === null) {
         continue;
       }
       mappings.push({
-        sourceLine,
+        sourceLine: sourcePoint.line,
         counterpartLine,
         symbol,
         confidence,
       });
     }
 
-    for (const sourceLine of receiveLines) {
-      const counterpartLine = pickNearestCounterpart(sourceLine, sendLines);
+    for (const sourcePoint of receivePoints) {
+      const relatedSends = sendPoints.filter((candidate) =>
+        isScopeRelated(sourcePoint.scopeKey, candidate.scopeKey)
+      );
+      const counterpartLine = pickNearestCounterpart(sourcePoint.line, relatedSends);
       if (counterpartLine === null) {
         continue;
       }
       mappings.push({
-        sourceLine,
+        sourceLine: sourcePoint.line,
         counterpartLine,
         symbol,
         confidence,

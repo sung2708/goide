@@ -152,6 +152,15 @@ describe("buildCounterpartMappings", () => {
     expect(mappings).toEqual([]);
   });
 
+  it("does not pair same symbol across sibling block scopes", () => {
+    const mappings = buildCounterpartMappings([
+      channel(10, "ch", "send", ConcurrencyConfidence.Predicted, "F1>B2"),
+      channel(18, "ch", "receive", ConcurrencyConfidence.Predicted, "F1>B3"),
+    ]);
+
+    expect(mappings).toEqual([]);
+  });
+
   it("does not map channel operations when direction is the same", () => {
     const mappings = buildCounterpartMappings([
       channel(4, "ch", "send"),

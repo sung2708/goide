@@ -195,6 +195,21 @@ fn scan_right_identifier(chars: &[char], op_start: usize) -> Option<(usize, Stri
     Some((start, chars[start..i].iter().collect()))
 }
 
+fn prev_non_whitespace_char(chars: &[char], mut from_exclusive: usize) -> Option<char> {
+    while from_exclusive > 0 {
+        from_exclusive -= 1;
+        let ch = chars[from_exclusive];
+        if !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+    }
+    None
+}
+
+fn is_receive_leading_keyword(text: &str) -> bool {
+    matches!(text, "case" | "return" | "go" | "defer" | "if" | "for" | "switch" | "select")
+}
+
 fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
     let mut results = Vec::new();
     let chars: Vec<char> = source.chars().collect();
@@ -251,17 +266,34 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                         continue;
                     }
 
-                    let marker = if left.as_ref().map(|(_, s)| s.as_str()) == Some("case") {
-                        right
-                    } else {
-                        left.or(right)
-                    };
-                    if let Some((start_idx, symbol)) = marker {
-                        let channel_operation = if start_idx < i {
-                            ChannelOperation::Send
+                    let prev_non_ws = prev_non_whitespace_char(&chars, i);
+                    let receive_context = left
+                        .as_ref()
+                        .map(|(_, text)| is_receive_leading_keyword(text))
+                        .unwrap_or(false)
+                        || left.is_none()
+                            && matches!(
+                                prev_non_ws,
+                                Some('=') | Some(':') | Some('(') | Some(',') | Some('{') | Some('[')
+                            );
+
+                    let marker = if let Some((start_idx, symbol)) = left.as_ref() {
+                        if !is_receive_leading_keyword(symbol) {
+                            Some((*start_idx, symbol.clone(), ChannelOperation::Send))
                         } else {
-                            ChannelOperation::Receive
-                        };
+                            right
+                                .as_ref()
+                                .map(|(idx, sym)| (*idx, sym.clone(), ChannelOperation::Receive))
+                        }
+                    } else if receive_context {
+                        right
+                            .as_ref()
+                            .map(|(idx, sym)| (*idx, sym.clone(), ChannelOperation::Receive))
+                    } else {
+                        None
+                    };
+
+                    if let Some((start_idx, symbol, channel_operation)) = marker {
                         let column = start_idx.saturating_sub(line_start) + 1;
                         results.push(DetectedConstruct {
                             kind: ConstructKind::Channel,
@@ -959,6 +991,24 @@ func worker(ch chan int) {
             innermost_function_scope(send_scope),
             innermost_function_scope(receive_scope),
             "if condition calls like ok() must not introduce a new function scope"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_receive_for_complex_lhs_send() {
+        let source = r#"package main
+
+func worker(channels []chan int, job int) {
+    channels[0] <- job
+    getCh() <- job
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("job")),
+            "complex-lhs sends must not be inferred as receive markers on rhs symbol"
         );
     }
 }
