@@ -203,6 +203,7 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
     let mut state = LexState::Normal;
     let mut line_start = 0usize;
     let mut block_stack: Vec<ScopeFrame> = Vec::new();
+    let mut paren_stack: Vec<usize> = Vec::new();
     let mut next_scope_id = 1usize;
     let mut pending_block_scope: Option<ScopeFrame> = None;
 
@@ -281,7 +282,23 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                     line += 1;
                     line_start = i + 1;
                 }
-                if ch == '{' {
+                if ch == '(' {
+                    paren_stack.push(i);
+                } else if ch == ')' {
+                    let open_paren = paren_stack.pop();
+                    if next_non_whitespace_char(&chars, i + 1) == Some('{')
+                        && open_paren
+                            .map(|open_idx| is_function_signature_paren(&chars, open_idx))
+                            .unwrap_or(false)
+                    {
+                        let scope_frame = ScopeFrame {
+                            id: next_scope_id,
+                            kind: ScopeKind::Function,
+                        };
+                        next_scope_id += 1;
+                        pending_block_scope = Some(scope_frame);
+                    }
+                } else if ch == '{' {
                     let scope_frame = pending_block_scope.take().unwrap_or_else(|| {
                         let frame = ScopeFrame {
                             id: next_scope_id,
@@ -293,13 +310,6 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                     block_stack.push(scope_frame);
                 } else if ch == '}' {
                     block_stack.pop();
-                } else if ch == ')' && next_non_whitespace_char(&chars, i + 1) == Some('{') {
-                    let scope_frame = ScopeFrame {
-                        id: next_scope_id,
-                        kind: ScopeKind::Function,
-                    };
-                    next_scope_id += 1;
-                    pending_block_scope = Some(scope_frame);
                 }
                 i += 1;
             }
@@ -376,6 +386,39 @@ fn next_non_whitespace_char(chars: &[char], mut from: usize) -> Option<char> {
         from += 1;
     }
     None
+}
+
+fn scan_prev_identifier(chars: &[char], mut from_exclusive: usize) -> Option<(usize, String)> {
+    while from_exclusive > 0 && chars[from_exclusive - 1].is_ascii_whitespace() {
+        from_exclusive -= 1;
+    }
+    if from_exclusive == 0 {
+        return None;
+    }
+
+    let end = from_exclusive;
+    while from_exclusive > 0 && is_symbol_char(chars[from_exclusive - 1]) {
+        from_exclusive -= 1;
+    }
+    if from_exclusive == end {
+        return None;
+    }
+    Some((from_exclusive, chars[from_exclusive..end].iter().collect()))
+}
+
+fn is_function_signature_paren(chars: &[char], open_paren_idx: usize) -> bool {
+    let Some((first_start, first_ident)) = scan_prev_identifier(chars, open_paren_idx) else {
+        return false;
+    };
+
+    if first_ident == "func" {
+        return true;
+    }
+
+    let Some((_, second_ident)) = scan_prev_identifier(chars, first_start) else {
+        return false;
+    };
+    second_ident == "func"
 }
 
 fn build_scope_key(line: usize, block_stack: &[ScopeFrame]) -> String {
@@ -876,6 +919,46 @@ func worker(jobs <-chan int) {
         assert!(
             constructs.iter().all(|item| item.symbol.as_deref() != Some("case")),
             "must not emit case keyword as channel symbol"
+        );
+    }
+
+    #[test]
+    fn does_not_treat_if_call_clause_as_function_scope() {
+        let source = r#"package main
+
+func worker(ch chan int) {
+    ch <- 1
+    if ok() {
+        <-ch
+    }
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        let send = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 4)
+            .expect("send marker should exist");
+        let receive = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 6)
+            .expect("receive marker should exist");
+
+        fn innermost_function_scope(scope_key: &str) -> Option<&str> {
+            scope_key.split('>').rev().find(|segment| segment.starts_with('F'))
+        }
+
+        let send_scope = send.scope_key.as_deref().expect("send must have scope key");
+        let receive_scope = receive
+            .scope_key
+            .as_deref()
+            .expect("receive must have scope key");
+
+        assert_eq!(
+            innermost_function_scope(send_scope),
+            innermost_function_scope(receive_scope),
+            "if condition calls like ok() must not introduce a new function scope"
         );
     }
 }
