@@ -47,6 +47,7 @@ function EditorShell() {
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
+  const latestEditorContentRef = useRef<string | null>(null);
   const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
     useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
@@ -63,6 +64,8 @@ function EditorShell() {
   const jumpRequestIdRef = useRef(0);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
+  const activeFilePathRef = useRef(activeFilePath);
+  activeFilePathRef.current = activeFilePath;
 
   useEffect(() => {
     setJumpRequest(null);
@@ -175,24 +178,44 @@ function EditorShell() {
       }
 
       isSavingRef.current = true;
+      latestEditorContentRef.current = content;
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
         saveStatusTimerRef.current = null;
       }
 
+      const saveWorkspacePath = workspacePath;
+      const saveFilePath = currentPath;
       setSaveStatus("saving");
       try {
         const response = await writeWorkspaceFile(workspacePath, currentPath, content);
+        if (
+          workspacePathRef.current !== saveWorkspacePath ||
+          activeFilePathRef.current !== saveFilePath
+        ) {
+          return;
+        }
         if (response.ok) {
           savedContentRef.current = content;
-          setIsDirty(false);
-          setSaveStatus("saved");
-          saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
+          const hasNewerEdits = latestEditorContentRef.current !== content;
+          setIsDirty(hasNewerEdits);
+          if (hasNewerEdits) {
+            setSaveStatus("idle");
+          } else {
+            setSaveStatus("saved");
+            saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
+          }
         } else {
           setSaveStatus("error");
           saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
         }
       } catch (error) {
+        if (
+          workspacePathRef.current !== saveWorkspacePath ||
+          activeFilePathRef.current !== saveFilePath
+        ) {
+          return;
+        }
         setSaveStatus("error");
         saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
         console.error("Failed to save file:", error);
@@ -204,6 +227,7 @@ function EditorShell() {
   );
 
   const handleEditorChange = useCallback((value: string) => {
+    latestEditorContentRef.current = value;
     setIsDirty(value !== savedContentRef.current);
     // Reset transient statuses when the user starts editing again
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
@@ -327,6 +351,7 @@ function EditorShell() {
         setActiveFilePath(relativePath);
         setActiveFileContent(response.data);
         savedContentRef.current = response.data;
+        latestEditorContentRef.current = response.data;
         setIsDirty(false);
         setSaveStatus("idle");
       } catch (error) {

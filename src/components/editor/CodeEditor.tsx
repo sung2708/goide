@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import { EditorState } from "@codemirror/state";
 import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
@@ -53,6 +54,8 @@ function CodeEditor({
 }: CodeEditorProps) {
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
+    EditorState.readOnly.of(!editable),
+    EditorView.editable.of(editable),
     history(),
     keymap.of([
       ...historyKeymap,
@@ -106,7 +109,7 @@ function CodeEditor({
         });
       }
     })
-  ], [counterpartLine, onCounterpartAnchorChange, onInteractionAnchorChange, onSave]);
+  ], [counterpartLine, editable, onCounterpartAnchorChange, onInteractionAnchorChange, onSave]);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);

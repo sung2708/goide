@@ -1,7 +1,9 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::fs;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -78,7 +80,34 @@ pub fn write_file(workspace_root: &str, relative_path: &str, content: &str) -> R
         .ok_or_else(|| anyhow!("path has no filename component"))?;
     let target = canonical_parent.join(file_name);
 
-    fs::write(&target, content)
+    let mut target_exists = false;
+    match fs::symlink_metadata(&target) {
+        Ok(metadata) => {
+            target_exists = true;
+            if metadata.file_type().is_symlink() {
+                return Err(anyhow!("refusing to write through symlink target"));
+            }
+            if metadata.is_dir() {
+                return Err(anyhow!("path is not a file"));
+            }
+
+            let canonical_target = target
+                .canonicalize()
+                .with_context(|| format!("failed to resolve target path: {}", target.display()))?;
+            if !canonical_target.starts_with(&root) {
+                return Err(anyhow!("path escapes workspace root"));
+            }
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            // Creating a new file at this path is allowed.
+        }
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("failed to read metadata: {}", target.display()));
+        }
+    }
+
+    write_file_atomic(&target, content, target_exists)
         .with_context(|| format!("failed to write file: {}", target.display()))
 }
 
@@ -122,6 +151,126 @@ fn resolve_scoped_path(root: &Path, relative_path: Option<&str>) -> Result<PathB
     }
 
     Ok(canonical_target)
+}
+
+fn write_file_atomic(target: &Path, content: &str, target_exists: bool) -> Result<()> {
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("path has no parent directory"))?;
+    let base_name = target
+        .file_name()
+        .ok_or_else(|| anyhow!("path has no filename component"))?
+        .to_string_lossy();
+
+    let mut temp_path: Option<PathBuf> = None;
+    for attempt in 0..16 {
+        let now_nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let candidate = parent.join(format!(
+            ".{}.{}.{}.tmp",
+            base_name,
+            std::process::id(),
+            now_nanos + attempt
+        ));
+
+        match fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&candidate)
+        {
+            Ok(mut temp_file) => {
+                temp_file.write_all(content.as_bytes()).with_context(|| {
+                    format!("failed to write temp file: {}", candidate.display())
+                })?;
+                temp_file.sync_all().with_context(|| {
+                    format!("failed to sync temp file: {}", candidate.display())
+                })?;
+                temp_path = Some(candidate);
+                break;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("failed to create temp file in: {}", parent.display())
+                });
+            }
+        }
+    }
+
+    let temp_path =
+        temp_path.ok_or_else(|| anyhow!("failed to allocate unique temp file for atomic write"))?;
+
+    let replace_result = if target_exists {
+        replace_existing_file(&temp_path, target)
+    } else {
+        fs::rename(&temp_path, target)
+    };
+
+    if let Err(error) = replace_result {
+        let _ = fs::remove_file(&temp_path);
+        return Err(error).with_context(|| {
+            format!(
+                "failed to atomically replace {} with {}",
+                target.display(),
+                temp_path.display()
+            )
+        });
+    }
+
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_existing_file(temp_path: &Path, target: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use std::ptr::{null, null_mut};
+
+    #[link(name = "Kernel32")]
+    extern "system" {
+        fn ReplaceFileW(
+            lpReplacedFileName: *const u16,
+            lpReplacementFileName: *const u16,
+            lpBackupFileName: *const u16,
+            dwReplaceFlags: u32,
+            lpExclude: *mut core::ffi::c_void,
+            lpReserved: *mut core::ffi::c_void,
+        ) -> i32;
+    }
+
+    let target_wide: Vec<u16> = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let temp_wide: Vec<u16> = temp_path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+
+    let success = unsafe {
+        ReplaceFileW(
+            target_wide.as_ptr(),
+            temp_wide.as_ptr(),
+            null(),
+            0,
+            null_mut(),
+            null_mut(),
+        )
+    };
+
+    if success == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn replace_existing_file(temp_path: &Path, target: &Path) -> std::io::Result<()> {
+    fs::rename(temp_path, target)
 }
 
 #[cfg(test)]
@@ -208,5 +357,28 @@ mod tests {
         // Must fail because ".." escapes the workspace root
         let result = write_file(&root, "../escaped.go", "bad");
         assert!(result.is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_rejects_symlink_escape_target() {
+        use std::os::unix::fs::symlink;
+
+        let temp_dir = std::env::temp_dir().join("goide_test_write_symlink_escape");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let outside = std::env::temp_dir().join("goide_test_write_symlink_escape_outside.go");
+        fs::write(&outside, "before").unwrap();
+
+        let link = temp_dir.join("link.go");
+        symlink(&outside, &link).unwrap();
+
+        let root = temp_dir.to_string_lossy().to_string();
+        let result = write_file(&root, "link.go", "after");
+        assert!(result.is_err());
+
+        let outside_content = fs::read_to_string(&outside).unwrap();
+        assert_eq!(outside_content, "before");
     }
 }

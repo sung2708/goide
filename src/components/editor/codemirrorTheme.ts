@@ -1,4 +1,3 @@
-import { EditorState } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { go } from "@codemirror/lang-go";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
@@ -72,6 +71,4 @@ export const goideEditorExtensions = [
   go(),
   syntaxHighlighting(syntaxStyle),
   editorTheme,
-  EditorState.readOnly.of(true),
-  EditorView.editable.of(false),
 ];
