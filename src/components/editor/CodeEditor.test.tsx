@@ -115,40 +115,42 @@ describe("CodeEditor", () => {
       configurable: true,
     });
 
-    const selectionSpy = vi.fn();
-    const modifierSpy = vi.fn();
-    const { container } = render(
-      <CodeEditor
-        value={"package main\nfunc main() {}\n"}
-        onSelectionLineChange={selectionSpy}
-        onModifierClickLine={modifierSpy}
-      />
-    );
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn();
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
 
-    const editorContainer = container.firstElementChild as HTMLElement;
-    fireEvent.mouseDown(editorContainer, {
-      clientX: 8,
-      clientY: 60,
-      button: 0,
-      ctrlKey: true,
-    });
-    expect(modifierSpy).toHaveBeenCalledWith(2);
-    expect(selectionSpy).not.toHaveBeenCalled();
+      const editorContainer = container.firstElementChild as HTMLElement;
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).toHaveBeenCalledWith(2);
+      expect(selectionSpy).not.toHaveBeenCalled();
 
-    // metaKey alone should not trigger on non-Mac
-    modifierSpy.mockClear();
-    fireEvent.mouseDown(editorContainer, {
-      clientX: 8,
-      clientY: 60,
-      button: 0,
-      metaKey: true,
-    });
-    expect(modifierSpy).not.toHaveBeenCalled();
-
-    Object.defineProperty(navigator, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
+      // metaKey alone should not trigger on non-Mac
+      modifierSpy.mockClear();
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        metaKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("emits modifier-click line on Cmd+click (macOS) and does not emit selection", () => {
@@ -158,40 +160,42 @@ describe("CodeEditor", () => {
       configurable: true,
     });
 
-    const selectionSpy = vi.fn();
-    const modifierSpy = vi.fn();
-    const { container } = render(
-      <CodeEditor
-        value={"package main\nfunc main() {}\n"}
-        onSelectionLineChange={selectionSpy}
-        onModifierClickLine={modifierSpy}
-      />
-    );
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn();
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
 
-    const editorContainer = container.firstElementChild as HTMLElement;
-    fireEvent.mouseDown(editorContainer, {
-      clientX: 8,
-      clientY: 60,
-      button: 0,
-      metaKey: true,
-    });
-    expect(modifierSpy).toHaveBeenCalledWith(2);
-    expect(selectionSpy).not.toHaveBeenCalled();
+      const editorContainer = container.firstElementChild as HTMLElement;
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        metaKey: true,
+      });
+      expect(modifierSpy).toHaveBeenCalledWith(2);
+      expect(selectionSpy).not.toHaveBeenCalled();
 
-    // ctrlKey alone should not trigger on macOS (Ctrl+Click = context menu)
-    modifierSpy.mockClear();
-    fireEvent.mouseDown(editorContainer, {
-      clientX: 8,
-      clientY: 60,
-      button: 0,
-      ctrlKey: true,
-    });
-    expect(modifierSpy).not.toHaveBeenCalled();
-
-    Object.defineProperty(navigator, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
+      // ctrlKey alone should not trigger on macOS (Ctrl+Click = context menu)
+      modifierSpy.mockClear();
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("does not emit modifier-click on non-left-button modifier+click", () => {
@@ -201,30 +205,32 @@ describe("CodeEditor", () => {
       configurable: true,
     });
 
-    const selectionSpy = vi.fn();
-    const modifierSpy = vi.fn();
-    const { container } = render(
-      <CodeEditor
-        value={"package main\nfunc main() {}\n"}
-        onSelectionLineChange={selectionSpy}
-        onModifierClickLine={modifierSpy}
-      />
-    );
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn();
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
 
-    const editorContainer = container.firstElementChild as HTMLElement;
-    // button: 2 is right-click
-    fireEvent.mouseDown(editorContainer, {
-      clientX: 8,
-      clientY: 60,
-      button: 2,
-      ctrlKey: true,
-    });
-    expect(modifierSpy).not.toHaveBeenCalled();
-
-    Object.defineProperty(navigator, "platform", {
-      value: originalPlatform,
-      configurable: true,
-    });
+      const editorContainer = container.firstElementChild as HTMLElement;
+      // button: 2 is right-click
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 2,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("resets dedupe state on file identity change so same line can be selected again", () => {
