@@ -57,6 +57,15 @@ function pickNearestCounterpart(
   return nearest;
 }
 
+function toChannelOperationKey(
+  operation: LensConstruct["channelOperation"]
+): "send" | "receive" | null {
+  if (operation === "send" || operation === "receive") {
+    return operation;
+  }
+  return null;
+}
+
 export function buildCounterpartMappings(
   constructs: LensConstruct[]
 ): LensCounterpartMapping[] {
@@ -86,16 +95,40 @@ export function buildCounterpartMappings(
   for (const [groupKey, group] of grouped.entries()) {
     const separatorIndex = groupKey.lastIndexOf("::");
     const symbol = separatorIndex >= 0 ? groupKey.slice(separatorIndex + 2) : groupKey;
-    const uniqueLines = Array.from(new Set(group.map((construct) => construct.line))).sort(
-      (a, b) => a - b
-    );
-    if (uniqueLines.length < 2) {
+    const sendLines = Array.from(
+      new Set(
+        group
+          .filter((construct) => toChannelOperationKey(construct.channelOperation) === "send")
+          .map((construct) => construct.line)
+      )
+    ).sort((a, b) => a - b);
+    const receiveLines = Array.from(
+      new Set(
+        group
+          .filter((construct) => toChannelOperationKey(construct.channelOperation) === "receive")
+          .map((construct) => construct.line)
+      )
+    ).sort((a, b) => a - b);
+    if (sendLines.length === 0 || receiveLines.length === 0) {
       continue;
     }
 
     const confidence = toDeterministicConfidence(group);
-    for (const sourceLine of uniqueLines) {
-      const counterpartLine = pickNearestCounterpart(sourceLine, uniqueLines);
+    for (const sourceLine of sendLines) {
+      const counterpartLine = pickNearestCounterpart(sourceLine, receiveLines);
+      if (counterpartLine === null) {
+        continue;
+      }
+      mappings.push({
+        sourceLine,
+        counterpartLine,
+        symbol,
+        confidence,
+      });
+    }
+
+    for (const sourceLine of receiveLines) {
+      const counterpartLine = pickNearestCounterpart(sourceLine, sendLines);
       if (counterpartLine === null) {
         continue;
       }

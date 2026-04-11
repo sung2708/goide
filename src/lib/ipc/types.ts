@@ -27,6 +27,8 @@ export enum ConcurrencyConfidence {
   Confirmed = "confirmed",
 }
 
+export type ChannelOperation = "send" | "receive";
+
 export type ConcurrencyConstruct = {
   kind: ConcurrencyConstructKind;
   line: number;
@@ -34,6 +36,7 @@ export type ConcurrencyConstruct = {
   symbol: string | null;
   scopeKey?: string | null;
   confidence: ConcurrencyConfidence;
+  channelOperation?: ChannelOperation | null;
 };
 
 export type AnalyzeConcurrencyRequest = {

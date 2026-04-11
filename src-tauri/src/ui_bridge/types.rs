@@ -63,6 +63,13 @@ pub enum ConcurrencyConstructKindDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub enum ChannelOperationDto {
+    Send,
+    Receive,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct ConcurrencyConstructDto {
     pub kind: ConcurrencyConstructKindDto,
     pub line: usize,
@@ -70,6 +77,7 @@ pub struct ConcurrencyConstructDto {
     pub symbol: Option<String>,
     pub scope_key: Option<String>,
     pub confidence: ConcurrencyConfidenceDto,
+    pub channel_operation: Option<ChannelOperationDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

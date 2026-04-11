@@ -20,6 +20,12 @@ pub enum Confidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelOperation {
+    Send,
+    Receive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedConstruct {
     pub kind: ConstructKind,
     pub line: usize,
@@ -27,6 +33,7 @@ pub struct DetectedConstruct {
     pub symbol: Option<String>,
     pub scope_key: Option<String>,
     pub confidence: Confidence,
+    pub channel_operation: Option<ChannelOperation>,
 }
 
 fn is_mutex_name(text: &str) -> bool {
@@ -87,6 +94,7 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
             && a.column == b.column
             && a.symbol == b.symbol
             && a.scope_key == b.scope_key
+            && a.channel_operation == b.channel_operation
     });
 
     Ok(results)
@@ -103,6 +111,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 scope_key: None,
                 confidence: Confidence::Predicted,
+                channel_operation: None,
             }),
             "select" => results.push(DetectedConstruct {
                 kind: ConstructKind::Select,
@@ -111,6 +120,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: None,
                 scope_key: None,
                 confidence: Confidence::Predicted,
+                channel_operation: None,
             }),
             name if is_mutex_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
@@ -119,6 +129,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: Some("sync.Mutex".to_string()),
                 scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
+                channel_operation: None,
             }),
             name if is_waitgroup_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
@@ -127,6 +138,7 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 symbol: Some("sync.WaitGroup".to_string()),
                 scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
+                channel_operation: None,
             }),
             _ => {}
         }
@@ -238,19 +250,27 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                         continue;
                     }
 
-                    let marker = left.or(right);
+                    let marker = if left.as_ref().map(|(_, s)| s.as_str()) == Some("case") {
+                        right
+                    } else {
+                        left.or(right)
+                    };
                     if let Some((start_idx, symbol)) = marker {
-                        if symbol != "case" {
-                            let column = start_idx.saturating_sub(line_start) + 1;
-                            results.push(DetectedConstruct {
-                                kind: ConstructKind::Channel,
-                                line,
-                                column,
-                                symbol: Some(symbol),
-                                scope_key: Some(build_scope_key(line, &block_stack)),
-                                confidence: Confidence::Predicted,
-                            });
-                        }
+                        let channel_operation = if start_idx < i {
+                            ChannelOperation::Send
+                        } else {
+                            ChannelOperation::Receive
+                        };
+                        let column = start_idx.saturating_sub(line_start) + 1;
+                        results.push(DetectedConstruct {
+                            kind: ConstructKind::Channel,
+                            line,
+                            column,
+                            symbol: Some(symbol),
+                            scope_key: Some(build_scope_key(line, &block_stack)),
+                            confidence: Confidence::Predicted,
+                            channel_operation: Some(channel_operation),
+                        });
                     }
 
                     i += 2;
@@ -593,6 +613,7 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
                         symbol: Some(name),
                         scope_key: None,
                         confidence: Confidence::Confirmed,
+                        channel_operation: None,
                     });
                 }
             }
@@ -751,7 +772,8 @@ func worker(ch chan int, in <-chan int) {
                 .iter()
                 .any(|item| item.kind == ConstructKind::Channel
                     && item.symbol.as_deref() == Some("ch")
-                    && item.line == 6),
+                    && item.line == 6
+                    && item.channel_operation == Some(ChannelOperation::Send)),
             "expected send marker for channel symbol ch"
         );
         assert!(
@@ -759,7 +781,8 @@ func worker(ch chan int, in <-chan int) {
                 .iter()
                 .any(|item| item.kind == ConstructKind::Channel
                     && item.symbol.as_deref() == Some("in")
-                    && item.line == 7),
+                    && item.line == 7
+                    && item.channel_operation == Some(ChannelOperation::Receive)),
             "expected receive marker for channel symbol in"
         );
         assert!(
@@ -804,6 +827,34 @@ func second() {
         assert_ne!(
             first.scope_key, second.scope_key,
             "shadowed symbols across functions must have different scope keys"
+        );
+    }
+
+    #[test]
+    fn detects_receive_marker_in_select_case_receive_clause() {
+        let source = r#"package main
+
+func worker(jobs <-chan int) {
+    select {
+    case <-jobs:
+    default:
+    }
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().any(|item| {
+                item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("jobs")
+                    && item.channel_operation == Some(ChannelOperation::Receive)
+            }),
+            "expected select case receive clause to emit receive marker for jobs"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("case")),
+            "must not emit case keyword as channel symbol"
         );
     }
 }

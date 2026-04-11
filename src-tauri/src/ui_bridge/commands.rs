@@ -1,8 +1,8 @@
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::ui_bridge::types::{
-    AnalyzeConcurrencyRequest, ApiResponse, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
-    ConcurrencyConstructKindDto, FsEntryDto,
+    AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, ConcurrencyConfidenceDto,
+    ConcurrencyConstructDto, ConcurrencyConstructKindDto, FsEntryDto,
 };
 use std::path::{Component, Path};
 
@@ -81,6 +81,10 @@ pub async fn analyze_active_file_concurrency(
                         gopls::Confidence::Likely => ConcurrencyConfidenceDto::Likely,
                         gopls::Confidence::Confirmed => ConcurrencyConfidenceDto::Confirmed,
                     },
+                    channel_operation: item.channel_operation.map(|operation| match operation {
+                        gopls::ChannelOperation::Send => ChannelOperationDto::Send,
+                        gopls::ChannelOperation::Receive => ChannelOperationDto::Receive,
+                    }),
                 })
                 .collect();
             ApiResponse::ok(mapped)

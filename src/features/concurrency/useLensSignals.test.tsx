@@ -188,6 +188,7 @@ describe("useLensSignals", () => {
           symbol: "jobs",
           scopeKey: "S1",
           confidence: ConcurrencyConfidence.Predicted,
+          channelOperation: "send",
         },
         {
           kind: "channel",
@@ -196,6 +197,7 @@ describe("useLensSignals", () => {
           symbol: "jobs",
           scopeKey: "S1",
           confidence: ConcurrencyConfidence.Predicted,
+          channelOperation: "receive",
         },
       ],
     });

@@ -1,4 +1,5 @@
 import {
+  type ChannelOperation,
   ConcurrencyConfidence,
   type ConcurrencyConstruct,
 } from "../../lib/ipc/types";
@@ -12,6 +13,7 @@ export type LensConstruct = {
   symbol: string | null;
   scopeKey: string | null;
   confidence: ConcurrencyConfidence;
+  channelOperation?: ChannelOperation | null;
 };
 
 export type LensHoverHint = {
@@ -43,5 +45,6 @@ export function mapApiConstructToLensConstruct(
     symbol: construct.symbol,
     scopeKey: construct.scopeKey ?? null,
     confidence: construct.confidence,
+    channelOperation: construct.channelOperation ?? null,
   };
 }

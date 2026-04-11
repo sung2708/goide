@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { ConcurrencyConfidence } from "../../lib/ipc/types";
+import {
+  type ChannelOperation,
+  ConcurrencyConfidence,
+} from "../../lib/ipc/types";
 import { buildCounterpartMappings } from "./counterpartMapping";
 import type { LensConstruct } from "./lensTypes";
 
 function channel(
   line: number,
   symbol: string | null,
+  channelOperation: ChannelOperation | null = null,
   confidence: ConcurrencyConfidence = ConcurrencyConfidence.Predicted,
   scopeKey: string | null = "S1"
 ): LensConstruct {
@@ -16,17 +20,18 @@ function channel(
     symbol,
     scopeKey,
     confidence,
+    channelOperation,
   };
 }
 
 describe("buildCounterpartMappings", () => {
-  it("maps matched same-symbol channel operations deterministically", () => {
+  it("maps only opposite-direction channel operations deterministically", () => {
     const mappings = buildCounterpartMappings([
-      channel(20, "jobs"),
-      channel(4, "jobs"),
-      channel(8, "jobs"),
-      channel(11, "other"),
-      channel(15, "other"),
+      channel(20, "jobs", "send"),
+      channel(4, "jobs", "send"),
+      channel(8, "jobs", "receive"),
+      channel(11, "other", "send"),
+      channel(15, "other", "receive"),
     ]);
 
     expect(mappings).toEqual([
@@ -66,7 +71,7 @@ describe("buildCounterpartMappings", () => {
   it("returns empty mappings for unmatched or symbol-less constructs", () => {
     const mappings = buildCounterpartMappings([
       channel(5, null),
-      channel(12, "jobs"),
+      channel(12, "jobs", "send"),
       {
         kind: "wait-group",
         line: 6,
@@ -82,10 +87,10 @@ describe("buildCounterpartMappings", () => {
 
   it("does not pair same symbol across different scopes", () => {
     const mappings = buildCounterpartMappings([
-      channel(4, "ch", ConcurrencyConfidence.Predicted, "S1"),
-      channel(8, "ch", ConcurrencyConfidence.Predicted, "S1"),
-      channel(40, "ch", ConcurrencyConfidence.Predicted, "S9"),
-      channel(44, "ch", ConcurrencyConfidence.Predicted, "S9"),
+      channel(4, "ch", "send", ConcurrencyConfidence.Predicted, "S1"),
+      channel(8, "ch", "receive", ConcurrencyConfidence.Predicted, "S1"),
+      channel(40, "ch", "send", ConcurrencyConfidence.Predicted, "S9"),
+      channel(44, "ch", "receive", ConcurrencyConfidence.Predicted, "S9"),
     ]);
 
     expect(mappings).toEqual([
@@ -114,5 +119,16 @@ describe("buildCounterpartMappings", () => {
         confidence: ConcurrencyConfidence.Predicted,
       },
     ]);
+  });
+
+  it("does not map channel operations when direction is the same", () => {
+    const mappings = buildCounterpartMappings([
+      channel(4, "ch", "send"),
+      channel(8, "ch", "send"),
+      channel(12, "jobs", "receive"),
+      channel(16, "jobs", "receive"),
+    ]);
+
+    expect(mappings).toEqual([]);
   });
 });
