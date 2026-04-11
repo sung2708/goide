@@ -11,7 +11,7 @@ So that I can verify that my fix or logic works as expected.
 ## Acceptance Criteria
 
 1. **Trigger Run**: A "Run" button is available in the editor header (visible when a file is open).
-2. **Execute Go**: Clicking "Run" executes `go run -race {active_file}` in the workspace directory.
+2. **Execute Go**: Clicking "Run" executes `go run {active_file}` in the workspace directory.
 3. **Capture Output**: Both `stdout` and `stderr` are captured and streamed to the UI.
 4. **Bottom Panel**: The "Bottom Panel" automatically reveals and displays the console output in a scrollable, terminal-styled region.
 5. **Session Management**: Repeated runs clear the previous output; only one run session is active at a time.
@@ -20,7 +20,7 @@ So that I can verify that my fix or logic works as expected.
 ## Tasks / Subtasks
 
 - [x] Task 1: Rust Backend — process.rs module + run_workspace_file command
-  - [x] 1a: Create `src-tauri/src/integration/process.rs` with `run_go_file` that spawns `go run -race` and emits output lines via Tauri events
+  - [x] 1a: Create `src-tauri/src/integration/process.rs` with `run_go_file` that spawns `go run` and emits output lines via Tauri events
   - [x] 1b: Register `pub mod process` in `src-tauri/src/integration/mod.rs`
   - [x] 1c: Implement `run_workspace_file` Tauri command in `commands.rs` accepting `AppHandle`
   - [x] 1d: Register `run_workspace_file` in `lib.rs` invoke_handler
@@ -54,7 +54,6 @@ So that I can verify that my fix or logic works as expected.
   - Update `StatusBar` to show run status.
 
 ### Technical Requirements
-- The `-race` flag is mandatory as this IDE is concurrency-first.
 - Output should use JetBrains Mono or mono font for a terminal feel.
 - Workspace security: call existing `resolve_scoped_path` equivalent for the file path before spawning.
 - Only one `go run` process at a time — kill the previous one if "Run" is triggered again.

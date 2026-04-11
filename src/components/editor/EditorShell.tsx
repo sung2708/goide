@@ -175,15 +175,15 @@ function EditorShell() {
     requestJump(resolveCounterpartFromActiveHint());
   }, [requestJump, resolveCounterpartFromActiveHint]);
 
-  const handleSaveFile = useCallback(
+  const persistActiveFileContent = useCallback(
     async (content: string) => {
       const currentPath = activeFilePath;
       if (!workspacePath || !currentPath) {
-        return;
+        return false;
       }
       // Guard: ignore concurrent save requests
       if (isSavingRef.current) {
-        return;
+        return false;
       }
 
       isSavingRef.current = true;
@@ -202,7 +202,7 @@ function EditorShell() {
           workspacePathRef.current !== saveWorkspacePath ||
           activeFilePathRef.current !== saveFilePath
         ) {
-          return;
+          return false;
         }
         if (response.ok) {
           savedContentRef.current = content;
@@ -214,25 +214,35 @@ function EditorShell() {
             setSaveStatus("saved");
             saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
           }
+          return true;
         } else {
           setSaveStatus("error");
           saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
+          return false;
         }
       } catch (error) {
         if (
           workspacePathRef.current !== saveWorkspacePath ||
           activeFilePathRef.current !== saveFilePath
         ) {
-          return;
+          return false;
         }
         setSaveStatus("error");
         saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
         console.error("Failed to save file:", error);
+        return false;
       } finally {
         isSavingRef.current = false;
       }
     },
     [workspacePath, activeFilePath]
+  );
+
+  const handleSaveFile = useCallback(
+    async (content: string) => {
+      await persistActiveFileContent(content);
+    },
+    [persistActiveFileContent]
   );
   
   const handleRunFile = useCallback(async () => {
@@ -241,6 +251,26 @@ function EditorShell() {
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     activeRunIdRef.current = runId;
+
+    const contentToRun = latestEditorContentRef.current ?? activeFileContent;
+    if (isDirty && typeof contentToRun === "string") {
+      const didSave = await persistActiveFileContent(contentToRun);
+      if (!didSave) {
+        if (activeRunIdRef.current !== runId) {
+          return;
+        }
+        setRunStatus("error");
+        setIsBottomPanelOpen(true);
+        setRunOutput([
+          {
+            runId,
+            line: "Failed to save latest changes before run. Resolve save errors and retry.",
+            stream: "stderr",
+          },
+        ]);
+        return;
+      }
+    }
 
     setRunOutput([]);
     setRunStatus("running");
@@ -270,7 +300,7 @@ function EditorShell() {
         stream: "stderr"
       }]);
     }
-  }, [workspacePath, activeFilePath]);
+  }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent]);
 
   const handleClearOutput = useCallback(() => {
     setRunOutput([]);

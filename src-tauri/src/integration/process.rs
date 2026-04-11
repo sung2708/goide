@@ -46,7 +46,7 @@ pub fn resolve_run_path(workspace_root: &str, relative_path: &str) -> Result<std
     Ok(target)
 }
 
-/// Spawns `go run -race <file>` in the workspace directory.
+/// Spawns `go run <file>` in the workspace directory.
 /// Emits each output line as a `run-output` event on the `app_handle`.
 /// Kills any previous process in `process_handle` before starting a new one.
 pub async fn run_go_file<R: tauri::Runtime>(
@@ -69,9 +69,9 @@ pub async fn run_go_file<R: tauri::Runtime>(
         *guard = None;
     }
 
-    // Spawn go run -race <file>
+    // Spawn go run <file>
     let mut child = Command::new("go")
-        .args(["run", "-race", target.to_str().unwrap_or("")])
+        .args(["run", target.to_str().unwrap_or("")])
         .current_dir(&workspace_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
