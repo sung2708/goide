@@ -77,15 +77,22 @@ function EditorShell() {
 
       const normalizedSymbol =
         typeof hintSymbol === "string" ? hintSymbol.trim() : "";
-      const filtered = normalizedSymbol
-        ? candidates.filter((mapping) => mapping.symbol === normalizedSymbol)
-        : candidates;
+
+      if (!normalizedSymbol) {
+        return candidates.length === 1 ? candidates[0].counterpartLine : null;
+      }
+
+      const filtered = candidates.filter(
+        (mapping) => mapping.symbol === normalizedSymbol
+      );
 
       if (filtered.length === 0) {
         return null;
       }
 
-      const uniqueCounterpartLines = [...new Set(filtered.map((m) => m.counterpartLine))];
+      const uniqueCounterpartLines = [
+        ...new Set(filtered.map((m) => m.counterpartLine)),
+      ];
       return uniqueCounterpartLines.length === 1 ? uniqueCounterpartLines[0] : null;
     },
     [counterpartMappings]
