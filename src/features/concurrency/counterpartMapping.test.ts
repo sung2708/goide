@@ -121,10 +121,10 @@ describe("buildCounterpartMappings", () => {
     ]);
   });
 
-  it("pairs same symbol across nested scopes sharing lexical root", () => {
+  it("pairs same symbol across nested blocks in the same function scope", () => {
     const mappings = buildCounterpartMappings([
-      channel(10, "ch", "send", ConcurrencyConfidence.Predicted, "S1"),
-      channel(18, "ch", "receive", ConcurrencyConfidence.Predicted, "S1>S2"),
+      channel(10, "ch", "send", ConcurrencyConfidence.Predicted, "F1>B2"),
+      channel(18, "ch", "receive", ConcurrencyConfidence.Predicted, "F1>B2>B3"),
     ]);
 
     expect(mappings).toEqual([
@@ -141,6 +141,15 @@ describe("buildCounterpartMappings", () => {
         confidence: ConcurrencyConfidence.Predicted,
       },
     ]);
+  });
+
+  it("does not pair same symbol across nested function scopes", () => {
+    const mappings = buildCounterpartMappings([
+      channel(10, "ch", "send", ConcurrencyConfidence.Predicted, "F1>B2"),
+      channel(18, "ch", "receive", ConcurrencyConfidence.Predicted, "F3>B4"),
+    ]);
+
+    expect(mappings).toEqual([]);
   });
 
   it("does not map channel operations when direction is the same", () => {

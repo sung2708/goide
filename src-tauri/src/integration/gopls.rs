@@ -202,9 +202,9 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
     let mut line = 1usize;
     let mut state = LexState::Normal;
     let mut line_start = 0usize;
-    let mut block_stack: Vec<usize> = Vec::new();
+    let mut block_stack: Vec<ScopeFrame> = Vec::new();
     let mut next_scope_id = 1usize;
-    let mut pending_block_scope: Option<usize> = None;
+    let mut pending_block_scope: Option<ScopeFrame> = None;
 
     while i < chars.len() {
         let ch = chars[i];
@@ -282,18 +282,24 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                     line_start = i + 1;
                 }
                 if ch == '{' {
-                    let scope_id = pending_block_scope.take().unwrap_or_else(|| {
-                        let id = next_scope_id;
+                    let scope_frame = pending_block_scope.take().unwrap_or_else(|| {
+                        let frame = ScopeFrame {
+                            id: next_scope_id,
+                            kind: ScopeKind::Block,
+                        };
                         next_scope_id += 1;
-                        id
+                        frame
                     });
-                    block_stack.push(scope_id);
+                    block_stack.push(scope_frame);
                 } else if ch == '}' {
                     block_stack.pop();
                 } else if ch == ')' && next_non_whitespace_char(&chars, i + 1) == Some('{') {
-                    let scope_id = next_scope_id;
+                    let scope_frame = ScopeFrame {
+                        id: next_scope_id,
+                        kind: ScopeKind::Function,
+                    };
                     next_scope_id += 1;
-                    pending_block_scope = Some(scope_id);
+                    pending_block_scope = Some(scope_frame);
                 }
                 i += 1;
             }
@@ -372,17 +378,20 @@ fn next_non_whitespace_char(chars: &[char], mut from: usize) -> Option<char> {
     None
 }
 
-fn build_scope_key(line: usize, block_stack: &[usize]) -> String {
+fn build_scope_key(line: usize, block_stack: &[ScopeFrame]) -> String {
     if block_stack.is_empty() {
         return format!("L{}::global", line);
     }
     let mut key = String::new();
-    for (index, scope_id) in block_stack.iter().enumerate() {
+    for (index, scope) in block_stack.iter().enumerate() {
         if index > 0 {
             key.push('>');
         }
-        key.push('S');
-        key.push_str(&scope_id.to_string());
+        key.push(match scope.kind {
+            ScopeKind::Function => 'F',
+            ScopeKind::Block => 'B',
+        });
+        key.push_str(&scope.id.to_string());
     }
     key
 }
@@ -413,6 +422,18 @@ enum LexState {
     DoubleQuoteString,
     RawString,
     RuneLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeKind {
+    Function,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScopeFrame {
+    id: usize,
+    kind: ScopeKind,
 }
 
 fn tokenize_identifiers(source: &str) -> Vec<WordToken> {

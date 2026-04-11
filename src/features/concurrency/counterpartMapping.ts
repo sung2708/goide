@@ -17,13 +17,27 @@ function toScopeKey(scopeKey: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function toRootScopeKey(scopeKey: string | null): string | null {
+function toFunctionScopeKey(scopeKey: string | null): string | null {
   const normalized = toScopeKey(scopeKey);
   if (!normalized) {
     return null;
   }
-  const root = normalized.split(">").find((segment) => segment.length > 0) ?? null;
-  return root;
+  const segments = normalized.split(">").filter((segment) => segment.length > 0);
+  if (segments.length === 0) {
+    return null;
+  }
+
+  // New analyzer keys use F* for function scopes and B* for non-function blocks.
+  // Group by the innermost function scope so nested blocks pair, but nested
+  // function literals (with a different innermost F*) do not cross-link.
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    if (segments[index]?.startsWith("F")) {
+      return segments[index] ?? null;
+    }
+  }
+
+  // Backward-compatible fallback for older S* scope keys used in tests/fixtures.
+  return segments[0] ?? null;
 }
 
 function toDeterministicConfidence(constructs: LensConstruct[]): ConcurrencyConfidence {
@@ -85,12 +99,11 @@ export function buildCounterpartMappings(
       continue;
     }
     const symbol = toSymbolKey(construct.symbol);
-    const scopeKey = toRootScopeKey(construct.scopeKey);
+    const scopeKey = toFunctionScopeKey(construct.scopeKey);
     if (!symbol) {
       continue;
     }
-    // Pair within the same lexical root scope (for example function body and nested
-    // blocks), while still preventing cross-function/sibling root scope linking.
+    // Pair within the same function scope identity.
     if (!scopeKey) {
       continue;
     }
