@@ -48,3 +48,15 @@ export async function analyzeActiveFileConcurrency(
     }
   );
 }
+
+export async function runWorkspaceFile(
+  workspaceRoot: string,
+  relativePath: string,
+  runId: string
+): Promise<ApiResponse<void>> {
+  return invoke<ApiResponse<void>>("run_workspace_file", {
+    workspaceRoot,
+    relativePath,
+    runId,
+  });
+}
