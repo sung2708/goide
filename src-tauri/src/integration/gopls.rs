@@ -20,12 +20,20 @@ pub enum Confidence {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ChannelOperation {
+    Send,
+    Receive,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DetectedConstruct {
     pub kind: ConstructKind,
     pub line: usize,
     pub column: usize,
     pub symbol: Option<String>,
+    pub scope_key: Option<String>,
     pub confidence: Confidence,
+    pub channel_operation: Option<ChannelOperation>,
 }
 
 fn is_mutex_name(text: &str) -> bool {
@@ -49,28 +57,53 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
     let tokens = tokenize_identifiers(&source);
 
     let mut results = detect_from_tokens(tokens);
+    results.extend(detect_channel_flow_markers(&source));
 
     if let Ok(gopls_results) = analyze_with_gopls(workspace_root, relative_path) {
-        for gopls_construct in gopls_results {
-            // Find existing lexer detection on the same line.
-            // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
-            // The identifier (gopls symbol) comes BEFORE the type (lexer token).
-            if let Some(existing) = results.iter_mut().find(|item| {
-                item.line == gopls_construct.line && item.column >= gopls_construct.column
-            }) {
-                // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
-                existing.confidence = Confidence::Confirmed;
-                if existing.symbol.is_none()
-                    || existing.symbol.as_deref() == Some("sync.Mutex")
-                    || existing.symbol.as_deref() == Some("sync.WaitGroup")
-                {
-                    existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
-                }
+        merge_gopls_constructs(&mut results, gopls_results);
+    }
+
+    results.sort_by(|a, b| {
+        a.line
+            .cmp(&b.line)
+            .then_with(|| a.column.cmp(&b.column))
+            .then_with(|| a.kind_name().cmp(b.kind_name()))
+            .then_with(|| a.symbol.as_deref().unwrap_or("").cmp(b.symbol.as_deref().unwrap_or("")))
+    });
+    results.dedup_by(|a, b| {
+        a.kind == b.kind
+            && a.line == b.line
+            && a.column == b.column
+            && a.symbol == b.symbol
+            && a.scope_key == b.scope_key
+            && a.channel_operation == b.channel_operation
+    });
+
+    Ok(results)
+}
+
+fn merge_gopls_constructs(results: &mut [DetectedConstruct], gopls_results: Vec<DetectedConstruct>) {
+    for gopls_construct in gopls_results {
+        // Find existing lexer detection on the same line.
+        // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
+        // The identifier (gopls symbol) comes BEFORE the type (lexer token).
+        // For channels, merge only declaration tokens (channel_operation == None),
+        // never send/receive flow markers.
+        if let Some(existing) = results.iter_mut().find(|item| {
+            (item.kind != ConstructKind::Channel || item.channel_operation.is_none())
+                && item.line == gopls_construct.line
+                && item.column >= gopls_construct.column
+        }) {
+            // If they are on the same line and gopls found a symbol nearby, upgrade confidence.
+            existing.confidence = Confidence::Confirmed;
+            if existing.symbol.is_none()
+                || existing.symbol.as_deref() == Some("sync.Mutex")
+                || existing.symbol.as_deref() == Some("sync.WaitGroup")
+            {
+                existing.symbol = Some(gopls_construct.symbol.clone().unwrap_or_default());
             }
         }
     }
-
-    Ok(results)
 }
 
 fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
@@ -82,34 +115,390 @@ fn detect_from_tokens(tokens: Vec<WordToken>) -> Vec<DetectedConstruct> {
                 line: token.line,
                 column: token.column,
                 symbol: None,
+                scope_key: None,
                 confidence: Confidence::Predicted,
+                channel_operation: None,
             }),
             "select" => results.push(DetectedConstruct {
                 kind: ConstructKind::Select,
                 line: token.line,
                 column: token.column,
                 symbol: None,
+                scope_key: None,
                 confidence: Confidence::Predicted,
+                channel_operation: None,
             }),
             name if is_mutex_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::Mutex,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.Mutex".to_string()),
+                scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
+                channel_operation: None,
             }),
             name if is_waitgroup_name(name) => results.push(DetectedConstruct {
                 kind: ConstructKind::WaitGroup,
                 line: token.line,
                 column: token.column,
                 symbol: Some("sync.WaitGroup".to_string()),
+                scope_key: None,
                 confidence: confidence_for_identifier(&token.text),
+                channel_operation: None,
             }),
             _ => {}
         }
     }
 
     results
+}
+
+fn is_symbol_char(ch: char) -> bool {
+    ch == '_' || ch == '.' || ch.is_ascii_alphanumeric()
+}
+
+fn scan_left_identifier(chars: &[char], line_start: usize, op_start: usize) -> Option<(usize, String)> {
+    if op_start <= line_start {
+        return None;
+    }
+
+    let mut i = op_start;
+    while i > line_start && chars[i - 1].is_ascii_whitespace() {
+        i -= 1;
+    }
+    if i <= line_start {
+        return None;
+    }
+
+    let end = i;
+    while i > line_start && is_symbol_char(chars[i - 1]) {
+        i -= 1;
+    }
+    if i == end {
+        return None;
+    }
+
+    Some((i, chars[i..end].iter().collect()))
+}
+
+fn scan_right_identifier(chars: &[char], op_start: usize) -> Option<(usize, String)> {
+    let mut i = op_start + 2;
+    while i < chars.len() && chars[i].is_ascii_whitespace() {
+        i += 1;
+    }
+    if i >= chars.len() || chars[i] == '\n' {
+        return None;
+    }
+
+    let start = i;
+    while i < chars.len() && chars[i] != '\n' && is_symbol_char(chars[i]) {
+        i += 1;
+    }
+    if i == start {
+        return None;
+    }
+
+    Some((start, chars[start..i].iter().collect()))
+}
+
+fn prev_non_whitespace_char(chars: &[char], mut from_exclusive: usize) -> Option<char> {
+    while from_exclusive > 0 {
+        from_exclusive -= 1;
+        let ch = chars[from_exclusive];
+        if !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+    }
+    None
+}
+
+fn is_first_non_whitespace_on_line(chars: &[char], line_start: usize, idx: usize) -> bool {
+    let mut cursor = line_start;
+    while cursor < idx {
+        if !chars[cursor].is_ascii_whitespace() {
+            return false;
+        }
+        cursor += 1;
+    }
+    true
+}
+
+fn is_receive_leading_keyword(text: &str) -> bool {
+    matches!(text, "case" | "return" | "go" | "defer" | "if" | "for" | "switch" | "select")
+}
+
+fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
+    let mut results = Vec::new();
+    let chars: Vec<char> = source.chars().collect();
+    let mut i = 0usize;
+    let mut line = 1usize;
+    let mut state = LexState::Normal;
+    let mut line_start = 0usize;
+    let mut block_stack: Vec<ScopeFrame> = Vec::new();
+    let mut paren_stack: Vec<usize> = Vec::new();
+    let mut next_scope_id = 1usize;
+    let mut pending_block_scope: Option<ScopeFrame> = None;
+
+    while i < chars.len() {
+        let ch = chars[i];
+        let next = chars.get(i + 1).copied();
+
+        match state {
+            LexState::Normal => {
+                if ch == '/' && next == Some('/') {
+                    state = LexState::LineComment;
+                    i += 2;
+                    continue;
+                }
+                if ch == '/' && next == Some('*') {
+                    state = LexState::BlockComment;
+                    i += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    state = LexState::DoubleQuoteString;
+                    i += 1;
+                    continue;
+                }
+                if ch == '`' {
+                    state = LexState::RawString;
+                    i += 1;
+                    continue;
+                }
+                if ch == '\'' {
+                    state = LexState::RuneLiteral;
+                    i += 1;
+                    continue;
+                }
+
+                if ch == '<' && next == Some('-') {
+                    let left = scan_left_identifier(&chars, line_start, i);
+                    let right = scan_right_identifier(&chars, i);
+
+                    // Ignore type direction markers: chan<- T or <-chan T
+                    if left.as_ref().map(|(_, s)| s.as_str()) == Some("chan")
+                        || right.as_ref().map(|(_, s)| s.as_str()) == Some("chan")
+                    {
+                        i += 2;
+                        continue;
+                    }
+
+                    let prev_non_ws = prev_non_whitespace_char(&chars, i);
+                    let receive_context = left
+                        .as_ref()
+                        .map(|(_, text)| is_receive_leading_keyword(text))
+                        .unwrap_or(false)
+                        || left.is_none()
+                            && matches!(
+                                prev_non_ws,
+                                Some('=') | Some(':') | Some('(') | Some(',') | Some('{') | Some('[')
+                            )
+                        || left.is_none()
+                            && is_first_non_whitespace_on_line(&chars, line_start, i);
+
+                    let marker = if let Some((start_idx, symbol)) = left.as_ref() {
+                        if !is_receive_leading_keyword(symbol) {
+                            Some((*start_idx, symbol.clone(), ChannelOperation::Send))
+                        } else {
+                            right
+                                .as_ref()
+                                .map(|(idx, sym)| (*idx, sym.clone(), ChannelOperation::Receive))
+                        }
+                    } else if receive_context {
+                        right
+                            .as_ref()
+                            .map(|(idx, sym)| (*idx, sym.clone(), ChannelOperation::Receive))
+                    } else {
+                        None
+                    };
+
+                    if let Some((start_idx, symbol, channel_operation)) = marker {
+                        let column = start_idx.saturating_sub(line_start) + 1;
+                        results.push(DetectedConstruct {
+                            kind: ConstructKind::Channel,
+                            line,
+                            column,
+                            symbol: Some(symbol),
+                            scope_key: Some(build_scope_key(line, &block_stack)),
+                            confidence: Confidence::Predicted,
+                            channel_operation: Some(channel_operation),
+                        });
+                    }
+
+                    i += 2;
+                    continue;
+                }
+
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                if ch == '(' {
+                    paren_stack.push(i);
+                } else if ch == ')' {
+                    let open_paren = paren_stack.pop();
+                    if next_non_whitespace_char(&chars, i + 1) == Some('{')
+                        && open_paren
+                            .map(|open_idx| is_function_signature_paren(&chars, open_idx))
+                            .unwrap_or(false)
+                    {
+                        let scope_frame = ScopeFrame {
+                            id: next_scope_id,
+                            kind: ScopeKind::Function,
+                        };
+                        next_scope_id += 1;
+                        pending_block_scope = Some(scope_frame);
+                    }
+                } else if ch == '{' {
+                    let scope_frame = pending_block_scope.take().unwrap_or_else(|| {
+                        let frame = ScopeFrame {
+                            id: next_scope_id,
+                            kind: ScopeKind::Block,
+                        };
+                        next_scope_id += 1;
+                        frame
+                    });
+                    block_stack.push(scope_frame);
+                } else if ch == '}' {
+                    block_stack.pop();
+                }
+                i += 1;
+            }
+            LexState::LineComment => {
+                if ch == '\n' {
+                    state = LexState::Normal;
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::BlockComment => {
+                if ch == '*' && next == Some('/') {
+                    state = LexState::Normal;
+                    i += 2;
+                    continue;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::DoubleQuoteString => {
+                if ch == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if ch == '"' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::RawString => {
+                if ch == '`' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+            LexState::RuneLiteral => {
+                if ch == '\\' {
+                    i += 2;
+                    continue;
+                }
+                if ch == '\'' {
+                    state = LexState::Normal;
+                }
+                if ch == '\n' {
+                    line += 1;
+                    line_start = i + 1;
+                }
+                i += 1;
+            }
+        }
+    }
+
+    results
+}
+
+fn next_non_whitespace_char(chars: &[char], mut from: usize) -> Option<char> {
+    while from < chars.len() {
+        let ch = chars[from];
+        if !ch.is_ascii_whitespace() {
+            return Some(ch);
+        }
+        from += 1;
+    }
+    None
+}
+
+fn scan_prev_identifier(chars: &[char], mut from_exclusive: usize) -> Option<(usize, String)> {
+    while from_exclusive > 0 && chars[from_exclusive - 1].is_ascii_whitespace() {
+        from_exclusive -= 1;
+    }
+    if from_exclusive == 0 {
+        return None;
+    }
+
+    let end = from_exclusive;
+    while from_exclusive > 0 && is_symbol_char(chars[from_exclusive - 1]) {
+        from_exclusive -= 1;
+    }
+    if from_exclusive == end {
+        return None;
+    }
+    Some((from_exclusive, chars[from_exclusive..end].iter().collect()))
+}
+
+fn is_function_signature_paren(chars: &[char], open_paren_idx: usize) -> bool {
+    let Some((first_start, first_ident)) = scan_prev_identifier(chars, open_paren_idx) else {
+        return false;
+    };
+
+    if first_ident == "func" {
+        return true;
+    }
+
+    let Some((_, second_ident)) = scan_prev_identifier(chars, first_start) else {
+        return false;
+    };
+    second_ident == "func"
+}
+
+fn build_scope_key(line: usize, block_stack: &[ScopeFrame]) -> String {
+    if block_stack.is_empty() {
+        return format!("L{}::global", line);
+    }
+    let mut key = String::new();
+    for (index, scope) in block_stack.iter().enumerate() {
+        if index > 0 {
+            key.push('>');
+        }
+        key.push(match scope.kind {
+            ScopeKind::Function => 'F',
+            ScopeKind::Block => 'B',
+        });
+        key.push_str(&scope.id.to_string());
+    }
+    key
+}
+
+impl DetectedConstruct {
+    fn kind_name(&self) -> &'static str {
+        match self.kind {
+            ConstructKind::Channel => "channel",
+            ConstructKind::Select => "select",
+            ConstructKind::Mutex => "mutex",
+            ConstructKind::WaitGroup => "waitgroup",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +516,18 @@ enum LexState {
     DoubleQuoteString,
     RawString,
     RuneLiteral,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ScopeKind {
+    Function,
+    Block,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ScopeFrame {
+    id: usize,
+    kind: ScopeKind,
 }
 
 fn tokenize_identifiers(source: &str) -> Vec<WordToken> {
@@ -325,7 +726,9 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
                         line: line_num,
                         column: col_num,
                         symbol: Some(name),
+                        scope_key: None,
                         confidence: Confidence::Confirmed,
+                        channel_operation: None,
                     });
                 }
             }
@@ -460,5 +863,250 @@ m Variable 6:2-6:10
         );
         assert_eq!(waitgroup.unwrap().line, 5);
         assert_eq!(waitgroup.unwrap().column, 2);
+    }
+
+    #[test]
+    fn detects_channel_flow_markers_for_send_and_receive() {
+        let source = r#"package main
+
+func worker(ch chan int, in <-chan int) {
+    // comment <- not an operation
+    message := "string <- not an operation"
+    ch <- 1
+    value := <-in
+    chan<- int(nil)
+    _ = value
+    _ = message
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs
+                .iter()
+                .any(|item| item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("ch")
+                    && item.line == 6
+                    && item.channel_operation == Some(ChannelOperation::Send)),
+            "expected send marker for channel symbol ch"
+        );
+        assert!(
+            constructs
+                .iter()
+                .any(|item| item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("in")
+                    && item.line == 7
+                    && item.channel_operation == Some(ChannelOperation::Receive)),
+            "expected receive marker for channel symbol in"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("chan")),
+            "must not treat channel type direction as a channel symbol"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("comment")),
+            "must ignore channel arrows inside comments"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("string")),
+            "must ignore channel arrows inside strings"
+        );
+    }
+
+    #[test]
+    fn channel_flow_markers_include_distinct_scope_keys_for_shadowed_symbols() {
+        let source = r#"package main
+
+func first() {
+    ch := make(chan int)
+    ch <- 1
+}
+
+func second() {
+    ch := make(chan int)
+    ch <- 2
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+        let first = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 5)
+            .expect("first ch marker should exist");
+        let second = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 10)
+            .expect("second ch marker should exist");
+
+        assert_ne!(
+            first.scope_key, second.scope_key,
+            "shadowed symbols across functions must have different scope keys"
+        );
+    }
+
+    #[test]
+    fn detects_receive_marker_in_select_case_receive_clause() {
+        let source = r#"package main
+
+func worker(jobs <-chan int) {
+    select {
+    case <-jobs:
+    default:
+    }
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().any(|item| {
+                item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("jobs")
+                    && item.channel_operation == Some(ChannelOperation::Receive)
+            }),
+            "expected select case receive clause to emit receive marker for jobs"
+        );
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("case")),
+            "must not emit case keyword as channel symbol"
+        );
+    }
+
+    #[test]
+    fn does_not_treat_if_call_clause_as_function_scope() {
+        let source = r#"package main
+
+func worker(ch chan int) {
+    ch <- 1
+    if ok() {
+        <-ch
+    }
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        let send = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 4)
+            .expect("send marker should exist");
+        let receive = constructs
+            .iter()
+            .find(|item| item.symbol.as_deref() == Some("ch") && item.line == 6)
+            .expect("receive marker should exist");
+
+        fn innermost_function_scope(scope_key: &str) -> Option<&str> {
+            scope_key.split('>').rev().find(|segment| segment.starts_with('F'))
+        }
+
+        let send_scope = send.scope_key.as_deref().expect("send must have scope key");
+        let receive_scope = receive
+            .scope_key
+            .as_deref()
+            .expect("receive must have scope key");
+
+        assert_eq!(
+            innermost_function_scope(send_scope),
+            innermost_function_scope(receive_scope),
+            "if condition calls like ok() must not introduce a new function scope"
+        );
+    }
+
+    #[test]
+    fn does_not_infer_receive_for_complex_lhs_send() {
+        let source = r#"package main
+
+func worker(channels []chan int, job int) {
+    channels[0] <- job
+    getCh() <- job
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().all(|item| item.symbol.as_deref() != Some("job")),
+            "complex-lhs sends must not be inferred as receive markers on rhs symbol"
+        );
+    }
+
+    #[test]
+    fn detects_standalone_receive_at_line_start() {
+        let source = r#"package main
+
+func worker(done <-chan struct{}) {
+    x := 1
+    <-done
+    _ = x
+}
+"#;
+
+        let constructs = detect_channel_flow_markers(source);
+
+        assert!(
+            constructs.iter().any(|item| {
+                item.kind == ConstructKind::Channel
+                    && item.symbol.as_deref() == Some("done")
+                    && item.line == 5
+                    && item.channel_operation == Some(ChannelOperation::Receive)
+            }),
+            "standalone <-done at line start must be detected as receive"
+        );
+    }
+
+    #[test]
+    fn merges_gopls_symbol_into_channel_declaration_construct() {
+        let mut results = vec![DetectedConstruct {
+            kind: ConstructKind::Channel,
+            line: 3,
+            column: 12, // "chan" token column in e.g. `var jobs chan int`
+            symbol: None,
+            scope_key: None,
+            confidence: Confidence::Predicted,
+            channel_operation: None,
+        }];
+        let gopls_results = vec![DetectedConstruct {
+            kind: ConstructKind::Mutex, // dummy kind for parsed gopls symbol entry
+            line: 3,
+            column: 5, // identifier `jobs` appears before `chan`
+            symbol: Some("jobs".to_string()),
+            scope_key: None,
+            confidence: Confidence::Confirmed,
+            channel_operation: None,
+        }];
+
+        merge_gopls_constructs(&mut results, gopls_results);
+
+        assert_eq!(results.len(), 1, "must upgrade in place rather than duplicate");
+        assert_eq!(results[0].symbol.as_deref(), Some("jobs"));
+        assert_eq!(results[0].confidence, Confidence::Confirmed);
+    }
+
+    #[test]
+    fn does_not_merge_gopls_symbol_into_channel_flow_marker() {
+        let mut results = vec![DetectedConstruct {
+            kind: ConstructKind::Channel,
+            line: 6,
+            column: 5,
+            symbol: Some("ch".to_string()),
+            scope_key: Some("F1>B2".to_string()),
+            confidence: Confidence::Predicted,
+            channel_operation: Some(ChannelOperation::Send),
+        }];
+        let gopls_results = vec![DetectedConstruct {
+            kind: ConstructKind::Mutex, // dummy kind for parsed gopls symbol entry
+            line: 6,
+            column: 2,
+            symbol: Some("other".to_string()),
+            scope_key: None,
+            confidence: Confidence::Confirmed,
+            channel_operation: None,
+        }];
+
+        merge_gopls_constructs(&mut results, gopls_results);
+
+        assert_eq!(results[0].symbol.as_deref(), Some("ch"));
+        assert_eq!(results[0].confidence, Confidence::Predicted);
     }
 }

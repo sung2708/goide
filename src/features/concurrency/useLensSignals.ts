@@ -1,7 +1,9 @@
-import { useEffect, useState, type MutableRefObject } from "react";
+import { useEffect, useMemo, useState, type MutableRefObject } from "react";
 import { analyzeActiveFileConcurrency } from "../../lib/ipc/client";
+import { buildCounterpartMappings } from "./counterpartMapping";
 import {
   mapApiConstructToLensConstruct,
+  type LensCounterpartMapping,
   type LensConstruct,
 } from "./lensTypes";
 
@@ -13,6 +15,7 @@ type UseLensSignalsArgs = {
 
 type UseLensSignalsResult = {
   detectedConstructs: LensConstruct[];
+  counterpartMappings: LensCounterpartMapping[];
   isAnalyzing: boolean;
   analysisError: string | null;
 };
@@ -84,8 +87,14 @@ export function useLensSignals({
     };
   }, [activeFilePath, workspacePath, workspacePathRef]);
 
+  const counterpartMappings = useMemo(
+    () => buildCounterpartMappings(detectedConstructs),
+    [detectedConstructs]
+  );
+
   return {
     detectedConstructs,
+    counterpartMappings,
     isAnalyzing,
     analysisError,
   };
