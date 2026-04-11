@@ -10,6 +10,7 @@ function makeHint(confidence: LensHoverHint["confidence"]): LensHoverHint {
     line: 10,
     column: 1,
     symbol: null,
+    scopeKey: null,
     confidence,
   };
 }

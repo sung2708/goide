@@ -17,6 +17,7 @@ function makeConstruct(
     line,
     column,
     symbol: null,
+    scopeKey: null,
     confidence,
   };
 }
