@@ -4,6 +4,7 @@ type StatusBarProps = {
   mode: "quick-insight" | "deep-trace";
   runtimeAvailability: "available" | "unavailable";
   saveStatus?: "idle" | "saving" | "saved" | "error";
+  runStatus?: "idle" | "running" | "done" | "error";
   isSummaryOpen: boolean;
   isBottomPanelOpen: boolean;
   isCommandPaletteOpen: boolean;
@@ -18,6 +19,7 @@ function StatusBar({
   mode,
   runtimeAvailability,
   saveStatus = "idle",
+  runStatus = "idle",
   isSummaryOpen,
   isBottomPanelOpen,
   isCommandPaletteOpen,
@@ -87,7 +89,10 @@ function StatusBar({
           Bottom
         </button>
         <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Status: {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? "Save Error" : "Ready"}
+          Save: {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? "Error" : "Ready"}
+        </span>
+        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
+          Run: {runStatus === "running" ? "Running..." : runStatus === "done" ? "Done" : runStatus === "error" ? "Error" : "Ready"}
         </span>
       </div>
     </div>
