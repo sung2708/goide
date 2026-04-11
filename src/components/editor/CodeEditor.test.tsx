@@ -13,6 +13,8 @@ const mockView = {
     from: 1,
     to: 40,
   },
+  dispatch: vi.fn(),
+  focus: vi.fn(),
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
       return 5;
@@ -46,6 +48,33 @@ vi.mock("@uiw/react-codemirror", () => ({
 }));
 
 describe("CodeEditor", () => {
+  it("moves selection, scrolls, and focuses editor on jump request", () => {
+    mockView.dispatch.mockClear();
+    mockView.focus.mockClear();
+    const selectionSpy = vi.fn();
+    const anchorSpy = vi.fn();
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onSelectionLineChange={selectionSpy}
+        onInteractionAnchorChange={anchorSpy}
+        jumpRequest={{ line: 2, requestId: 1 }}
+      />
+    );
+
+    expect(mockView.dispatch).toHaveBeenCalledTimes(1);
+    expect(mockView.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selection: { anchor: 25 },
+        effects: expect.anything(),
+      })
+    );
+    expect(mockView.focus).toHaveBeenCalledTimes(1);
+    expect(selectionSpy).toHaveBeenCalledWith(2);
+    expect(anchorSpy).toHaveBeenCalledWith(expect.objectContaining({ top: 44 }));
+  });
+
   it("maps mouse movement to hover line and clears on mouse leave", () => {
     const hoverSpy = vi.fn();
     const { container } = render(
@@ -77,6 +106,131 @@ describe("CodeEditor", () => {
     fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
 
     expect(selectionSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("emits modifier-click line on Ctrl+click (non-Mac) and does not emit selection", () => {
+    const originalPlatform = navigator.platform;
+    Object.defineProperty(navigator, "platform", {
+      value: "Win32",
+      configurable: true,
+    });
+
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn().mockReturnValue(true);
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
+
+      const editorContainer = container.firstElementChild as HTMLElement;
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).toHaveBeenCalledWith(2);
+      expect(selectionSpy).not.toHaveBeenCalled();
+
+      // metaKey alone should not trigger on non-Mac
+      modifierSpy.mockClear();
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        metaKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
+  });
+
+  it("emits modifier-click line on Cmd+click (macOS) and does not emit selection", () => {
+    const originalPlatform = navigator.platform;
+    Object.defineProperty(navigator, "platform", {
+      value: "MacIntel",
+      configurable: true,
+    });
+
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn().mockReturnValue(true);
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
+
+      const editorContainer = container.firstElementChild as HTMLElement;
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        metaKey: true,
+      });
+      expect(modifierSpy).toHaveBeenCalledWith(2);
+      expect(selectionSpy).not.toHaveBeenCalled();
+
+      // ctrlKey alone should not trigger on macOS (Ctrl+Click = context menu)
+      modifierSpy.mockClear();
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 0,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
+  });
+
+  it("does not emit modifier-click on non-left-button modifier+click", () => {
+    const originalPlatform = navigator.platform;
+    Object.defineProperty(navigator, "platform", {
+      value: "Win32",
+      configurable: true,
+    });
+
+    try {
+      const selectionSpy = vi.fn();
+      const modifierSpy = vi.fn();
+      const { container } = render(
+        <CodeEditor
+          value={"package main\nfunc main() {}\n"}
+          onSelectionLineChange={selectionSpy}
+          onModifierClickLine={modifierSpy}
+        />
+      );
+
+      const editorContainer = container.firstElementChild as HTMLElement;
+      // button: 2 is right-click
+      fireEvent.mouseDown(editorContainer, {
+        clientX: 8,
+        clientY: 60,
+        button: 2,
+        ctrlKey: true,
+      });
+      expect(modifierSpy).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(navigator, "platform", {
+        value: originalPlatform,
+        configurable: true,
+      });
+    }
   });
 
   it("resets dedupe state on file identity change so same line can be selected again", () => {
@@ -169,4 +323,3 @@ describe("CodeEditor", () => {
     expect(viewportSpy).toHaveBeenNthCalledWith(2, { fromLine: 2, toLine: 2 });
   });
 });
-

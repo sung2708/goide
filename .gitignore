@@ -27,3 +27,4 @@ dist-ssr
 _uv-cache
 .superpowers
 _bmad-output/code-review.diff
+.codex
