@@ -1,10 +1,23 @@
 use crate::integration::fs;
 use crate::integration::gopls;
+use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
     AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, ConcurrencyConfidenceDto,
     ConcurrencyConstructDto, ConcurrencyConstructKindDto, FsEntryDto,
 };
 use std::path::{Component, Path};
+use tokio::sync::Mutex;
+use std::sync::Arc;
+
+/// Global shared handle to the currently-running `go run` process.
+/// A `OnceLock` gives us a lazily initialized, Send + Sync singleton without unsafe.
+static PROCESS_HANDLE: std::sync::OnceLock<ProcessHandle> = std::sync::OnceLock::new();
+
+fn get_process_handle() -> ProcessHandle {
+    PROCESS_HANDLE
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone()
+}
 
 #[tauri::command]
 pub async fn list_workspace_entries(
@@ -64,6 +77,30 @@ pub async fn write_workspace_file(
         Ok(Err(error)) => ApiResponse::err("fs_write_failed", &error.to_string()),
         Err(error) => ApiResponse::err("fs_write_failed", &error.to_string()),
     }
+}
+
+#[tauri::command]
+pub async fn run_workspace_file<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_root: String,
+    relative_path: String,
+    run_id: String,
+) -> ApiResponse<()> {
+    if run_id.trim().is_empty() {
+        return ApiResponse::err("run_invalid_input", "run id is required");
+    }
+
+    let handle = get_process_handle();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) =
+            run_go_file(app.clone(), workspace_root, relative_path, run_id.clone(), handle).await
+        {
+            emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            eprintln!("[goide] run_go_file error: {e:#}");
+        }
+    });
+    // Returns immediately — output streams via events
+    ApiResponse::ok(())
 }
 
 #[tauri::command]

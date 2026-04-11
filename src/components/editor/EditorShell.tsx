@@ -1,9 +1,15 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
-import { readWorkspaceFile, writeWorkspaceFile } from "../../lib/ipc/client";
+import {
+  readWorkspaceFile,
+  writeWorkspaceFile,
+  runWorkspaceFile,
+} from "../../lib/ipc/client";
+import type { RunOutputPayload } from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -43,6 +49,8 @@ function EditorShell() {
   );
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
+  const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +70,7 @@ function EditorShell() {
     left: number;
   } | null>(null);
   const jumpRequestIdRef = useRef(0);
+  const activeRunIdRef = useRef<string | null>(null);
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
@@ -225,6 +234,75 @@ function EditorShell() {
     },
     [workspacePath, activeFilePath]
   );
+  
+  const handleRunFile = useCallback(async () => {
+    if (!workspacePath || !activeFilePath) return;
+    const runId =
+      globalThis.crypto?.randomUUID?.() ??
+      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    activeRunIdRef.current = runId;
+
+    setRunOutput([]);
+    setRunStatus("running");
+    setIsBottomPanelOpen(true);
+
+    try {
+      const resp = await runWorkspaceFile(workspacePath, activeFilePath, runId);
+      if (!resp.ok) {
+        if (activeRunIdRef.current !== runId) {
+          return;
+        }
+        setRunStatus("error");
+        setRunOutput([{
+          runId,
+          line: `Failed to start: ${resp.error?.message ?? "Unknown error"}`,
+          stream: "stderr"
+        }]);
+      }
+    } catch (err) {
+      if (activeRunIdRef.current !== runId) {
+        return;
+      }
+      setRunStatus("error");
+      setRunOutput([{
+        runId,
+        line: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
+        stream: "stderr"
+      }]);
+    }
+  }, [workspacePath, activeFilePath]);
+
+  const handleClearOutput = useCallback(() => {
+    setRunOutput([]);
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    let isUnmounted = false;
+
+    const setupListener = async () => {
+      const dispose = await listen<RunOutputPayload>("run-output", (event) => {
+        if (event.payload.runId !== activeRunIdRef.current) {
+          return;
+        }
+        setRunOutput((prev) => [...prev, event.payload]);
+        if (event.payload.stream === "exit") {
+          setRunStatus(event.payload.exitCode === 0 ? "done" : "error");
+        }
+      });
+      if (isUnmounted) {
+        dispose();
+        return;
+      }
+      unlisten = dispose;
+    };
+
+    setupListener();
+    return () => {
+      isUnmounted = true;
+      if (unlisten) unlisten();
+    };
+  }, []);
 
   const handleEditorChange = useCallback((value: string) => {
     latestEditorContentRef.current = value;
@@ -409,6 +487,20 @@ function EditorShell() {
                 >
                   {isOpening ? "Opening..." : "Open Workspace"}
                 </button>
+                {activeFilePath && (
+                  <button
+                    className={`ml-2 rounded border ${BORDER} px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
+                      runStatus === "running"
+                        ? "cursor-not-allowed opacity-60"
+                        : "hover:border-[#a6e3a1] hover:text-[#a6e3a1]"
+                    }`}
+                    onClick={handleRunFile}
+                    type="button"
+                    disabled={runStatus === "running"}
+                  >
+                    {runStatus === "running" ? "Running..." : "Run"}
+                  </button>
+                )}
               </header>
 
               <div className="flex flex-1 flex-col p-6">
@@ -523,7 +615,13 @@ function EditorShell() {
           </div>
 
           {isBottomPanelOpen && (
-            <BottomPanel onClose={() => setIsBottomPanelOpen(false)} />
+            <BottomPanel 
+              onClose={() => setIsBottomPanelOpen(false)} 
+              output={runOutput}
+              isRunning={runStatus === "running"}
+              onClear={handleClearOutput}
+              onRun={handleRunFile}
+            />
           )}
         </div>
       </div>
@@ -534,6 +632,7 @@ function EditorShell() {
         mode={mode}
         runtimeAvailability={runtimeAvailability}
         saveStatus={saveStatus}
+        runStatus={runStatus}
         isSummaryOpen={isSummaryOpen}
         isBottomPanelOpen={isBottomPanelOpen}
         isCommandPaletteOpen={isCommandPaletteOpen}
