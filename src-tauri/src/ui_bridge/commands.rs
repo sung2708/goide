@@ -49,6 +49,24 @@ pub async fn read_workspace_file(
 }
 
 #[tauri::command]
+pub async fn write_workspace_file(
+    workspace_root: String,
+    relative_path: String,
+    content: String,
+) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::write_file(&workspace_root, &relative_path, &content)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(error)) => ApiResponse::err("fs_write_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_write_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn analyze_active_file_concurrency(
     request: AnalyzeConcurrencyRequest,
 ) -> ApiResponse<Vec<ConcurrencyConstructDto>> {

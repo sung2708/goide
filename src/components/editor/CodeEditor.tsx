@@ -4,7 +4,8 @@ import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
-import { EditorView } from "@codemirror/view";
+import { EditorView, keymap } from "@codemirror/view";
+import { history, historyKeymap } from "@codemirror/commands";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 
 type InteractionAnchor = {
@@ -29,6 +30,9 @@ type CodeEditorProps = {
   onCounterpartAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
+  onSave?: (content: string) => void;
+  onChange?: (value: string) => void;
+  editable?: boolean;
 };
 
 function CodeEditor({
@@ -43,9 +47,23 @@ function CodeEditor({
   onCounterpartAnchorChange,
   onInteractionAnchorChange,
   onViewportRangeChange,
+  onSave,
+  onChange,
+  editable = true,
 }: CodeEditorProps) {
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
+    history(),
+    keymap.of([
+      ...historyKeymap,
+      {
+        key: "Mod-s",
+        run: (view) => {
+          onSave?.(view.state.doc.toString());
+          return true;
+        },
+      },
+    ]),
     EditorView.updateListener.of((update) => {
       if (update.geometryChanged || update.viewportChanged) {
         // Schedule anchor sync on the next microtask to avoid read-during-render layout thrashing
@@ -88,7 +106,7 @@ function CodeEditor({
         });
       }
     })
-  ], [counterpartLine, onCounterpartAnchorChange, onInteractionAnchorChange]);
+  ], [counterpartLine, onCounterpartAnchorChange, onInteractionAnchorChange, onSave]);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
@@ -330,8 +348,9 @@ function CodeEditor({
           viewRef.current = view;
           emitViewportRange(view);
         }}
-        editable={false}
-        readOnly
+        editable={editable}
+        readOnly={!editable}
+        onChange={onChange}
       />
     </div>
   );
