@@ -7,6 +7,7 @@ import { readWorkspaceFile } from "../../lib/ipc/client";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
+import ThreadLine from "../overlays/ThreadLine";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
@@ -38,6 +39,10 @@ function EditorShell() {
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
   const [interactionAnchor, setInteractionAnchor] = useState<{
+    top: number;
+    left: number;
+  } | null>(null);
+  const [counterpartAnchor, setCounterpartAnchor] = useState<{
     top: number;
     left: number;
   } | null>(null);
@@ -354,6 +359,11 @@ function EditorShell() {
                       </div>
                       <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={activeHint} />
+                        <ThreadLine 
+                          visible={isInlineActionsVisible && hasCounterpart}
+                          sourceAnchor={interactionAnchor}
+                          targetAnchor={counterpartAnchor}
+                        />
                         <InlineActions
                           visible={isInlineActionsVisible}
                           runtimeAvailability={runtimeAvailability}
@@ -367,11 +377,13 @@ function EditorShell() {
                             value={activeFileContent}
                             selectionContextKey={activeFilePath}
                             hintLine={activeHintLine}
+                            counterpartLine={resolveCounterpartFromActiveHint()}
                             jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
                             onModifierClickLine={handleModifierClickLine}
                             onInteractionAnchorChange={setInteractionAnchor}
+                            onCounterpartAnchorChange={setCounterpartAnchor}
                             onViewportRangeChange={setVisibleRange}
                           />
                         ) : (
