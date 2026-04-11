@@ -43,3 +43,10 @@ export type AnalyzeConcurrencyRequest = {
   workspaceRoot: string;
   relativePath: string;
 };
+
+export type RunOutputPayload = {
+  runId: string;
+  line: string;
+  stream: "stdout" | "stderr" | "exit";
+  exitCode?: number;
+};

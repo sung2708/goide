@@ -1,4 +1,4 @@
-# last_updated: 2026-04-11T22:48:00+07:00
+# last_updated: 2026-04-11T23:38:40+07:00
 # project: goide
 # tracking_system: file-system
 # story_location: _bmad-output\implementation-artifacts
@@ -26,7 +26,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-11T22:48:00+07:00
+last_updated: 2026-04-12T00:03:00+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -41,7 +41,7 @@ development_status:
   1-5-optional-panels-default-state: done
   1-6-status-bar-indicators-command-palette-trigger: done
   1-7-write-save: done
-  1-8-run-baseline: backlog
+  1-8-run-baseline: done
   epic-2: in-progress
   2-1-static-concurrency-detection-gopls: done
   2-2-hover-hint-underline-predicted: done
