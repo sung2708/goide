@@ -172,6 +172,60 @@ describe("useLensSignals", () => {
     await waitFor(() => {
       expect(result.current.analysisError).toBe("analysis failed");
       expect(result.current.detectedConstructs).toHaveLength(0);
+      expect(result.current.counterpartMappings).toEqual([]);
+    });
+  });
+
+  it("builds counterpart mappings from matched channel symbols", async () => {
+    const analyzeMock = vi.mocked(analyzeActiveFileConcurrency);
+    analyzeMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          kind: "channel",
+          line: 10,
+          column: 1,
+          symbol: "jobs",
+          scopeKey: "S1",
+          confidence: ConcurrencyConfidence.Predicted,
+          channelOperation: "send",
+        },
+        {
+          kind: "channel",
+          line: 22,
+          column: 1,
+          symbol: "jobs",
+          scopeKey: "S1",
+          confidence: ConcurrencyConfidence.Predicted,
+          channelOperation: "receive",
+        },
+      ],
+    });
+
+    const { result } = renderHook(() => {
+      const workspacePathRef = useWorkspaceRef("C:/repo");
+      return useLensSignals({
+        workspacePath: "C:/repo",
+        activeFilePath: "main.go",
+        workspacePathRef,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.counterpartMappings).toEqual([
+        {
+          sourceLine: 10,
+          counterpartLine: 22,
+          symbol: "jobs",
+          confidence: ConcurrencyConfidence.Predicted,
+        },
+        {
+          sourceLine: 22,
+          counterpartLine: 10,
+          symbol: "jobs",
+          confidence: ConcurrencyConfidence.Predicted,
+        },
+      ]);
     });
   });
 });

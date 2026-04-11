@@ -72,6 +72,7 @@ export function useHoverHint({
       line: match.line,
       column: match.column,
       symbol: match.symbol,
+      scopeKey: match.scopeKey,
       confidence: ConcurrencyConfidence.Predicted,
     };
   }, [
@@ -89,4 +90,3 @@ export function useHoverHint({
     setHoveredLine,
   };
 }
-

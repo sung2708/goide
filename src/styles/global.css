@@ -32,3 +32,24 @@ body {
   background-color: #1e1e2e;
   color: #cdd6f4;
 }
+
+/* Shared border utilities used by chrome surfaces (status bar / panels). */
+.premium-border {
+  border: 1px solid var(--goide-border-muted);
+}
+
+.premium-border-t {
+  border-top: 1px solid var(--goide-border-muted);
+}
+
+.premium-border-r {
+  border-right: 1px solid var(--goide-border-muted);
+}
+
+.premium-border-b {
+  border-bottom: 1px solid var(--goide-border-muted);
+}
+
+.premium-border-l {
+  border-left: 1px solid var(--goide-border-muted);
+}
