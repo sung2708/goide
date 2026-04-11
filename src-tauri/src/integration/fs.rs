@@ -81,9 +81,11 @@ pub fn write_file(workspace_root: &str, relative_path: &str, content: &str) -> R
     let target = canonical_parent.join(file_name);
 
     let mut target_exists = false;
+    let mut target_permissions: Option<fs::Permissions> = None;
     match fs::symlink_metadata(&target) {
         Ok(metadata) => {
             target_exists = true;
+            target_permissions = Some(metadata.permissions());
             if metadata.file_type().is_symlink() {
                 return Err(anyhow!("refusing to write through symlink target"));
             }
@@ -107,7 +109,7 @@ pub fn write_file(workspace_root: &str, relative_path: &str, content: &str) -> R
         }
     }
 
-    write_file_atomic(&target, content, target_exists)
+    write_file_atomic(&target, content, target_exists, target_permissions)
         .with_context(|| format!("failed to write file: {}", target.display()))
 }
 
@@ -153,7 +155,12 @@ fn resolve_scoped_path(root: &Path, relative_path: Option<&str>) -> Result<PathB
     Ok(canonical_target)
 }
 
-fn write_file_atomic(target: &Path, content: &str, target_exists: bool) -> Result<()> {
+fn write_file_atomic(
+    target: &Path,
+    content: &str,
+    target_exists: bool,
+    target_permissions: Option<fs::Permissions>,
+) -> Result<()> {
     let parent = target
         .parent()
         .ok_or_else(|| anyhow!("path has no parent directory"))?;
@@ -187,6 +194,11 @@ fn write_file_atomic(target: &Path, content: &str, target_exists: bool) -> Resul
                 temp_file.sync_all().with_context(|| {
                     format!("failed to sync temp file: {}", candidate.display())
                 })?;
+                if let Some(permissions) = target_permissions.clone() {
+                    fs::set_permissions(&candidate, permissions).with_context(|| {
+                        format!("failed to set permissions on temp file: {}", candidate.display())
+                    })?;
+                }
                 temp_path = Some(candidate);
                 break;
             }
@@ -277,6 +289,8 @@ fn replace_existing_file(temp_path: &Path, target: &Path) -> std::io::Result<()>
 mod tests {
     use super::*;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn rejects_path_escape() {
@@ -380,5 +394,23 @@ mod tests {
 
         let outside_content = fs::read_to_string(&outside).unwrap();
         assert_eq!(outside_content, "before");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_file_preserves_existing_file_mode() {
+        let temp_dir = std::env::temp_dir().join("goide_test_write_preserve_mode");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        let file_path = temp_dir.join("script.sh");
+        fs::write(&file_path, "#!/bin/sh\necho hi\n").unwrap();
+        fs::set_permissions(&file_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let root = temp_dir.to_string_lossy().to_string();
+        write_file(&root, "script.sh", "#!/bin/sh\necho bye\n").unwrap();
+
+        let mode = fs::metadata(&file_path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o755);
     }
 }
