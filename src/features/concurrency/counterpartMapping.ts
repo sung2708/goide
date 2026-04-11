@@ -17,6 +17,15 @@ function toScopeKey(scopeKey: string | null): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function toRootScopeKey(scopeKey: string | null): string | null {
+  const normalized = toScopeKey(scopeKey);
+  if (!normalized) {
+    return null;
+  }
+  const root = normalized.split(">").find((segment) => segment.length > 0) ?? null;
+  return root;
+}
+
 function toDeterministicConfidence(constructs: LensConstruct[]): ConcurrencyConfidence {
   if (
     constructs.some(
@@ -76,12 +85,12 @@ export function buildCounterpartMappings(
       continue;
     }
     const symbol = toSymbolKey(construct.symbol);
-    const scopeKey = toScopeKey(construct.scopeKey);
+    const scopeKey = toRootScopeKey(construct.scopeKey);
     if (!symbol) {
       continue;
     }
-    // Require explicit scope identity for channel counterpart pairing to prevent
-    // cross-scope linking between shadowed identifiers.
+    // Pair within the same lexical root scope (for example function body and nested
+    // blocks), while still preventing cross-function/sibling root scope linking.
     if (!scopeKey) {
       continue;
     }
