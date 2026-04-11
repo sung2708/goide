@@ -10,7 +10,7 @@ import InlineActions from "../overlays/InlineActions";
 import ThreadLine from "../overlays/ThreadLine";
 import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
-import type { LensHoverHint, LensConstructKind } from "../../features/concurrency/lensTypes";
+import type { LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
