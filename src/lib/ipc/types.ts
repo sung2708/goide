@@ -115,3 +115,10 @@ export type ActivateDeepTraceResponse = {
 export type RuntimeAvailabilityResponse = {
   runtimeAvailability: "available" | "unavailable";
 };
+
+export type RuntimeSignal = {
+  threadId: number;
+  status: string;
+  waitReason: string;
+  confidence: ConcurrencyConfidence.Confirmed;
+};
