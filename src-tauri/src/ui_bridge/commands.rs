@@ -1,4 +1,4 @@
-use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal};
+use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
@@ -71,6 +71,10 @@ fn map_runtime_signal(signal: RuntimeSignal) -> RuntimeSignalDto {
         status: signal.status,
         wait_reason: signal.wait_reason,
         confidence: ConcurrencyConfidenceDto::Confirmed,
+        scope_key: signal.scope_key,
+        relative_path: signal.relative_path,
+        line: signal.line,
+        column: signal.column,
     }
 }
 
@@ -397,6 +401,12 @@ pub async fn activate_scoped_deep_trace(
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     let session_pid = dap_process.child.id();
     let session_handle_for_sampler = get_dap_session_handle();
+    let runtime_scope = RuntimeSignalScope {
+        scope_key: scope_key.clone(),
+        relative_path: request.relative_path.clone(),
+        line: request.line,
+        column: request.column,
+    };
     let sampler_task = tokio::spawn(async move {
         let mut client = client;
         loop {
@@ -410,7 +420,7 @@ pub async fn activate_scoped_deep_trace(
                         Ok(threads) => {
                             let mapped = threads
                                 .iter()
-                                .filter_map(delve::thread_to_runtime_signal)
+                                .filter_map(|thread| delve::thread_to_runtime_signal(thread, &runtime_scope))
                                 .collect::<Vec<_>>();
                             let mut store = signals_handle.lock().await;
                             *store = mapped;
