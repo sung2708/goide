@@ -1,5 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ActivateDeepTraceRequest,
+  ActivateDeepTraceResponse,
   AnalyzeConcurrencyRequest,
   ApiResponse,
   CompletionItem,
@@ -7,6 +9,7 @@ import type {
   ConcurrencyConstruct,
   EditorDiagnostic,
   FsEntry,
+  RuntimeAvailabilityResponse,
 } from "./types";
 
 export async function listWorkspaceEntries(
@@ -80,4 +83,23 @@ export async function fetchWorkspaceCompletions(
   return invoke<ApiResponse<CompletionItem[]>>("get_active_file_completions", {
     request,
   });
+}
+
+export async function activateScopedDeepTrace(
+  request: ActivateDeepTraceRequest
+): Promise<ApiResponse<ActivateDeepTraceResponse>> {
+  return invoke<ApiResponse<ActivateDeepTraceResponse>>(
+    "activate_scoped_deep_trace",
+    {
+      request,
+    }
+  );
+}
+
+export async function getRuntimeAvailability(): Promise<
+  ApiResponse<RuntimeAvailabilityResponse>
+> {
+  return invoke<ApiResponse<RuntimeAvailabilityResponse>>(
+    "get_runtime_availability"
+  );
 }
