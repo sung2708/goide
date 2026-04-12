@@ -1,3 +1,4 @@
+use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal};
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
@@ -6,12 +7,13 @@ use crate::ui_bridge::types::{
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     ConcurrencyConfidenceDto, ConcurrencyConstructDto, ConcurrencyConstructKindDto,
     DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
-    FsEntryDto, RuntimeAvailabilityResponseDto,
+    FsEntryDto, RuntimeAvailabilityResponseDto, RuntimeSignalDto,
 };
 use std::path::{Component, Path};
 use std::process::Command;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
+use tokio::sync::{oneshot, Mutex};
 
 /// Global shared handle to the currently-running `go run` process.
 /// A `OnceLock` gives us a lazily initialized, Send + Sync singleton without unsafe.
@@ -21,6 +23,55 @@ fn get_process_handle() -> ProcessHandle {
     PROCESS_HANDLE
         .get_or_init(|| Arc::new(Mutex::new(None)))
         .clone()
+}
+
+static DAP_SESSION_HANDLE: std::sync::OnceLock<Arc<Mutex<Option<DapSessionHandle>>>> =
+    std::sync::OnceLock::new();
+static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<Vec<RuntimeSignal>>>> =
+    std::sync::OnceLock::new();
+
+struct DapSessionHandle {
+    child: tokio::process::Child,
+    stop_tx: oneshot::Sender<()>,
+    sampler_task: tokio::task::JoinHandle<()>,
+}
+
+fn get_dap_session_handle() -> Arc<Mutex<Option<DapSessionHandle>>> {
+    DAP_SESSION_HANDLE
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone()
+}
+
+fn get_runtime_signals_handle() -> Arc<Mutex<Vec<RuntimeSignal>>> {
+    RUNTIME_SIGNALS
+        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .clone()
+}
+
+async fn stop_dap_session(session: DapSessionHandle) {
+    let DapSessionHandle {
+        mut child,
+        stop_tx,
+        sampler_task,
+    } = session;
+    let mut sampler_task = sampler_task;
+
+    let _ = stop_tx.send(());
+    let _ = child.kill().await;
+    let timeout_result = tokio::time::timeout(Duration::from_secs(1), &mut sampler_task).await;
+    if timeout_result.is_err() {
+        // The sampler task did not complete within the timeout, abort it.
+        sampler_task.abort();
+    }
+}
+
+fn map_runtime_signal(signal: RuntimeSignal) -> RuntimeSignalDto {
+    RuntimeSignalDto {
+        thread_id: signal.thread_id,
+        status: signal.status,
+        wait_reason: signal.wait_reason,
+        confidence: ConcurrencyConfidenceDto::Confirmed,
+    }
 }
 
 #[tauri::command]
@@ -293,6 +344,112 @@ pub async fn activate_scoped_deep_trace(
         symbol.as_deref().unwrap_or("scope")
     );
 
+    let workspace_root = std::path::PathBuf::from(&request.workspace_root);
+    let target_file = workspace_root.join(&request.relative_path);
+
+    if !target_file.exists() {
+        return ApiResponse::err(
+            "deep_trace_file_not_found",
+            &format!("Target file not found: {}", target_file.display()),
+        );
+    }
+    let launch_mode = if request.relative_path.ends_with("_test.go") {
+        LaunchMode::Test
+    } else {
+        LaunchMode::Debug
+    };
+
+    let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
+        Ok(process) => process,
+        Err(error) => {
+            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+        }
+    };
+
+    let mut client = match DapClient::connect(dap_process.listen_addr).await {
+        Ok(client) => client,
+        Err(error) => {
+            let _ = dap_process.child.kill().await;
+            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+        }
+    };
+
+    if let Err(error) = client.initialize().await {
+        let _ = dap_process.child.kill().await;
+        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+    }
+
+    if let Err(error) = client
+        .launch(launch_mode, &workspace_root, &target_file)
+        .await
+    {
+        let _ = client.disconnect().await;
+        let _ = dap_process.child.kill().await;
+        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+    }
+
+    let signals_handle = get_runtime_signals_handle();
+    {
+        let mut signals = signals_handle.lock().await;
+        signals.clear();
+    }
+
+    let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+    let session_pid = dap_process.child.id();
+    let session_handle_for_sampler = get_dap_session_handle();
+    let sampler_task = tokio::spawn(async move {
+        let mut client = client;
+        loop {
+            tokio::select! {
+                _ = &mut stop_rx => {
+                    let _ = client.disconnect().await;
+                    break;
+                }
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {
+                    match client.threads().await {
+                        Ok(threads) => {
+                            let mapped = threads
+                                .iter()
+                                .filter_map(delve::thread_to_runtime_signal)
+                                .collect::<Vec<_>>();
+                            let mut store = signals_handle.lock().await;
+                            *store = mapped;
+                        }
+                        Err(_) => {
+                            let _ = client.disconnect().await;
+                            {
+                                let mut store = signals_handle.lock().await;
+                                store.clear();
+                            }
+                            let mut session_guard = session_handle_for_sampler.lock().await;
+                            let should_clear_current = session_guard
+                                .as_ref()
+                                .and_then(|session| session.child.id())
+                                == session_pid;
+                            if should_clear_current {
+                                *session_guard = None;
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    });
+
+    let session_handle = get_dap_session_handle();
+    let previous_session = {
+        let mut guard = session_handle.lock().await;
+        guard.replace(DapSessionHandle {
+            child: dap_process.child,
+            stop_tx,
+            sampler_task,
+        })
+    };
+    if let Some(previous) = previous_session {
+        stop_dap_session(previous).await;
+    }
+
     ApiResponse::ok(ActivateDeepTraceResponseDto {
         mode: "deep-trace".to_string(),
         scope_key: Some(scope_key),
@@ -301,10 +458,9 @@ pub async fn activate_scoped_deep_trace(
 
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        Command::new("dlv").arg("version").output()
-    })
-    .await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || Command::new("dlv").arg("version").output())
+            .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -314,6 +470,12 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
     ApiResponse::ok(RuntimeAvailabilityResponseDto {
         runtime_availability: runtime_availability.to_string(),
     })
+}
+
+#[tauri::command]
+pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
+    let signals = get_runtime_signals_handle().lock().await.clone();
+    ApiResponse::ok(signals.into_iter().map(map_runtime_signal).collect())
 }
 
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
@@ -367,7 +529,10 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
     Ok(())
 }
 
-fn validate_workspace_scoped_go_path(workspace_root: &str, relative_path: &str) -> Result<(), String> {
+fn validate_workspace_scoped_go_path(
+    workspace_root: &str,
+    relative_path: &str,
+) -> Result<(), String> {
     let root = Path::new(workspace_root)
         .canonicalize()
         .map_err(|_| "workspace root does not exist".to_string())?;

@@ -10,6 +10,7 @@ import type {
   EditorDiagnostic,
   FsEntry,
   RuntimeAvailabilityResponse,
+  RuntimeSignal,
 } from "./types";
 
 export async function listWorkspaceEntries(
@@ -102,4 +103,8 @@ export async function getRuntimeAvailability(): Promise<
   return invoke<ApiResponse<RuntimeAvailabilityResponse>>(
     "get_runtime_availability"
   );
+}
+
+export async function getRuntimeSignals(): Promise<ApiResponse<RuntimeSignal[]>> {
+  return invoke<ApiResponse<RuntimeSignal[]>>("get_runtime_signals");
 }
