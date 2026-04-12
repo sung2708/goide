@@ -3,6 +3,7 @@ import type {
   AnalyzeConcurrencyRequest,
   ApiResponse,
   ConcurrencyConstruct,
+  EditorDiagnostic,
   FsEntry,
 } from "./types";
 
@@ -58,5 +59,15 @@ export async function runWorkspaceFile(
     workspaceRoot,
     relativePath,
     runId,
+  });
+}
+
+export async function fetchWorkspaceDiagnostics(
+  workspaceRoot: string,
+  relativePath: string
+): Promise<ApiResponse<EditorDiagnostic[]>> {
+  return invoke<ApiResponse<EditorDiagnostic[]>>("get_active_file_diagnostics", {
+    workspaceRoot,
+    relativePath,
   });
 }

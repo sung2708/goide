@@ -3,7 +3,8 @@ use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
     AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, ConcurrencyConfidenceDto,
-    ConcurrencyConstructDto, ConcurrencyConstructKindDto, FsEntryDto,
+    ConcurrencyConstructDto, ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto,
+    EditorDiagnosticDto, FsEntryDto,
 };
 use std::path::{Component, Path};
 use tokio::sync::Mutex;
@@ -149,6 +150,48 @@ pub async fn analyze_active_file_concurrency(
     }
 }
 
+#[tauri::command]
+pub async fn get_active_file_diagnostics(
+    workspace_root: String,
+    relative_path: String,
+) -> ApiResponse<Vec<EditorDiagnosticDto>> {
+    if let Err(message) = validate_go_diagnostics_path(&relative_path) {
+        return ApiResponse::err("diagnostics_invalid_input", &message);
+    }
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        gopls::analyze_file_diagnostics(&workspace_root, &relative_path)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(diagnostics)) => {
+            let mapped = diagnostics
+                .into_iter()
+                .map(|item| EditorDiagnosticDto {
+                    severity: match item.severity {
+                        gopls::DiagnosticSeverity::Error => DiagnosticSeverityDto::Error,
+                        gopls::DiagnosticSeverity::Warning => DiagnosticSeverityDto::Warning,
+                        gopls::DiagnosticSeverity::Info => DiagnosticSeverityDto::Info,
+                    },
+                    message: item.message,
+                    source: item.source,
+                    code: item.code,
+                    range: DiagnosticRangeDto {
+                        start_line: item.range.start_line,
+                        start_column: item.range.start_column,
+                        end_line: item.range.end_line,
+                        end_column: item.range.end_column,
+                    },
+                })
+                .collect();
+            ApiResponse::ok(mapped)
+        }
+        Ok(Err(error)) => ApiResponse::err("diagnostics_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("diagnostics_failed", &error.to_string()),
+    }
+}
+
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     let normalized = relative_path.trim();
     if normalized.is_empty() {
@@ -179,9 +222,13 @@ fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_go_diagnostics_path(relative_path: &str) -> Result<(), String> {
+    validate_go_analysis_path(relative_path)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::validate_go_analysis_path;
+    use super::{validate_go_analysis_path, validate_go_diagnostics_path};
 
     #[test]
     fn rejects_non_go_paths_for_analysis() {
@@ -200,5 +247,25 @@ mod tests {
     fn accepts_relative_go_file_path() {
         validate_go_analysis_path("pkg/service/main.go")
             .expect("must accept normal relative go file");
+    }
+
+    #[test]
+    fn diagnostics_path_rejects_non_go_files() {
+        let err = validate_go_diagnostics_path("README.md")
+            .expect_err("must reject diagnostics for non-go file");
+        assert!(err.contains(".go"));
+    }
+
+    #[test]
+    fn diagnostics_path_rejects_parent_traversal() {
+        let err = validate_go_diagnostics_path("../outside.go")
+            .expect_err("must reject diagnostics traversal outside workspace");
+        assert!(err.contains("within workspace"));
+    }
+
+    #[test]
+    fn diagnostics_path_accepts_relative_go_file() {
+        validate_go_diagnostics_path("pkg/service/main.go")
+            .expect("must accept valid go file diagnostics path");
     }
 }

@@ -32,6 +32,24 @@ const editorTheme = EditorView.theme(
       textDecorationThickness: "1px",
       textUnderlineOffset: "3px",
     },
+    ".cm-lintRange-error": {
+      backgroundColor: "rgba(243, 139, 168, 0.22)",
+      textDecoration: "underline wavy #f38ba8",
+      textUnderlineOffset: "2px",
+    },
+    ".cm-lintRange-warning": {
+      backgroundColor: "rgba(249, 226, 175, 0.2)",
+      textDecoration: "underline wavy #f9e2af",
+      textUnderlineOffset: "2px",
+    },
+    ".cm-lintPoint-error, .cm-diagnostic-error": {
+      color: "#f38ba8",
+      borderColor: "#f38ba8",
+    },
+    ".cm-lintPoint-warning, .cm-diagnostic-warning": {
+      color: "#f9e2af",
+      borderColor: "#f9e2af",
+    },
     ".cm-gutters": {
       backgroundColor: "#11111b",
       color: "#6c7086",

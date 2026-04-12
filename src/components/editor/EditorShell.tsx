@@ -8,8 +8,9 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
+  fetchWorkspaceDiagnostics,
 } from "../../lib/ipc/client";
-import type { RunOutputPayload } from "../../lib/ipc/types";
+import type { EditorDiagnostic, RunOutputPayload } from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -34,6 +35,10 @@ const KIND_LABELS: Record<LensConstructKind, string> = {
   "wait-group": "WaitGroup",
 };
 
+function isGoFile(path: string | null): path is string {
+  return typeof path === "string" && path.toLowerCase().endsWith(".go");
+}
+
 function EditorShell() {
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
@@ -51,6 +56,7 @@ function EditorShell() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
+  const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -75,6 +81,7 @@ function EditorShell() {
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
+  const diagnosticsRequestIdRef = useRef(0);
 
   useEffect(() => {
     setJumpRequest(null);
@@ -195,6 +202,44 @@ function EditorShell() {
 
       const saveWorkspacePath = workspacePath;
       const saveFilePath = currentPath;
+      const refreshDiagnostics = async () => {
+        if (!isGoFile(saveFilePath)) {
+          setDiagnostics([]);
+          return;
+        }
+        const requestId = diagnosticsRequestIdRef.current + 1;
+        diagnosticsRequestIdRef.current = requestId;
+
+        try {
+          const diagnosticsResponse = await fetchWorkspaceDiagnostics(
+            saveWorkspacePath,
+            saveFilePath
+          );
+
+          if (
+            requestId !== diagnosticsRequestIdRef.current ||
+            workspacePathRef.current !== saveWorkspacePath ||
+            activeFilePathRef.current !== saveFilePath
+          ) {
+            return;
+          }
+
+          if (diagnosticsResponse.ok && diagnosticsResponse.data) {
+            setDiagnostics(diagnosticsResponse.data);
+          } else {
+            setDiagnostics([]);
+          }
+        } catch (_error) {
+          if (
+            requestId === diagnosticsRequestIdRef.current &&
+            workspacePathRef.current === saveWorkspacePath &&
+            activeFilePathRef.current === saveFilePath
+          ) {
+            setDiagnostics([]);
+          }
+        }
+      };
+
       setSaveStatus("saving");
       try {
         const response = await writeWorkspaceFile(workspacePath, currentPath, content);
@@ -214,6 +259,7 @@ function EditorShell() {
             setSaveStatus("saved");
             saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
           }
+          await refreshDiagnostics();
           return true;
         } else {
           setSaveStatus("error");
@@ -418,6 +464,8 @@ function EditorShell() {
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
+        diagnosticsRequestIdRef.current += 1;
+        setDiagnostics([]);
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
@@ -440,6 +488,8 @@ function EditorShell() {
       setFileError(null);
       setSelectedLine(null);
       setInteractionAnchor(null);
+      diagnosticsRequestIdRef.current += 1;
+      setDiagnostics([]);
 
       try {
         const response = await readWorkspaceFile(workspacePath, relativePath);
@@ -462,6 +512,9 @@ function EditorShell() {
         latestEditorContentRef.current = response.data;
         setIsDirty(false);
         setSaveStatus("idle");
+        if (!isGoFile(relativePath)) {
+          setDiagnostics([]);
+        }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
           setFileError("An unexpected error occurred while loading the file.");
@@ -622,6 +675,7 @@ function EditorShell() {
                             onViewportRangeChange={setVisibleRange}
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
+                            diagnostics={diagnostics}
                           />
                         ) : (
                           <div className="px-4 py-3">
