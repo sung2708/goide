@@ -87,6 +87,36 @@ pub struct AnalyzeConcurrencyRequest {
     pub relative_path: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionRequestDto {
+    pub workspace_root: String,
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
+    pub trigger_character: Option<String>,
+    pub file_content: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionRangeDto {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletionItemDto {
+    pub label: String,
+    pub detail: Option<String>,
+    pub kind: Option<String>,
+    pub insert_text: String,
+    pub range: Option<CompletionRangeDto>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum DiagnosticSeverityDto {

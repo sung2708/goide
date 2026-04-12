@@ -2,13 +2,14 @@ use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
-    AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, ConcurrencyConfidenceDto,
-    ConcurrencyConstructDto, ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto,
-    EditorDiagnosticDto, FsEntryDto,
+    AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, CompletionItemDto,
+    CompletionRangeDto, CompletionRequestDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
+    ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
+    FsEntryDto,
 };
 use std::path::{Component, Path};
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Global shared handle to the currently-running `go run` process.
 /// A `OnceLock` gives us a lazily initialized, Send + Sync singleton without unsafe.
@@ -52,8 +53,10 @@ pub async fn read_workspace_file(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<String> {
-    let result = tauri::async_runtime::spawn_blocking(move || fs::read_file(&workspace_root, &relative_path))
-        .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::read_file(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(contents)) => ApiResponse::ok(contents),
@@ -93,8 +96,14 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
 
     let handle = get_process_handle();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) =
-            run_go_file(app.clone(), workspace_root, relative_path, run_id.clone(), handle).await
+        if let Err(e) = run_go_file(
+            app.clone(),
+            workspace_root,
+            relative_path,
+            run_id.clone(),
+            handle,
+        )
+        .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
             eprintln!("[goide] run_go_file error: {e:#}");
@@ -192,6 +201,53 @@ pub async fn get_active_file_diagnostics(
     }
 }
 
+#[tauri::command]
+pub async fn get_active_file_completions(
+    request: CompletionRequestDto,
+) -> ApiResponse<Vec<CompletionItemDto>> {
+    if let Err(message) = validate_go_completion_path(&request.relative_path) {
+        return ApiResponse::err("completion_invalid_input", &message);
+    }
+    if let Err(message) = validate_completion_cursor(request.line, request.column) {
+        return ApiResponse::err("completion_invalid_input", &message);
+    }
+
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        gopls::get_file_completions(
+            &request.workspace_root,
+            &request.relative_path,
+            request.line,
+            request.column,
+            request.trigger_character.as_deref(),
+            request.file_content.as_deref(),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(items)) => {
+            let mapped = items
+                .into_iter()
+                .map(|item| CompletionItemDto {
+                    label: item.label,
+                    detail: item.detail,
+                    kind: item.kind,
+                    insert_text: item.insert_text,
+                    range: item.range.map(|range| CompletionRangeDto {
+                        start_line: range.start_line,
+                        start_column: range.start_column,
+                        end_line: range.end_line,
+                        end_column: range.end_column,
+                    }),
+                })
+                .collect();
+            ApiResponse::ok(mapped)
+        }
+        Ok(Err(error)) => ApiResponse::err("completion_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("completion_failed", &error.to_string()),
+    }
+}
+
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     let normalized = relative_path.trim();
     if normalized.is_empty() {
@@ -204,7 +260,10 @@ fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     }
 
     for component in path.components() {
-        if matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)) {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
             return Err("relative path must stay within workspace".to_string());
         }
     }
@@ -226,9 +285,26 @@ fn validate_go_diagnostics_path(relative_path: &str) -> Result<(), String> {
     validate_go_analysis_path(relative_path)
 }
 
+fn validate_go_completion_path(relative_path: &str) -> Result<(), String> {
+    validate_go_analysis_path(relative_path)
+}
+
+fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> {
+    if line == 0 {
+        return Err("line must be >= 1".to_string());
+    }
+    if column == 0 {
+        return Err("column must be >= 1".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{validate_go_analysis_path, validate_go_diagnostics_path};
+    use super::{
+        validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
+        validate_go_diagnostics_path,
+    };
 
     #[test]
     fn rejects_non_go_paths_for_analysis() {
@@ -267,5 +343,42 @@ mod tests {
     fn diagnostics_path_accepts_relative_go_file() {
         validate_go_diagnostics_path("pkg/service/main.go")
             .expect("must accept valid go file diagnostics path");
+    }
+
+    #[test]
+    fn completion_path_rejects_non_go_files() {
+        let err = validate_go_completion_path("README.md")
+            .expect_err("must reject completions for non-go file");
+        assert!(err.contains(".go"));
+    }
+
+    #[test]
+    fn completion_path_rejects_parent_traversal() {
+        let err = validate_go_completion_path("../outside.go")
+            .expect_err("must reject completion traversal outside workspace");
+        assert!(err.contains("within workspace"));
+    }
+
+    #[test]
+    fn completion_path_accepts_relative_go_file() {
+        validate_go_completion_path("pkg/service/main.go")
+            .expect("must accept valid go file completion path");
+    }
+
+    #[test]
+    fn completion_cursor_rejects_zero_line() {
+        let err = validate_completion_cursor(0, 1).expect_err("must reject line 0");
+        assert!(err.contains("line"));
+    }
+
+    #[test]
+    fn completion_cursor_rejects_zero_column() {
+        let err = validate_completion_cursor(1, 0).expect_err("must reject column 0");
+        assert!(err.contains("column"));
+    }
+
+    #[test]
+    fn completion_cursor_accepts_positive_positions() {
+        validate_completion_cursor(3, 12).expect("must accept positive cursor positions");
     }
 }

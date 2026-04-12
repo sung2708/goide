@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use std::io;
+use std::io::{self, Write};
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
 
 use crate::integration::fs;
 
@@ -61,6 +61,23 @@ pub struct FileDiagnostic {
     pub range: DiagnosticRange,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionRange {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionItem {
+    pub label: String,
+    pub detail: Option<String>,
+    pub kind: Option<String>,
+    pub insert_text: String,
+    pub range: Option<CompletionRange>,
+}
+
 fn is_mutex_name(text: &str) -> bool {
     text == "Mutex" || text.ends_with(".Mutex")
 }
@@ -93,7 +110,12 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
             .cmp(&b.line)
             .then_with(|| a.column.cmp(&b.column))
             .then_with(|| a.kind_name().cmp(b.kind_name()))
-            .then_with(|| a.symbol.as_deref().unwrap_or("").cmp(b.symbol.as_deref().unwrap_or("")))
+            .then_with(|| {
+                a.symbol
+                    .as_deref()
+                    .unwrap_or("")
+                    .cmp(b.symbol.as_deref().unwrap_or(""))
+            })
     });
     results.dedup_by(|a, b| {
         a.kind == b.kind
@@ -107,7 +129,10 @@ pub fn analyze_file(workspace_root: &str, relative_path: &str) -> Result<Vec<Det
     Ok(results)
 }
 
-fn merge_gopls_constructs(results: &mut [DetectedConstruct], gopls_results: Vec<DetectedConstruct>) {
+fn merge_gopls_constructs(
+    results: &mut [DetectedConstruct],
+    gopls_results: Vec<DetectedConstruct>,
+) {
     for gopls_construct in gopls_results {
         // Find existing lexer detection on the same line.
         // Typical Go syntax: 'mu sync.Mutex' or 'var mu sync.Mutex'
@@ -182,7 +207,11 @@ fn is_symbol_char(ch: char) -> bool {
     ch == '_' || ch == '.' || ch.is_ascii_alphanumeric()
 }
 
-fn scan_left_identifier(chars: &[char], line_start: usize, op_start: usize) -> Option<(usize, String)> {
+fn scan_left_identifier(
+    chars: &[char],
+    line_start: usize,
+    op_start: usize,
+) -> Option<(usize, String)> {
     if op_start <= line_start {
         return None;
     }
@@ -249,7 +278,10 @@ fn is_first_non_whitespace_on_line(chars: &[char], line_start: usize, idx: usize
 }
 
 fn is_receive_leading_keyword(text: &str) -> bool {
-    matches!(text, "case" | "return" | "go" | "defer" | "if" | "for" | "switch" | "select")
+    matches!(
+        text,
+        "case" | "return" | "go" | "defer" | "if" | "for" | "switch" | "select"
+    )
 }
 
 fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
@@ -316,10 +348,14 @@ fn detect_channel_flow_markers(source: &str) -> Vec<DetectedConstruct> {
                         || left.is_none()
                             && matches!(
                                 prev_non_ws,
-                                Some('=') | Some(':') | Some('(') | Some(',') | Some('{') | Some('[')
+                                Some('=')
+                                    | Some(':')
+                                    | Some('(')
+                                    | Some(',')
+                                    | Some('{')
+                                    | Some('[')
                             )
-                        || left.is_none()
-                            && is_first_non_whitespace_on_line(&chars, line_start, i);
+                        || left.is_none() && is_first_non_whitespace_on_line(&chars, line_start, i);
 
                     let marker = if let Some((start_idx, symbol)) = left.as_ref() {
                         if !is_receive_leading_keyword(symbol) {
@@ -692,7 +728,10 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
     advance_one(i, line, column, second);
 }
 
-pub fn analyze_file_diagnostics(workspace_root: &str, relative_path: &str) -> Result<Vec<FileDiagnostic>> {
+pub fn analyze_file_diagnostics(
+    workspace_root: &str,
+    relative_path: &str,
+) -> Result<Vec<FileDiagnostic>> {
     let output = Command::new("gopls")
         .arg("check")
         .arg(relative_path)
@@ -713,13 +752,112 @@ pub fn analyze_file_diagnostics(workspace_root: &str, relative_path: &str) -> Re
 
     // Parse both streams to avoid missing diagnostics in mixed-output environments
     if !output.stdout.is_empty() {
-        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stdout)?);
+        results.extend(parse_gopls_diagnostics_output(
+            workspace_root,
+            relative_path,
+            &output.stdout,
+        )?);
     }
     if !output.stderr.is_empty() {
-        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stderr)?);
+        results.extend(parse_gopls_diagnostics_output(
+            workspace_root,
+            relative_path,
+            &output.stderr,
+        )?);
     }
 
     Ok(results)
+}
+
+pub fn get_file_completions(
+    workspace_root: &str,
+    relative_path: &str,
+    line: usize,
+    column: usize,
+    _trigger_character: Option<&str>,
+    file_content: Option<&str>,
+) -> Result<Vec<CompletionItem>> {
+    let location = format!("{relative_path}:{line}:{column}");
+    let output = match run_gopls_completion(workspace_root, &location, file_content) {
+        Ok(out) => out,
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(Vec::new());
+            }
+            return Err(err).context("failed to execute gopls completion command");
+        }
+    };
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    if output.stdout.is_empty() && output.stderr.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let output_bytes = if !output.stdout.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+
+    Ok(parse_gopls_completion_output(output_bytes))
+}
+
+fn run_gopls_completion(
+    workspace_root: &str,
+    location: &str,
+    file_content: Option<&str>,
+) -> io::Result<Output> {
+    let Some(content) = file_content else {
+        return run_gopls_completion_without_overlay(workspace_root, location);
+    };
+
+    let output = run_gopls_completion_with_overlay(workspace_root, location, content)?;
+    if output.status.success() || !is_unsupported_modified_flag(&output.stderr) {
+        return Ok(output);
+    }
+
+    run_gopls_completion_without_overlay(workspace_root, location)
+}
+
+fn run_gopls_completion_without_overlay(
+    workspace_root: &str,
+    location: &str,
+) -> io::Result<Output> {
+    Command::new("gopls")
+        .arg("completion")
+        .arg(location)
+        .current_dir(workspace_root)
+        .output()
+}
+
+fn run_gopls_completion_with_overlay(
+    workspace_root: &str,
+    location: &str,
+    file_content: &str,
+) -> io::Result<Output> {
+    let mut child = Command::new("gopls")
+        .arg("completion")
+        .arg("-modified")
+        .arg(location)
+        .current_dir(workspace_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(file_content.as_bytes())?;
+    }
+
+    child.wait_with_output()
+}
+
+fn is_unsupported_modified_flag(stderr: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(stderr);
+    text.contains("flag provided but not defined: -modified")
 }
 
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
@@ -793,7 +931,153 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
     Ok(results)
 }
 
-fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, output_bytes: &[u8]) -> Result<Vec<FileDiagnostic>> {
+fn parse_gopls_completion_output(output_bytes: &[u8]) -> Vec<CompletionItem> {
+    let output = String::from_utf8_lossy(output_bytes);
+    let mut items = Vec::new();
+
+    for raw_line in output.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.eq_ignore_ascii_case("completion candidates:")
+            || line.eq_ignore_ascii_case("no completions found")
+        {
+            continue;
+        }
+
+        let without_index = strip_completion_index_prefix(line);
+        let (head, detail) = split_completion_line(without_index);
+        if head.is_empty() {
+            continue;
+        }
+
+        let label = extract_completion_label(head);
+        if label.is_empty() {
+            continue;
+        }
+
+        let insert_text = normalize_insert_text(&label);
+        let kind = infer_completion_kind(detail.as_deref());
+
+        items.push(CompletionItem {
+            label: label.to_string(),
+            detail,
+            kind,
+            insert_text,
+            range: None,
+        });
+    }
+
+    items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
+    items
+}
+
+fn strip_completion_index_prefix(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx > 0 && idx < bytes.len() && bytes[idx] == b'.' {
+        idx += 1;
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        return &line[idx..];
+    }
+    line
+}
+
+fn split_completion_line(line: &str) -> (&str, Option<String>) {
+    if let Some((left, right)) = line.split_once('\t') {
+        let detail = right.trim();
+        return (
+            left.trim(),
+            if detail.is_empty() {
+                None
+            } else {
+                Some(detail.to_string())
+            },
+        );
+    }
+
+    if let Some((left, right)) = split_on_multi_space(line) {
+        let detail = right.trim();
+        return (
+            left.trim(),
+            if detail.is_empty() {
+                None
+            } else {
+                Some(detail.to_string())
+            },
+        );
+    }
+
+    (line.trim(), None)
+}
+
+fn split_on_multi_space(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b' ' && bytes[i + 1] == b' ' {
+            let left = &line[..i];
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] == b' ' {
+                j += 1;
+            }
+            let right = &line[j..];
+            return Some((left, right));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn extract_completion_label(head: &str) -> &str {
+    if let Some((label, _)) = head.split_once(':') {
+        let trimmed = label.trim();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    head.trim()
+}
+
+fn normalize_insert_text(label: &str) -> String {
+    let token = label
+        .split(|ch: char| ch == '(' || ch == ' ' || ch == '\t')
+        .next()
+        .unwrap_or(label)
+        .trim();
+    if token.is_empty() {
+        label.to_string()
+    } else {
+        token.to_string()
+    }
+}
+
+fn infer_completion_kind(detail: Option<&str>) -> Option<String> {
+    let detail = detail?.trim();
+    if detail.is_empty() {
+        return None;
+    }
+
+    let first = detail
+        .split_whitespace()
+        .next()
+        .map(|v| v.to_ascii_lowercase())?;
+    Some(first)
+}
+
+fn parse_gopls_diagnostics_output(
+    workspace_root: &str,
+    relative_path: &str,
+    output_bytes: &[u8],
+) -> Result<Vec<FileDiagnostic>> {
     let stdout_str = String::from_utf8_lossy(output_bytes);
     let mut results = Vec::new();
 
@@ -818,17 +1102,18 @@ fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, out
             continue;
         };
 
-        let (start_column, end_column, message_part) = if let Some((col_p, msg_p)) = rest_after_line.split_once(':') {
-            if let Some((sc, ec)) = parse_column_range(col_p.trim()) {
-                (sc, ec, msg_p)
+        let (start_column, end_column, message_part) =
+            if let Some((col_p, msg_p)) = rest_after_line.split_once(':') {
+                if let Some((sc, ec)) = parse_column_range(col_p.trim()) {
+                    (sc, ec, msg_p)
+                } else {
+                    // No valid column part found, treat the whole remainder as message.
+                    (1, 2, rest_after_line)
+                }
             } else {
-                // No valid column part found, treat the whole remainder as message.
+                // No column part found, gopls might have output path:line: message
                 (1, 2, rest_after_line)
-            }
-        } else {
-            // No column part found, gopls might have output path:line: message
-            (1, 2, rest_after_line)
-        };
+            };
 
         let raw_message = message_part.trim();
         let (severity, message) = normalize_diagnostic_message(raw_message);
@@ -859,7 +1144,10 @@ fn split_diagnostic_path_prefix(line: &str) -> Option<(&str, &str)> {
         }
 
         let rest = &line[idx + 1..];
-        let digit_count = rest.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        let digit_count = rest
+            .bytes()
+            .take_while(|byte| byte.is_ascii_digit())
+            .count();
         if digit_count == 0 {
             continue;
         }
@@ -1053,8 +1341,12 @@ m Variable 6:2-6:10
 
         let constructs = parse_gopls_symbols_output(output.as_bytes()).unwrap();
 
-        let mutex = constructs.iter().find(|c| c.symbol == Some("m".to_string()));
-        let waitgroup = constructs.iter().find(|c| c.symbol == Some("wg".to_string()));
+        let mutex = constructs
+            .iter()
+            .find(|c| c.symbol == Some("m".to_string()));
+        let waitgroup = constructs
+            .iter()
+            .find(|c| c.symbol == Some("wg".to_string()));
 
         assert!(mutex.is_some(), "expected mutex from plaintext symbols");
         assert_eq!(mutex.unwrap().line, 6);
@@ -1104,15 +1396,21 @@ func worker(ch chan int, in <-chan int) {
             "expected receive marker for channel symbol in"
         );
         assert!(
-            constructs.iter().all(|item| item.symbol.as_deref() != Some("chan")),
+            constructs
+                .iter()
+                .all(|item| item.symbol.as_deref() != Some("chan")),
             "must not treat channel type direction as a channel symbol"
         );
         assert!(
-            constructs.iter().all(|item| item.symbol.as_deref() != Some("comment")),
+            constructs
+                .iter()
+                .all(|item| item.symbol.as_deref() != Some("comment")),
             "must ignore channel arrows inside comments"
         );
         assert!(
-            constructs.iter().all(|item| item.symbol.as_deref() != Some("string")),
+            constructs
+                .iter()
+                .all(|item| item.symbol.as_deref() != Some("string")),
             "must ignore channel arrows inside strings"
         );
     }
@@ -1171,7 +1469,9 @@ func worker(jobs <-chan int) {
             "expected select case receive clause to emit receive marker for jobs"
         );
         assert!(
-            constructs.iter().all(|item| item.symbol.as_deref() != Some("case")),
+            constructs
+                .iter()
+                .all(|item| item.symbol.as_deref() != Some("case")),
             "must not emit case keyword as channel symbol"
         );
     }
@@ -1200,7 +1500,10 @@ func worker(ch chan int) {
             .expect("receive marker should exist");
 
         fn innermost_function_scope(scope_key: &str) -> Option<&str> {
-            scope_key.split('>').rev().find(|segment| segment.starts_with('F'))
+            scope_key
+                .split('>')
+                .rev()
+                .find(|segment| segment.starts_with('F'))
         }
 
         let send_scope = send.scope_key.as_deref().expect("send must have scope key");
@@ -1229,7 +1532,9 @@ func worker(channels []chan int, job int) {
         let constructs = detect_channel_flow_markers(source);
 
         assert!(
-            constructs.iter().all(|item| item.symbol.as_deref() != Some("job")),
+            constructs
+                .iter()
+                .all(|item| item.symbol.as_deref() != Some("job")),
             "complex-lhs sends must not be inferred as receive markers on rhs symbol"
         );
     }
@@ -1281,7 +1586,11 @@ func worker(done <-chan struct{}) {
 
         merge_gopls_constructs(&mut results, gopls_results);
 
-        assert_eq!(results.len(), 1, "must upgrade in place rather than duplicate");
+        assert_eq!(
+            results.len(),
+            1,
+            "must upgrade in place rather than duplicate"
+        );
         assert_eq!(results[0].symbol.as_deref(), Some("jobs"));
         assert_eq!(results[0].confidence, Confidence::Confirmed);
     }
@@ -1321,8 +1630,8 @@ main.go:8:1: warning: unreachable code
 main.go:10: error message without column
 "#;
 
-        let diagnostics =
-            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
+        let diagnostics = parse_gopls_diagnostics_output(".", "main.go", output.as_bytes())
+            .expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 3);
         assert_eq!(diagnostics[0].range.start_line, 3);
@@ -1349,7 +1658,8 @@ C:/workspace/main.go:12:3: undeclared name: foo
 "#;
 
         let diagnostics =
-            parse_gopls_diagnostics_output("C:/workspace", "main.go", output.as_bytes()).expect("parse diagnostics");
+            parse_gopls_diagnostics_output("C:/workspace", "main.go", output.as_bytes())
+                .expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start_line, 12);
@@ -1364,8 +1674,8 @@ C:/workspace/main.go:12:3: undeclared name: foo
 main.go:14: syntax error: unexpected semicolon, expected expression
 "#;
 
-        let diagnostics =
-            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
+        let diagnostics = parse_gopls_diagnostics_output(".", "main.go", output.as_bytes())
+            .expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start_line, 14);
@@ -1384,8 +1694,8 @@ main.go:3:1: error in root
 subdir/main.go:3:1: error in subdir
 "#;
 
-        let diagnostics =
-            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+        let diagnostics = parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes())
+            .expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "error in root");
@@ -1398,10 +1708,55 @@ subdir/main.go:3:1: error in subdir
 /other/main.go:3:1: error in other
 "#;
 
-        let diagnostics =
-            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+        let diagnostics = parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes())
+            .expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "error in root");
+    }
+
+    #[test]
+    fn parses_gopls_completion_output_with_tab_separated_detail() {
+        let output = r#"
+completion candidates:
+1. Println	func(a ...any) (n int, err error)
+2. Printf	func(format string, a ...any) (n int, err error)
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "Println");
+        assert_eq!(items[0].insert_text, "Println");
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("func(a ...any) (n int, err error)")
+        );
+        assert_eq!(items[0].kind.as_deref(), Some("func(a"));
+    }
+
+    #[test]
+    fn parses_gopls_completion_output_with_multi_space_detail() {
+        let output = r#"
+1. mutex   var mutex sync.Mutex
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "mutex");
+        assert_eq!(items[0].insert_text, "mutex");
+        assert_eq!(items[0].detail.as_deref(), Some("var mutex sync.Mutex"));
+        assert_eq!(items[0].kind.as_deref(), Some("var"));
+    }
+
+    #[test]
+    fn deduplicates_completion_candidates_by_label_and_detail() {
+        let output = r#"
+1. Println	func(a ...any) (n int, err error)
+2. Println	func(a ...any) (n int, err error)
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Println");
     }
 }

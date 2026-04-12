@@ -44,6 +44,30 @@ export type AnalyzeConcurrencyRequest = {
   relativePath: string;
 };
 
+export type CompletionRequest = {
+  workspaceRoot: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  triggerCharacter?: string | null;
+  fileContent?: string | null;
+};
+
+export type CompletionRange = {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+};
+
+export type CompletionItem = {
+  label: string;
+  detail?: string | null;
+  kind?: string | null;
+  insertText: string;
+  range?: CompletionRange | null;
+};
+
 export type RunOutputPayload = {
   runId: string;
   line: string;
