@@ -44,7 +44,7 @@ pub struct FsEntryDto {
     pub is_dir: bool,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum ConcurrencyConfidenceDto {
     Predicted,
@@ -118,6 +118,15 @@ pub struct ActivateDeepTraceResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSignalDto {
+    pub thread_id: i64,
+    pub status: String,
+    pub wait_reason: String,
+    pub confidence: ConcurrencyConfidenceDto,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

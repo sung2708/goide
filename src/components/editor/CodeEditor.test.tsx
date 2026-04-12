@@ -490,7 +490,7 @@ describe("CodeEditor", () => {
 
     const dispatchMock = vi.fn();
     result?.options[0].apply(
-      {
+      ({
         dispatch: dispatchMock,
         state: {
           doc: {
@@ -498,7 +498,7 @@ describe("CodeEditor", () => {
           },
           sliceDoc: () => "",
         },
-      },
+      } as any),
       {},
       13,
       13
@@ -578,7 +578,7 @@ describe("CodeEditor", () => {
 
     const dispatchMock = vi.fn();
     result?.options[0].apply(
-      {
+      ({
         dispatch: dispatchMock,
         state: {
           doc: {
@@ -586,7 +586,7 @@ describe("CodeEditor", () => {
           },
           sliceDoc: () => "Prin",
         },
-      },
+      } as any),
       {},
       16,
       16
