@@ -479,7 +479,6 @@ function EditorShell() {
           runtimeSignalTimeoutMs,
           {
             onTimeout: () => {
-              releasePendingSlot();
               if (requestId === runtimeSignalRequestIdRef.current) {
                 releaseInFlight();
               }
