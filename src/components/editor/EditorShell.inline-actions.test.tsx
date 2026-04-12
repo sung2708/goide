@@ -1,12 +1,15 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
 
 const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
+const activateScopedDeepTraceMock = vi.fn();
+const getRuntimeAvailabilityMock = vi.fn();
+let mockFileToOpen = "main.go";
 let mockConstructs: LensConstruct[] = [
   {
     kind: "channel" as const,
@@ -33,6 +36,10 @@ vi.mock("../../lib/ipc/client", async () => {
   return {
     ...actual,
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
+    activateScopedDeepTrace: (...args: unknown[]) =>
+      activateScopedDeepTraceMock(...args),
+    getRuntimeAvailability: (...args: unknown[]) =>
+      getRuntimeAvailabilityMock(...args),
   };
 });
 
@@ -55,7 +62,7 @@ vi.mock("../sidebar/SourceTree", () => ({
   }) => (
     <div>
       {workspacePath ? (
-        <button type="button" onClick={() => onOpenFile("main.go")}>
+        <button type="button" onClick={() => onOpenFile(mockFileToOpen)}>
           Open Mock File
         </button>
       ) : null}
@@ -92,6 +99,19 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell inline actions", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockFileToOpen = "main.go";
+    activateScopedDeepTraceMock.mockResolvedValue({
+      ok: true,
+      data: { mode: "deep-trace", scopeKey: "default-scope" },
+    });
+    getRuntimeAvailabilityMock.mockResolvedValue({
+      ok: true,
+      data: { runtimeAvailability: "available" },
+    });
+  });
+
   it("shows quick actions on hover and hides them immediately on hover out", async () => {
     mockConstructs = [
       {
@@ -105,6 +125,7 @@ describe("EditorShell inline actions", () => {
     ];
     mockCounterpartMappings = [];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -138,6 +159,7 @@ describe("EditorShell inline actions", () => {
     ];
     mockCounterpartMappings = [];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -171,6 +193,7 @@ describe("EditorShell inline actions", () => {
       },
     ];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -203,6 +226,7 @@ describe("EditorShell inline actions", () => {
       },
     ];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -236,6 +260,7 @@ describe("EditorShell inline actions", () => {
       },
     ];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -265,6 +290,7 @@ describe("EditorShell inline actions", () => {
     ];
     mockCounterpartMappings = [];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -311,6 +337,7 @@ describe("EditorShell inline actions", () => {
       },
     ];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -343,6 +370,7 @@ describe("EditorShell inline actions", () => {
       },
     ];
     const user = userEvent.setup();
+    mockFileToOpen = "main.go";
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
@@ -354,5 +382,116 @@ describe("EditorShell inline actions", () => {
 
     await user.click(await screen.findByRole("button", { name: /modifier click line 1/i }));
     expect(screen.getByTestId("jump-request-line")).toHaveTextContent("none");
+  });
+
+  it("activates scoped Deep Trace and switches mode on success", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    mockFileToOpen = "main.go";
+    activateScopedDeepTraceMock.mockResolvedValue({
+      ok: true,
+      data: { mode: "deep-trace", scopeKey: "flow-A" },
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(activateScopedDeepTraceMock).toHaveBeenCalledTimes(1);
+      expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
+    });
+
+    expect(activateScopedDeepTraceMock).toHaveBeenCalledWith({
+      workspaceRoot: "C:/workspace",
+      relativePath: "main.go",
+      line: 1,
+      column: 4,
+      constructKind: "channel",
+      symbol: "jobs",
+    });
+  });
+
+  it("keeps quick insight mode when Deep Trace activation fails", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: null,
+        scopeKey: null,
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    mockFileToOpen = "main.go";
+    activateScopedDeepTraceMock.mockResolvedValue({
+      ok: false,
+      error: { code: "deep_trace_failed", message: "runtime unavailable" },
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(activateScopedDeepTraceMock).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
+  });
+
+  it("does not activate Deep Trace when runtime is unavailable", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: null,
+        scopeKey: null,
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    mockFileToOpen = "README.md";
+    activateScopedDeepTraceMock.mockResolvedValue({
+      ok: true,
+      data: { mode: "deep-trace", scopeKey: null },
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "# notes\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    const deepTraceButton = await screen.findByRole("button", { name: /deep trace/i });
+    expect(deepTraceButton).toBeDisabled();
+    await user.click(deepTraceButton);
+    expect(activateScopedDeepTraceMock).not.toHaveBeenCalled();
+    expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
   });
 });
