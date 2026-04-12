@@ -91,3 +91,27 @@ export type EditorDiagnostic = {
   code?: string | null;
   range: EditorDiagnosticRange;
 };
+
+export type DeepTraceConstructKind =
+  | "channel"
+  | "select"
+  | "mutex"
+  | "wait-group";
+
+export type ActivateDeepTraceRequest = {
+  workspaceRoot: string;
+  relativePath: string;
+  line: number;
+  column: number;
+  constructKind: DeepTraceConstructKind;
+  symbol?: string | null;
+};
+
+export type ActivateDeepTraceResponse = {
+  mode: "deep-trace";
+  scopeKey?: string | null;
+};
+
+export type RuntimeAvailabilityResponse = {
+  runtimeAvailability: "available" | "unavailable";
+};

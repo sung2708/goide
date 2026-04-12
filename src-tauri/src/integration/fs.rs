@@ -41,12 +41,10 @@ pub fn list_directory(workspace_root: &str, relative_path: Option<&str>) -> Resu
         });
     }
 
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
+    entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
     });
 
     Ok(entries)
@@ -127,7 +125,8 @@ pub fn read_file(workspace_root: &str, relative_path: &str) -> Result<String> {
         return Err(anyhow!("path is not a file"));
     }
 
-    fs::read_to_string(&target).with_context(|| format!("failed to read file: {}", target.display()))
+    fs::read_to_string(&target)
+        .with_context(|| format!("failed to read file: {}", target.display()))
 }
 
 fn canonicalize_root(root: &str) -> Result<PathBuf> {
@@ -196,7 +195,10 @@ fn write_file_atomic(
                 })?;
                 if let Some(permissions) = target_permissions.clone() {
                     fs::set_permissions(&candidate, permissions).with_context(|| {
-                        format!("failed to set permissions on temp file: {}", candidate.display())
+                        format!(
+                            "failed to set permissions on temp file: {}",
+                            candidate.display()
+                        )
                     })?;
                 }
                 temp_path = Some(candidate);
