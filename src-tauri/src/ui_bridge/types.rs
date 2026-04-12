@@ -86,3 +86,30 @@ pub struct AnalyzeConcurrencyRequest {
     pub workspace_root: String,
     pub relative_path: String,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DiagnosticSeverityDto {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticRangeDto {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EditorDiagnosticDto {
+    pub severity: DiagnosticSeverityDto,
+    pub message: String,
+    pub source: Option<String>,
+    pub code: Option<String>,
+    pub range: DiagnosticRangeDto,
+}

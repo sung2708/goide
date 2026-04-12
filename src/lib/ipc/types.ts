@@ -50,3 +50,20 @@ export type RunOutputPayload = {
   stream: "stdout" | "stderr" | "exit";
   exitCode?: number;
 };
+
+export type DiagnosticSeverity = "error" | "warning" | "info";
+
+export type EditorDiagnosticRange = {
+  startLine: number;
+  startColumn: number;
+  endLine: number;
+  endColumn: number;
+};
+
+export type EditorDiagnostic = {
+  severity: DiagnosticSeverity;
+  message: string;
+  source?: string | null;
+  code?: string | null;
+  range: EditorDiagnosticRange;
+};

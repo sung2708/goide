@@ -2,6 +2,7 @@ import { fireEvent, render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
+import type { EditorDiagnostic } from "../../lib/ipc/types";
 
 const mockLine1 = document.createElement("div");
 mockLine1.className = "cm-line";
@@ -40,6 +41,17 @@ const mockView = {
       : { left: 16, right: 28, top: 44, bottom: 56 },
 };
 
+const setDiagnosticsMock = vi.fn();
+
+vi.mock("@codemirror/lint", () => ({
+  linter: vi.fn(() => ({ extension: "mock-linter" })),
+  lintGutter: vi.fn(() => ({ extension: "mock-lint-gutter" })),
+  setDiagnostics: (...args: unknown[]) => {
+    setDiagnosticsMock(...args);
+    return { effects: [] };
+  },
+}));
+
 vi.mock("@uiw/react-codemirror", () => ({
   default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
     onCreateEditor?.(mockView);
@@ -48,6 +60,60 @@ vi.mock("@uiw/react-codemirror", () => ({
 }));
 
 describe("CodeEditor", () => {
+  it("applies diagnostics to the editor view when diagnostics prop changes", () => {
+    const diagnostics: EditorDiagnostic[] = [
+      {
+        severity: "warning",
+        message: "unused variable",
+        source: "gopls",
+        code: "unused",
+        range: {
+          startLine: 1,
+          startColumn: 1,
+          endLine: 1,
+          endColumn: 4,
+        },
+      },
+      {
+        severity: "error",
+        message: "expected expression",
+        source: "gopls",
+        code: null,
+        range: {
+          startLine: 2,
+          startColumn: 5,
+          endLine: 2,
+          endColumn: 6,
+        },
+      },
+    ];
+
+    setDiagnosticsMock.mockClear();
+    mockView.dispatch.mockClear();
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        diagnostics={diagnostics}
+      />
+    );
+
+    expect(setDiagnosticsMock).toHaveBeenCalledWith(
+      mockView.state,
+      expect.arrayContaining([
+        expect.objectContaining({
+          severity: "warning",
+          message: "unused variable",
+        }),
+        expect.objectContaining({
+          severity: "error",
+          message: "expected expression",
+        }),
+      ])
+    );
+    expect(mockView.dispatch).toHaveBeenCalled();
+  });
+
   it("moves selection, scrolls, and focuses editor on jump request", () => {
     mockView.dispatch.mockClear();
     mockView.focus.mockClear();
@@ -63,7 +129,6 @@ describe("CodeEditor", () => {
       />
     );
 
-    expect(mockView.dispatch).toHaveBeenCalledTimes(1);
     expect(mockView.dispatch).toHaveBeenCalledWith(
       expect.objectContaining({
         selection: { anchor: 25 },

@@ -26,7 +26,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-12T00:03:00+07:00
+last_updated: 2026-04-12T00:36:28+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -49,7 +49,7 @@ development_status:
   2-4-density-guard: done
   2-5-degraded-runtime-fallback: done
   2-6-inline-quick-actions-on-hover: done
-  2-7-lsp-diagnostics: backlog
+  2-7-lsp-diagnostics: done
   2-8-basic-autocomplete: backlog
   epic-2-retrospective: optional
   epic-3: in-progress
