@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io;
+use std::path::Path;
 use std::process::Command;
 
 use crate::integration::fs;
@@ -708,17 +709,17 @@ pub fn analyze_file_diagnostics(workspace_root: &str, relative_path: &str) -> Re
         }
     };
 
-    let stdout = if output.stdout.is_empty() {
-        output.stderr.as_slice()
-    } else {
-        output.stdout.as_slice()
-    };
+    let mut results = Vec::new();
 
-    if stdout.is_empty() {
-        return Ok(Vec::new());
+    // Parse both streams to avoid missing diagnostics in mixed-output environments
+    if !output.stdout.is_empty() {
+        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stdout)?);
+    }
+    if !output.stderr.is_empty() {
+        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stderr)?);
     }
 
-    parse_gopls_diagnostics_output(relative_path, stdout)
+    Ok(results)
 }
 
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
@@ -792,10 +793,9 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
     Ok(results)
 }
 
-fn parse_gopls_diagnostics_output(relative_path: &str, stdout: &[u8]) -> Result<Vec<FileDiagnostic>> {
-    let stdout_str = String::from_utf8_lossy(stdout);
+fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, output_bytes: &[u8]) -> Result<Vec<FileDiagnostic>> {
+    let stdout_str = String::from_utf8_lossy(output_bytes);
     let mut results = Vec::new();
-    let normalized_relative = normalize_path(relative_path);
 
     for raw_line in stdout_str.lines() {
         let line = raw_line.trim();
@@ -807,7 +807,7 @@ fn parse_gopls_diagnostics_output(relative_path: &str, stdout: &[u8]) -> Result<
             continue;
         };
 
-        if !path_matches_target(path_part, &normalized_relative) {
+        if !path_matches_target(workspace_root, relative_path, path_part) {
             continue;
         }
 
@@ -907,11 +907,30 @@ fn normalize_path(path: &str) -> String {
     path.replace('\\', "/")
 }
 
-fn path_matches_target(candidate_path: &str, relative_path: &str) -> bool {
+fn path_matches_target(workspace_root: &str, relative_target: &str, candidate_path: &str) -> bool {
     let normalized_candidate = normalize_path(candidate_path);
-    normalized_candidate == relative_path
-        || normalized_candidate.ends_with(&format!("/{relative_path}"))
-        || normalized_candidate.ends_with(&format!("./{relative_path}"))
+    let normalized_target = normalize_path(relative_target);
+
+    // 1. Exact relative match (e.g., "main.go")
+    if normalized_candidate == normalized_target {
+        return true;
+    }
+
+    // 2. Relative match with prefix (e.g., "./main.go")
+    if normalized_candidate == format!("./{}", normalized_target) {
+        return true;
+    }
+
+    // 3. Absolute path match anchored to workspace root
+    let workspace_path = Path::new(workspace_root);
+    let absolute_target = workspace_path.join(relative_target);
+    if let Some(abs_str) = absolute_target.to_str() {
+        if normalized_candidate == normalize_path(abs_str) {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -1295,7 +1314,7 @@ main.go:10: error message without column
 "#;
 
         let diagnostics =
-            parse_gopls_diagnostics_output("main.go", output.as_bytes()).expect("parse diagnostics");
+            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 3);
         assert_eq!(diagnostics[0].range.start_line, 3);
@@ -1322,12 +1341,40 @@ C:/workspace/main.go:12:3: undeclared name: foo
 "#;
 
         let diagnostics =
-            parse_gopls_diagnostics_output("main.go", output.as_bytes()).expect("parse diagnostics");
+            parse_gopls_diagnostics_output("C:/workspace", "main.go", output.as_bytes()).expect("parse diagnostics");
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].range.start_line, 12);
         assert_eq!(diagnostics[0].range.start_column, 3);
         assert_eq!(diagnostics[0].message, "undeclared name: foo");
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn rejects_basename_collisions_in_subdirectories() {
+        let output = r#"
+main.go:3:1: error in root
+subdir/main.go:3:1: error in subdir
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "error in root");
+    }
+
+    #[test]
+    fn handles_absolute_path_matches_correctly() {
+        let output = r#"
+/root/main.go:3:1: error in root
+/other/main.go:3:1: error in other
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "error in root");
     }
 }
