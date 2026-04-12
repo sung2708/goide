@@ -5,6 +5,8 @@ import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
 import {
+  activateScopedDeepTrace,
+  getRuntimeAvailability,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
@@ -13,6 +15,7 @@ import {
 } from "../../lib/ipc/client";
 import type {
   CompletionItem,
+  DeepTraceConstructKind,
   EditorDiagnostic,
   RunOutputPayload,
 } from "../../lib/ipc/types";
@@ -56,10 +59,12 @@ function EditorShell() {
   const [isReading, setIsReading] = useState(false);
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
-  const [mode] = useState<"quick-insight" | "deep-trace">("quick-insight");
-  const [runtimeAvailability] = useState<"available" | "unavailable">(
-    "unavailable"
+  const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
+    "quick-insight"
   );
+  const [runtimeAvailability, setRuntimeAvailability] = useState<
+    "available" | "unavailable"
+  >("unavailable");
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -91,6 +96,8 @@ function EditorShell() {
   activeFilePathRef.current = activeFilePath;
   const diagnosticsRequestIdRef = useRef(0);
   const completionRequestIdRef = useRef(0);
+  const deepTraceRequestIdRef = useRef(0);
+  const runtimeCheckRequestIdRef = useRef(0);
 
   useEffect(() => {
     setJumpRequest(null);
@@ -223,6 +230,58 @@ function EditorShell() {
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint());
   }, [requestJump, resolveCounterpartFromActiveHint]);
+
+  const handleDeepTrace = useCallback(async () => {
+    if (runtimeAvailability !== "available") {
+      return;
+    }
+    if (!workspacePath || !activeFilePath || !activeHint) {
+      return;
+    }
+
+    const line = activeHintLine ?? activeHint.line;
+    const column = activeHint.column;
+    if (line < 1 || column < 1) {
+      return;
+    }
+    const requestWorkspacePath = workspacePath;
+    const requestFilePath = activeFilePath;
+    deepTraceRequestIdRef.current += 1;
+    const requestId = deepTraceRequestIdRef.current;
+
+    try {
+      const response = await activateScopedDeepTrace({
+        workspaceRoot: requestWorkspacePath,
+        relativePath: requestFilePath,
+        line,
+        column,
+        constructKind: activeHint.kind as DeepTraceConstructKind,
+        symbol: activeHint.symbol,
+      });
+      if (
+        requestId !== deepTraceRequestIdRef.current ||
+        workspacePathRef.current !== requestWorkspacePath ||
+        activeFilePathRef.current !== requestFilePath
+      ) {
+        return;
+      }
+
+      if (response.ok && response.data?.mode === "deep-trace") {
+        setMode("deep-trace");
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to activate Deep Trace:", error);
+    }
+
+    setMode("quick-insight");
+  }, [
+    activeFilePath,
+    activeHint,
+    activeHintLine,
+    runtimeAvailability,
+    workspacePath,
+  ]);
 
   const persistActiveFileContent = useCallback(
     async (content: string) => {
@@ -554,6 +613,8 @@ function EditorShell() {
 
       const resolvedPath = Array.isArray(selected) ? selected[0] : selected;
       if (typeof resolvedPath === "string") {
+        setMode("quick-insight");
+        setRuntimeAvailability("unavailable");
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
@@ -596,13 +657,46 @@ function EditorShell() {
 
         if (!response.ok || response.data === undefined) {
           setActiveFilePath(relativePath);
+          activeFilePathRef.current = relativePath;
           setActiveFileContent(null);
           setFileError(response.error?.message ?? "Unable to open file");
           return;
         }
 
         setActiveFilePath(relativePath);
+        activeFilePathRef.current = relativePath;
         setActiveFileContent(response.data);
+        setMode("quick-insight");
+        if (isGoFile(relativePath)) {
+          runtimeCheckRequestIdRef.current += 1;
+          const requestId = runtimeCheckRequestIdRef.current;
+          setRuntimeAvailability("unavailable");
+          try {
+            const availabilityResponse = await getRuntimeAvailability();
+            if (
+              requestId === runtimeCheckRequestIdRef.current &&
+              workspacePathRef.current === startingPath &&
+              activeFilePathRef.current === relativePath
+            ) {
+              setRuntimeAvailability(
+                availabilityResponse.ok &&
+                  availabilityResponse.data?.runtimeAvailability === "available"
+                  ? "available"
+                  : "unavailable"
+              );
+            }
+          } catch (_error) {
+            if (
+              requestId === runtimeCheckRequestIdRef.current &&
+              workspacePathRef.current === startingPath &&
+              activeFilePathRef.current === relativePath
+            ) {
+              setRuntimeAvailability("unavailable");
+            }
+          }
+        } else {
+          setRuntimeAvailability("unavailable");
+        }
         savedContentRef.current = response.data;
         latestEditorContentRef.current = response.data;
         setIsDirty(false);
@@ -754,6 +848,7 @@ function EditorShell() {
                           anchorTop={interactionAnchor?.top ?? null}
                           anchorLeft={interactionAnchor?.left ?? null}
                           onJump={handleJump}
+                          onDeepTrace={handleDeepTrace}
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor

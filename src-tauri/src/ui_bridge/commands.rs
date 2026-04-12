@@ -2,12 +2,14 @@ use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
-    AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, CompletionItemDto,
-    CompletionRangeDto, CompletionRequestDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
-    ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
-    FsEntryDto,
+    ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
+    ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
+    ConcurrencyConfidenceDto, ConcurrencyConstructDto, ConcurrencyConstructKindDto,
+    DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
+    FsEntryDto, RuntimeAvailabilityResponseDto,
 };
 use std::path::{Component, Path};
+use std::process::Command;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -248,6 +250,72 @@ pub async fn get_active_file_completions(
     }
 }
 
+#[tauri::command]
+pub async fn activate_scoped_deep_trace(
+    request: ActivateDeepTraceRequestDto,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    if let Err(message) = validate_go_analysis_path(&request.relative_path) {
+        return ApiResponse::err("deep_trace_invalid_input", &message);
+    }
+    if let Err(message) = validate_completion_cursor(request.line, request.column) {
+        return ApiResponse::err("deep_trace_invalid_input", &message);
+    }
+    if request.workspace_root.trim().is_empty() {
+        return ApiResponse::err("deep_trace_invalid_input", "workspace root is required");
+    }
+    if let Err(message) =
+        validate_workspace_scoped_go_path(&request.workspace_root, &request.relative_path)
+    {
+        return ApiResponse::err("deep_trace_invalid_input", &message);
+    }
+
+    let symbol = request
+        .symbol
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let construct_kind = match request.construct_kind {
+        DeepTraceConstructKindDto::Channel => "channel",
+        DeepTraceConstructKindDto::Select => "select",
+        DeepTraceConstructKindDto::Mutex => "mutex",
+        DeepTraceConstructKindDto::WaitGroup => "wait-group",
+    };
+
+    // Story 4.1 scope activation only: validate request and return a scoped session marker.
+    // Runtime sampling and signal streaming are implemented in later stories.
+    let scope_key = format!(
+        "{}:{}:{}:{}:{}",
+        request.relative_path,
+        request.line,
+        request.column,
+        construct_kind,
+        symbol.as_deref().unwrap_or("scope")
+    );
+
+    ApiResponse::ok(ActivateDeepTraceResponseDto {
+        mode: "deep-trace".to_string(),
+        scope_key: Some(scope_key),
+    })
+}
+
+#[tauri::command]
+pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        Command::new("dlv").arg("version").output()
+    })
+    .await;
+
+    let runtime_availability = match result {
+        Ok(Ok(output)) if output.status.success() => "available",
+        _ => "unavailable",
+    };
+
+    ApiResponse::ok(RuntimeAvailabilityResponseDto {
+        runtime_availability: runtime_availability.to_string(),
+    })
+}
+
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     let normalized = relative_path.trim();
     if normalized.is_empty() {
@@ -299,12 +367,40 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
     Ok(())
 }
 
+fn validate_workspace_scoped_go_path(workspace_root: &str, relative_path: &str) -> Result<(), String> {
+    let root = Path::new(workspace_root)
+        .canonicalize()
+        .map_err(|_| "workspace root does not exist".to_string())?;
+
+    let joined = root.join(relative_path);
+    let target = joined
+        .canonicalize()
+        .map_err(|_| "target file does not exist".to_string())?;
+
+    if !target.starts_with(&root) {
+        return Err("relative path must stay within workspace".to_string());
+    }
+
+    let is_go = target
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.eq_ignore_ascii_case("go"))
+        .unwrap_or(false);
+    if !is_go {
+        return Err("only .go files are supported for deep trace activation".to_string());
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
-        validate_go_diagnostics_path,
+        validate_go_diagnostics_path, validate_workspace_scoped_go_path,
     };
+    use std::fs;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn rejects_non_go_paths_for_analysis() {
@@ -380,5 +476,40 @@ mod tests {
     #[test]
     fn completion_cursor_accepts_positive_positions() {
         validate_completion_cursor(3, 12).expect("must accept positive cursor positions");
+    }
+
+    #[test]
+    fn scoped_go_path_rejects_missing_workspace() {
+        let err = validate_workspace_scoped_go_path("/path/does/not/exist", "main.go")
+            .expect_err("must reject missing workspace");
+        assert!(err.contains("workspace root"));
+    }
+
+    #[test]
+    fn scoped_go_path_rejects_nonexistent_file() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("goide_scope_missing_{unique}"));
+        fs::create_dir_all(&root).expect("create temp workspace");
+
+        let err = validate_workspace_scoped_go_path(root.to_str().unwrap_or(""), "main.go")
+            .expect_err("must reject missing target");
+        assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn scoped_go_path_accepts_existing_go_file_in_workspace() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after unix epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("goide_scope_ok_{unique}"));
+        fs::create_dir_all(&root).expect("create temp workspace");
+        fs::write(root.join("main.go"), "package main\n").expect("write go file");
+
+        validate_workspace_scoped_go_path(root.to_str().unwrap_or(""), "main.go")
+            .expect("must accept in-workspace go file");
     }
 }

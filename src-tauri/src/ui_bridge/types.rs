@@ -88,6 +88,39 @@ pub struct AnalyzeConcurrencyRequest {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub enum DeepTraceConstructKindDto {
+    Channel,
+    Select,
+    Mutex,
+    WaitGroup,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivateDeepTraceRequestDto {
+    pub workspace_root: String,
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
+    pub construct_kind: DeepTraceConstructKindDto,
+    pub symbol: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivateDeepTraceResponseDto {
+    pub mode: String,
+    pub scope_key: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeAvailabilityResponseDto {
+    pub runtime_availability: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionRequestDto {
     pub workspace_root: String,

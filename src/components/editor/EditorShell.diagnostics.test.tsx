@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
 
@@ -8,6 +8,7 @@ const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
 const writeWorkspaceFileMock = vi.fn();
 const fetchWorkspaceDiagnosticsMock = vi.fn();
+const getRuntimeAvailabilityMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -21,6 +22,8 @@ vi.mock("../../lib/ipc/client", async () => {
     writeWorkspaceFile: (...args: unknown[]) => writeWorkspaceFileMock(...args),
     fetchWorkspaceDiagnostics: (...args: unknown[]) =>
       fetchWorkspaceDiagnosticsMock(...args),
+    getRuntimeAvailability: (...args: unknown[]) =>
+      getRuntimeAvailabilityMock(...args),
   };
 });
 
@@ -76,6 +79,14 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell diagnostics", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    getRuntimeAvailabilityMock.mockResolvedValue({
+      ok: true,
+      data: { runtimeAvailability: "available" },
+    });
+  });
+
   it("fetches diagnostics after successful save", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
@@ -97,6 +108,10 @@ describe("EditorShell diagnostics", () => {
           },
         },
       ],
+    });
+    getRuntimeAvailabilityMock.mockResolvedValue({
+      ok: true,
+      data: { runtimeAvailability: "available" },
     });
 
     render(<EditorShell />);
@@ -121,6 +136,10 @@ describe("EditorShell diagnostics", () => {
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    getRuntimeAvailabilityMock.mockResolvedValue({
+      ok: true,
+      data: { runtimeAvailability: "available" },
+    });
 
     const diagnosticsResolver: {
       current: ((value: { ok: boolean; data: EditorDiagnostic[] }) => void) | null;

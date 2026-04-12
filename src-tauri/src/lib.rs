@@ -20,7 +20,9 @@ pub fn run() {
             ui_bridge::commands::run_workspace_file,
             ui_bridge::commands::analyze_active_file_concurrency,
             ui_bridge::commands::get_active_file_diagnostics,
-            ui_bridge::commands::get_active_file_completions
+            ui_bridge::commands::get_active_file_completions,
+            ui_bridge::commands::activate_scoped_deep_trace,
+            ui_bridge::commands::get_runtime_availability
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
