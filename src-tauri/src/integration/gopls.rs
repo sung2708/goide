@@ -803,7 +803,7 @@ fn parse_gopls_diagnostics_output(relative_path: &str, stdout: &[u8]) -> Result<
             continue;
         }
 
-        let Some((path_part, rest_after_path)) = line.split_once(':') else {
+        let Some((path_part, rest_after_path)) = split_diagnostic_path_prefix(line) else {
             continue;
         };
 
@@ -844,6 +844,35 @@ fn parse_gopls_diagnostics_output(relative_path: &str, stdout: &[u8]) -> Result<
     }
 
     Ok(results)
+}
+
+fn split_diagnostic_path_prefix(line: &str) -> Option<(&str, &str)> {
+    for (idx, _) in line.rmatch_indices(':') {
+        let left_token_start = line[..idx].rfind(':').map_or(0, |prev| prev + 1);
+        let left_token = line[left_token_start..idx].trim();
+        if !left_token.is_empty() && left_token.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+
+        let rest = &line[idx + 1..];
+        let digit_count = rest.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        if digit_count == 0 {
+            continue;
+        }
+
+        if rest.as_bytes().get(digit_count) != Some(&b':') {
+            continue;
+        }
+
+        let path_part = line[..idx].trim();
+        if path_part.is_empty() {
+            continue;
+        }
+
+        return Some((path_part, rest));
+    }
+
+    None
 }
 
 fn parse_column_range(column_part: &str) -> (usize, usize) {
@@ -1284,5 +1313,21 @@ main.go:10: error message without column
         assert_eq!(diagnostics[2].range.start_line, 10);
         assert_eq!(diagnostics[2].range.start_column, 1);
         assert_eq!(diagnostics[2].message, "error message without column");
+    }
+
+    #[test]
+    fn parses_gopls_check_diagnostics_output_with_windows_absolute_paths() {
+        let output = r#"
+C:/workspace/main.go:12:3: undeclared name: foo
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start_line, 12);
+        assert_eq!(diagnostics[0].range.start_column, 3);
+        assert_eq!(diagnostics[0].message, "undeclared name: foo");
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
     }
 }
