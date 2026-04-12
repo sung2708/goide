@@ -252,6 +252,37 @@ describe("EditorShell inline actions", () => {
     expect(screen.getByTestId("jump-request-line")).toHaveTextContent("2");
   });
 
+  it("jumps to selected line when a summary panel item is clicked", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: "jobs",
+        scopeKey: "S1",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /summary/i }));
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /line 1.*channel op.*predicted.*jobs/i,
+      })
+    );
+
+    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("1");
+  });
+
   it("keeps Jump disabled when active hint is not the mapped channel construct", async () => {
     mockConstructs = [
       {

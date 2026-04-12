@@ -67,10 +67,6 @@ function CodeEditor({
       const endLine = Math.min(maxLine, Math.max(startLine, diagnostic.range.endLine));
       const startLineInfo = view.state.doc.line(startLine);
       const endLineInfo = view.state.doc.line(endLine);
-      const endLineTo =
-        typeof endLineInfo.to === "number"
-          ? endLineInfo.to
-          : endLineInfo.from + 1;
 
       const startOffset = Math.max(0, diagnostic.range.startColumn - 1);
       const lineLength = startLineInfo.to - startLineInfo.from;
@@ -78,7 +74,6 @@ function CodeEditor({
       const from = startLineInfo.from + clampedStartOffset;
       
       const requestedEnd = endLineInfo.from + Math.max(startOffset + 1, diagnostic.range.endColumn - 1);
-      const endLineLength = endLineInfo.to - endLineInfo.from;
       const to = Math.min(endLineInfo.to, Math.max(from + 1, requestedEnd));
       const severity: Diagnostic["severity"] =
         diagnostic.severity === "warning"
