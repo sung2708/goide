@@ -1,0 +1,588 @@
+use anyhow::{anyhow, Context, Result};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
+use std::path::Path;
+use std::process::Stdio;
+use std::time::Duration;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
+use tokio::net::TcpStream;
+use tokio::process::{Child, Command};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
+
+const DAP_READY_TIMEOUT: Duration = Duration::from_secs(5);
+const DAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+const SUPPORTED_WAIT_REASONS: &[&str] = &[
+    "chan receive",
+    "chan send",
+    "semacquire",
+    "select",
+    "sleep",
+    "io wait",
+];
+
+#[derive(Debug, Clone, Copy)]
+pub enum LaunchMode {
+    Debug,
+    Test,
+}
+
+#[derive(Debug)]
+pub struct DapProcess {
+    pub child: Child,
+    pub listen_addr: SocketAddr,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSignal {
+    pub thread_id: i64,
+    pub status: String,
+    pub wait_reason: String,
+    pub confidence: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DapThread {
+    pub id: i64,
+    pub name: String,
+}
+
+pub struct DapClient {
+    reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
+    writer: tokio::net::tcp::OwnedWriteHalf,
+    next_seq: i64,
+}
+
+impl DapClient {
+    pub async fn connect(addr: SocketAddr) -> Result<Self> {
+        if !is_local_loopback(addr) {
+            return Err(anyhow!("DAP connection must stay on local loopback"));
+        }
+
+        let stream = timeout(DAP_CONNECT_TIMEOUT, TcpStream::connect(addr))
+            .await
+            .context("timed out connecting to DAP endpoint")?
+            .with_context(|| format!("failed connecting to DAP endpoint at {addr}"))?;
+        let (reader, writer) = stream.into_split();
+
+        Ok(Self {
+            reader: BufReader::new(reader),
+            writer,
+            next_seq: 1,
+        })
+    }
+
+    pub async fn initialize(&mut self) -> Result<()> {
+        let response = self
+            .request(
+                "initialize",
+                json!({
+                    "adapterID": "dlv",
+                    "clientID": "goide",
+                    "clientName": "goide",
+                    "locale": "en-US",
+                    "linesStartAt1": true,
+                    "columnsStartAt1": true,
+                    "pathFormat": "path",
+                    "supportsVariableType": true,
+                    "supportsVariablePaging": true,
+                    "supportsRunInTerminalRequest": false
+                }),
+            )
+            .await?;
+
+        ensure_success("initialize", &response)?;
+        Ok(())
+    }
+
+    pub async fn launch(
+        &mut self,
+        mode: LaunchMode,
+        workspace_root: &Path,
+        target_file: &Path,
+    ) -> Result<()> {
+        let canonical_root = workspace_root.canonicalize().with_context(|| {
+            format!(
+                "workspace root does not exist: {}",
+                workspace_root.display()
+            )
+        })?;
+        let canonical_target = target_file
+            .canonicalize()
+            .with_context(|| format!("target file does not exist: {}", target_file.display()))?;
+        if !canonical_target.starts_with(&canonical_root) {
+            return Err(anyhow!(
+                "target file must stay within workspace root: {}",
+                canonical_target.display()
+            ));
+        }
+
+        let mode_text = match mode {
+            LaunchMode::Debug => "debug",
+            LaunchMode::Test => "test",
+        };
+
+        let response = self
+            .request(
+                "launch",
+                json!({
+                    "mode": mode_text,
+                    "program": canonical_root.to_string_lossy().to_string(),
+                    "cwd": canonical_root.to_string_lossy().to_string(),
+                    "stopOnEntry": false
+                }),
+            )
+            .await?;
+        ensure_success("launch", &response)?;
+        Ok(())
+    }
+
+    pub async fn threads(&mut self) -> Result<Vec<DapThread>> {
+        let response = self.request("threads", json!({})).await?;
+        ensure_success("threads", &response)?;
+        let body = response
+            .get("body")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("threads response missing body"))?;
+        let threads = body
+            .get("threads")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("threads response missing threads array"))?;
+
+        let mut items = Vec::with_capacity(threads.len());
+        for thread in threads {
+            let id = thread
+                .get("id")
+                .and_then(Value::as_i64)
+                .ok_or_else(|| anyhow!("thread item missing id"))?;
+            let name = thread
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| anyhow!("thread item missing name"))?;
+            items.push(DapThread {
+                id,
+                name: name.to_string(),
+            });
+        }
+
+        Ok(items)
+    }
+
+    pub async fn disconnect(&mut self) -> Result<()> {
+        let response = self
+            .request("disconnect", json!({ "terminateDebuggee": true }))
+            .await?;
+        ensure_success("disconnect", &response)?;
+        Ok(())
+    }
+
+    async fn request(&mut self, command: &str, arguments: Value) -> Result<Value> {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+
+        let payload = json!({
+            "seq": seq,
+            "type": "request",
+            "command": command,
+            "arguments": arguments
+        });
+        write_dap_message(&mut self.writer, &payload).await?;
+
+        loop {
+            let message = read_dap_message(&mut self.reader).await?;
+            let message_type = message
+                .get("type")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if message_type != "response" {
+                continue;
+            }
+
+            let request_seq = message
+                .get("request_seq")
+                .and_then(Value::as_i64)
+                .unwrap_or_default();
+            if request_seq != seq {
+                continue;
+            }
+
+            return Ok(message);
+        }
+    }
+}
+
+pub async fn spawn_dlv_dap(workspace_root: &Path) -> Result<DapProcess> {
+    spawn_dlv_dap_with("dlv", &["dap", "--listen=127.0.0.1:0"], workspace_root).await
+}
+
+pub fn thread_to_runtime_signal(thread: &DapThread) -> Option<RuntimeSignal> {
+    let parsed = parse_thread_wait_state(&thread.name)?;
+    Some(RuntimeSignal {
+        thread_id: thread.id,
+        status: parsed.status,
+        wait_reason: parsed.wait_reason,
+        confidence: "confirmed".to_string(),
+    })
+}
+
+pub fn parse_thread_wait_state(name: &str) -> Option<ParsedThreadState> {
+    let start = name.find('[')?;
+    let end = name[start + 1..].find(']')?;
+    let status_raw = name[start + 1..start + 1 + end].trim();
+    if status_raw.is_empty() {
+        return None;
+    }
+
+    let lowered = status_raw.to_ascii_lowercase();
+    let wait_reason = SUPPORTED_WAIT_REASONS
+        .iter()
+        .find(|reason| lowered.contains(**reason))
+        .map(|reason| (*reason).to_string())?;
+
+    Some(ParsedThreadState {
+        status: status_raw.to_string(),
+        wait_reason,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ParsedThreadState {
+    pub status: String,
+    pub wait_reason: String,
+}
+
+fn ensure_success(command: &str, response: &Value) -> Result<()> {
+    if response
+        .get("success")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return Ok(());
+    }
+
+    let message = response
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown DAP failure");
+    Err(anyhow!("DAP command `{command}` failed: {message}"))
+}
+
+async fn spawn_dlv_dap_with(
+    command: &str,
+    args: &[&str],
+    workspace_root: &Path,
+) -> Result<DapProcess> {
+    let canonical_root = workspace_root.canonicalize().with_context(|| {
+        format!(
+            "workspace root does not exist: {}",
+            workspace_root.display()
+        )
+    })?;
+
+    let mut child = Command::new(command)
+        .args(args)
+        .current_dir(&canonical_root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("failed to spawn `{command}` — is it installed and on PATH?"))?;
+
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+
+    if let Some(reader) = stdout {
+        let tx_stdout = tx.clone();
+        tokio::spawn(async move {
+            forward_lines(BufReader::new(reader), tx_stdout).await;
+        });
+    }
+    if let Some(reader) = stderr {
+        let tx_stderr = tx.clone();
+        tokio::spawn(async move {
+            forward_lines(BufReader::new(reader), tx_stderr).await;
+        });
+    }
+    drop(tx);
+
+    let listen_addr = timeout(DAP_READY_TIMEOUT, async move {
+        while let Some(line) = rx.recv().await {
+            if let Some(addr) = extract_listen_addr(&line) {
+                return Ok::<SocketAddr, anyhow::Error>(addr);
+            }
+        }
+        Err(anyhow!("`dlv dap` exited before reporting listen address"))
+    })
+    .await
+    .context("timed out waiting for `dlv dap` listen address")??;
+
+    if !is_local_loopback(listen_addr) {
+        let _ = child.kill().await;
+        return Err(anyhow!(
+            "refusing non-local delve endpoint: {listen_addr}; expected 127.0.0.1"
+        ));
+    }
+
+    Ok(DapProcess { child, listen_addr })
+}
+
+async fn forward_lines<R>(reader: BufReader<R>, tx: mpsc::UnboundedSender<String>)
+where
+    R: AsyncRead + Unpin,
+{
+    let mut lines = reader.lines();
+    while let Ok(Some(line)) = lines.next_line().await {
+        let _ = tx.send(line);
+    }
+}
+
+fn extract_listen_addr(line: &str) -> Option<SocketAddr> {
+    let marker = "127.0.0.1:";
+    let start = line.find(marker)?;
+    let port_text = line[start + marker.len()..]
+        .chars()
+        .take_while(|ch| ch.is_ascii_digit())
+        .collect::<String>();
+    let port = port_text.parse::<u16>().ok()?;
+    Some(SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, port)))
+}
+
+fn is_local_loopback(addr: SocketAddr) -> bool {
+    matches!(addr, SocketAddr::V4(v4) if *v4.ip() == Ipv4Addr::LOCALHOST)
+}
+
+async fn write_dap_message<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Value) -> Result<()> {
+    let body = serde_json::to_vec(value)?;
+    let header = format!("Content-Length: {}\r\n\r\n", body.len());
+    writer.write_all(header.as_bytes()).await?;
+    writer.write_all(&body).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+async fn read_dap_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Value> {
+    let mut content_length: Option<usize> = None;
+
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line).await?;
+        if read == 0 {
+            return Err(anyhow!("DAP stream closed"));
+        }
+
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = Some(value.trim().parse::<usize>()?);
+            }
+        }
+    }
+
+    let len = content_length.ok_or_else(|| anyhow!("DAP message missing Content-Length header"))?;
+    let mut body = vec![0u8; len];
+    reader.read_exact(&mut body).await?;
+    let payload = serde_json::from_slice::<Value>(&body)?;
+    Ok(payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    #[test]
+    fn parse_thread_wait_state_extracts_wait_reason() {
+        let parsed = parse_thread_wait_state("Goroutine 1 [chan receive] main.main")
+            .expect("must parse supported wait reason");
+        assert_eq!(parsed.wait_reason, "chan receive");
+        assert_eq!(parsed.status, "chan receive");
+    }
+
+    #[test]
+    fn parse_thread_wait_state_rejects_unsupported_reason() {
+        let parsed = parse_thread_wait_state("Goroutine 2 [running] main.main");
+        assert!(parsed.is_none());
+    }
+
+    #[test]
+    fn thread_to_runtime_signal_marks_confirmed() {
+        let thread = DapThread {
+            id: 42,
+            name: "Goroutine 42 [IO wait] netpoll".to_string(),
+        };
+        let signal = thread_to_runtime_signal(&thread).expect("must map supported thread");
+        assert_eq!(signal.thread_id, 42);
+        assert_eq!(signal.wait_reason, "io wait");
+        assert_eq!(signal.confidence, "confirmed");
+    }
+
+    #[test]
+    fn extract_listen_addr_reads_localhost() {
+        let addr =
+            extract_listen_addr("DAP server listening at: 127.0.0.1:39017").expect("parse addr");
+        assert_eq!(addr.ip().to_string(), "127.0.0.1");
+        assert_eq!(addr.port(), 39017);
+    }
+
+    #[tokio::test]
+    async fn dap_client_initialize_launch_threads_disconnect() {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind mock dap listener: {error}"),
+        };
+        let addr = listener.local_addr().expect("local addr");
+        let seq_counter = std::sync::Arc::new(AtomicUsize::new(0));
+        let seq_counter_server = seq_counter.clone();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            for expected_command in ["initialize", "launch", "threads", "disconnect"] {
+                let request = read_raw_dap_message(&mut socket)
+                    .await
+                    .expect("read request");
+                let request_seq = request
+                    .get("seq")
+                    .and_then(Value::as_i64)
+                    .expect("request seq");
+                let command = request
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .expect("command");
+                assert_eq!(command, expected_command);
+                seq_counter_server.fetch_add(1, Ordering::SeqCst);
+
+                let response = if expected_command == "threads" {
+                    json!({
+                        "seq": 100 + request_seq,
+                        "type": "response",
+                        "request_seq": request_seq,
+                        "success": true,
+                        "command": expected_command,
+                        "body": {
+                            "threads": [
+                                { "id": 1, "name": "Goroutine 1 [chan receive] main.main" },
+                                { "id": 2, "name": "Goroutine 2 [running] main.worker" }
+                            ]
+                        }
+                    })
+                } else {
+                    json!({
+                        "seq": 100 + request_seq,
+                        "type": "response",
+                        "request_seq": request_seq,
+                        "success": true,
+                        "command": expected_command
+                    })
+                };
+                write_raw_dap_message(&mut socket, &response)
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let mut client = DapClient::connect(addr).await.expect("connect");
+        client.initialize().await.expect("initialize");
+
+        let temp_workspace = create_temp_workspace("dap_launch_workspace");
+        let main_go = temp_workspace.join("main.go");
+        fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
+        client
+            .launch(LaunchMode::Debug, &temp_workspace, &main_go)
+            .await
+            .expect("launch");
+
+        let threads = client.threads().await.expect("threads");
+        assert_eq!(threads.len(), 2);
+        assert_eq!(threads[0].name, "Goroutine 1 [chan receive] main.main");
+
+        client.disconnect().await.expect("disconnect");
+        server_task.await.expect("server task");
+
+        assert_eq!(seq_counter.load(Ordering::SeqCst), 4);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn spawn_process_extracts_dynamic_port_from_output() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let script_dir = create_temp_workspace("fake_dlv");
+        let script_path = script_dir.join("fake_dlv.sh");
+        fs::write(
+            &script_path,
+            "#!/usr/bin/env sh\necho 'DAP server listening at: 127.0.0.1:40123' 1>&2\nsleep 10\n",
+        )
+        .expect("write fake script");
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
+            .expect("make script executable");
+
+        let mut process =
+            spawn_dlv_dap_with(script_path.to_str().expect("script path"), &[], &script_dir)
+                .await
+                .expect("spawn fake dlv process");
+
+        assert_eq!(process.listen_addr.to_string(), "127.0.0.1:40123");
+        let _ = process.child.kill().await;
+    }
+
+    async fn read_raw_dap_message(stream: &mut tokio::net::TcpStream) -> Result<Value> {
+        let mut header_bytes = Vec::new();
+        let mut temp = [0u8; 1];
+        loop {
+            stream.read_exact(&mut temp).await?;
+            header_bytes.push(temp[0]);
+            if header_bytes.ends_with(b"\r\n\r\n") {
+                break;
+            }
+        }
+        let header = String::from_utf8(header_bytes)?;
+        let mut content_length = 0usize;
+        for line in header.lines() {
+            if let Some((name, value)) = line.split_once(':') {
+                if name.eq_ignore_ascii_case("content-length") {
+                    content_length = value.trim().parse::<usize>()?;
+                }
+            }
+        }
+        if content_length == 0 {
+            return Err(anyhow!("missing content length"));
+        }
+
+        let mut body = vec![0u8; content_length];
+        stream.read_exact(&mut body).await?;
+        Ok(serde_json::from_slice::<Value>(&body)?)
+    }
+
+    async fn write_raw_dap_message(
+        stream: &mut tokio::net::TcpStream,
+        value: &Value,
+    ) -> Result<()> {
+        let body = serde_json::to_vec(value)?;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        stream.write_all(header.as_bytes()).await?;
+        stream.write_all(&body).await?;
+        Ok(())
+    }
+
+    fn create_temp_workspace(prefix: &str) -> PathBuf {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after unix epoch")
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("goide_{prefix}_{unique}"));
+        fs::create_dir_all(&path).expect("create temp workspace");
+        path
+    }
+}

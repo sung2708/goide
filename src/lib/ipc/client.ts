@@ -10,6 +10,7 @@ import type {
   EditorDiagnostic,
   FsEntry,
   RuntimeAvailabilityResponse,
+  RuntimeSignal,
 } from "./types";
 
 export async function listWorkspaceEntries(
@@ -96,10 +97,23 @@ export async function activateScopedDeepTrace(
   );
 }
 
+export async function deactivateDeepTrace(): Promise<ApiResponse<void>> {
+  const tauriInternals = (globalThis as { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
+  if (!tauriInternals) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("deactivate_deep_trace");
+}
+
 export async function getRuntimeAvailability(): Promise<
   ApiResponse<RuntimeAvailabilityResponse>
 > {
   return invoke<ApiResponse<RuntimeAvailabilityResponse>>(
     "get_runtime_availability"
   );
+}
+
+export async function getRuntimeSignals(): Promise<ApiResponse<RuntimeSignal[]>> {
+  return invoke<ApiResponse<RuntimeSignal[]>>("get_runtime_signals");
 }
