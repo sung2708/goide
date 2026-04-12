@@ -41,7 +41,7 @@ function SummaryPeek({ items = [], onJumpToLine, onClose }: SummaryPeekProps) {
           </button>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-3 px-4 py-4 text-xs text-[#9399b2]">
+      <div className="flex flex-1 flex-col gap-3 overflow-y-auto px-4 py-4 text-xs text-[#9399b2]">
         {hasItems ? (
           <ul className="space-y-2">
             {items.map((item) => {
