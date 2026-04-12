@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use std::io;
+use std::path::Path;
 use std::process::Command;
 
 use crate::integration::fs;
@@ -34,6 +35,30 @@ pub struct DetectedConstruct {
     pub scope_key: Option<String>,
     pub confidence: Confidence,
     pub channel_operation: Option<ChannelOperation>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+    Info,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiagnosticRange {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiagnostic {
+    pub severity: DiagnosticSeverity,
+    pub message: String,
+    pub source: Option<String>,
+    pub code: Option<String>,
+    pub range: DiagnosticRange,
 }
 
 fn is_mutex_name(text: &str) -> bool {
@@ -667,6 +692,36 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
     advance_one(i, line, column, second);
 }
 
+pub fn analyze_file_diagnostics(workspace_root: &str, relative_path: &str) -> Result<Vec<FileDiagnostic>> {
+    let output = Command::new("gopls")
+        .arg("check")
+        .arg(relative_path)
+        .current_dir(workspace_root)
+        .output();
+
+    let output = match output {
+        Ok(out) => out,
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(Vec::new());
+            }
+            return Err(err).context("failed to execute gopls check command");
+        }
+    };
+
+    let mut results = Vec::new();
+
+    // Parse both streams to avoid missing diagnostics in mixed-output environments
+    if !output.stdout.is_empty() {
+        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stdout)?);
+    }
+    if !output.stderr.is_empty() {
+        results.extend(parse_gopls_diagnostics_output(workspace_root, relative_path, &output.stderr)?);
+    }
+
+    Ok(results)
+}
+
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let output = Command::new("gopls")
         .arg("symbols")
@@ -736,6 +791,154 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
     }
 
     Ok(results)
+}
+
+fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, output_bytes: &[u8]) -> Result<Vec<FileDiagnostic>> {
+    let stdout_str = String::from_utf8_lossy(output_bytes);
+    let mut results = Vec::new();
+
+    for raw_line in stdout_str.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+
+        let Some((path_part, rest_after_path)) = split_diagnostic_path_prefix(line) else {
+            continue;
+        };
+
+        if !path_matches_target(workspace_root, relative_path, path_part) {
+            continue;
+        }
+
+        let Some((line_part, rest_after_line)) = rest_after_path.split_once(':') else {
+            continue;
+        };
+        let Ok(start_line) = line_part.parse::<usize>() else {
+            continue;
+        };
+
+        let (start_column, end_column, message_part) = if let Some((col_p, msg_p)) = rest_after_line.split_once(':') {
+            if let Some((sc, ec)) = parse_column_range(col_p.trim()) {
+                (sc, ec, msg_p)
+            } else {
+                // No valid column part found, treat the whole remainder as message.
+                (1, 2, rest_after_line)
+            }
+        } else {
+            // No column part found, gopls might have output path:line: message
+            (1, 2, rest_after_line)
+        };
+
+        let raw_message = message_part.trim();
+        let (severity, message) = normalize_diagnostic_message(raw_message);
+
+        results.push(FileDiagnostic {
+            severity,
+            message,
+            source: Some("gopls".to_string()),
+            code: None,
+            range: DiagnosticRange {
+                start_line,
+                start_column,
+                end_line: start_line,
+                end_column,
+            },
+        });
+    }
+
+    Ok(results)
+}
+
+fn split_diagnostic_path_prefix(line: &str) -> Option<(&str, &str)> {
+    for (idx, _) in line.rmatch_indices(':') {
+        let left_token_start = line[..idx].rfind(':').map_or(0, |prev| prev + 1);
+        let left_token = line[left_token_start..idx].trim();
+        if !left_token.is_empty() && left_token.bytes().all(|byte| byte.is_ascii_digit()) {
+            continue;
+        }
+
+        let rest = &line[idx + 1..];
+        let digit_count = rest.bytes().take_while(|byte| byte.is_ascii_digit()).count();
+        if digit_count == 0 {
+            continue;
+        }
+
+        if rest.as_bytes().get(digit_count) != Some(&b':') {
+            continue;
+        }
+
+        let path_part = line[..idx].trim();
+        if path_part.is_empty() {
+            continue;
+        }
+
+        return Some((path_part, rest));
+    }
+
+    None
+}
+
+fn parse_column_range(column_part: &str) -> Option<(usize, usize)> {
+    let column_part = column_part.trim();
+    if column_part.is_empty() {
+        return None;
+    }
+
+    let Some((start_col_text, end_col_text)) = column_part.split_once('-') else {
+        let start_column = column_part.parse::<usize>().ok()?.max(1);
+        return Some((start_column, start_column.saturating_add(1)));
+    };
+
+    let start_column = start_col_text.trim().parse::<usize>().ok()?.max(1);
+    let end_column = end_col_text.trim().parse::<usize>().ok()?;
+    if end_column < start_column {
+        return None;
+    }
+
+    Some((start_column, end_column))
+}
+
+fn normalize_diagnostic_message(raw_message: &str) -> (DiagnosticSeverity, String) {
+    if let Some(message) = raw_message.strip_prefix("warning:") {
+        return (DiagnosticSeverity::Warning, message.trim().to_string());
+    }
+
+    if let Some(message) = raw_message.strip_prefix("info:") {
+        return (DiagnosticSeverity::Info, message.trim().to_string());
+    }
+
+    (DiagnosticSeverity::Error, raw_message.to_string())
+}
+
+fn normalize_path(path: &str) -> String {
+    path.replace('\\', "/")
+}
+
+fn path_matches_target(workspace_root: &str, relative_target: &str, candidate_path: &str) -> bool {
+    let normalized_candidate = normalize_path(candidate_path);
+    let normalized_target = normalize_path(relative_target);
+
+    // 1. Exact relative match (e.g., "main.go")
+    if normalized_candidate == normalized_target {
+        return true;
+    }
+
+    // 2. Relative match with prefix (e.g., "./main.go")
+    if normalized_candidate == format!("./{}", normalized_target) {
+        return true;
+    }
+
+    // 3. Absolute path match anchored to workspace root
+    let workspace_path = Path::new(workspace_root);
+    let absolute_target = workspace_path.join(relative_target);
+    if let Some(abs_str) = absolute_target.to_str() {
+        if normalized_candidate == normalize_path(abs_str) {
+            return true;
+        }
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -1108,5 +1311,97 @@ func worker(done <-chan struct{}) {
 
         assert_eq!(results[0].symbol.as_deref(), Some("ch"));
         assert_eq!(results[0].confidence, Confidence::Predicted);
+    }
+
+    #[test]
+    fn parses_gopls_check_diagnostics_output_with_severity_and_range() {
+        let output = r#"
+main.go:3:2-7: undeclared name: foo
+main.go:8:1: warning: unreachable code
+main.go:10: error message without column
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 3);
+        assert_eq!(diagnostics[0].range.start_line, 3);
+        assert_eq!(diagnostics[0].range.start_column, 2);
+        assert_eq!(diagnostics[0].range.end_line, 3);
+        assert_eq!(diagnostics[0].range.end_column, 7);
+        assert_eq!(diagnostics[0].message, "undeclared name: foo");
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+
+        assert_eq!(diagnostics[1].range.start_line, 8);
+        assert_eq!(diagnostics[1].range.start_column, 1);
+        assert_eq!(diagnostics[1].message, "unreachable code");
+        assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Warning);
+
+        assert_eq!(diagnostics[2].range.start_line, 10);
+        assert_eq!(diagnostics[2].range.start_column, 1);
+        assert_eq!(diagnostics[2].message, "error message without column");
+    }
+
+    #[test]
+    fn parses_gopls_check_diagnostics_output_with_windows_absolute_paths() {
+        let output = r#"
+C:/workspace/main.go:12:3: undeclared name: foo
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("C:/workspace", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start_line, 12);
+        assert_eq!(diagnostics[0].range.start_column, 3);
+        assert_eq!(diagnostics[0].message, "undeclared name: foo");
+        assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn preserves_message_when_column_is_omitted_and_message_contains_colon() {
+        let output = r#"
+main.go:14: syntax error: unexpected semicolon, expected expression
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start_line, 14);
+        assert_eq!(diagnostics[0].range.start_column, 1);
+        assert_eq!(diagnostics[0].range.end_column, 2);
+        assert_eq!(
+            diagnostics[0].message,
+            "syntax error: unexpected semicolon, expected expression"
+        );
+    }
+
+    #[test]
+    fn rejects_basename_collisions_in_subdirectories() {
+        let output = r#"
+main.go:3:1: error in root
+subdir/main.go:3:1: error in subdir
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "error in root");
+    }
+
+    #[test]
+    fn handles_absolute_path_matches_correctly() {
+        let output = r#"
+/root/main.go:3:1: error in root
+/other/main.go:3:1: error in other
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output("/root", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].message, "error in root");
     }
 }
