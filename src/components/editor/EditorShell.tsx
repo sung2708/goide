@@ -8,6 +8,7 @@ import {
   activateScopedDeepTrace,
   deactivateDeepTrace,
   getRuntimeAvailability,
+  getRuntimeSignals,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
@@ -15,9 +16,11 @@ import {
   fetchWorkspaceDiagnostics,
 } from "../../lib/ipc/client";
 import type {
+  ApiResponse,
   CompletionItem,
   DeepTraceConstructKind,
   EditorDiagnostic,
+  RuntimeSignal,
   RunOutputPayload,
 } from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
@@ -46,12 +49,87 @@ const KIND_LABELS: Record<LensConstructKind, string> = {
   mutex: "Mutex",
   "wait-group": "WaitGroup",
 };
+const BLOCKED_WAIT_REASONS = [
+  "chan receive",
+  "chan send",
+  "semacquire",
+  "select",
+  "sleep",
+  "io wait",
+];
+const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
+const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
+
+function isBlockedWaitReason(waitReason: string): boolean {
+  const normalized = waitReason.trim().toLowerCase();
+  return BLOCKED_WAIT_REASONS.some((reason) => normalized.includes(reason));
+}
+
+function resolveRuntimeSignalTimeoutMs(): number {
+  const raw = import.meta.env.VITE_RUNTIME_SIGNAL_TIMEOUT_MS;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 100 || parsed > 5000) {
+    return DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS;
+  }
+  return Math.round(parsed);
+}
+
+function normalizeRelativePath(path: string): string {
+  return path.replace(/\\/g, "/").trim();
+}
+
+function runtimeSignalMatchesScope(
+  signal: RuntimeSignal,
+  scope: {
+    scopeKey: string | null;
+    filePath: string;
+    line: number;
+    column: number;
+  }
+): boolean {
+  // Scope key is treated as a preferred discriminator, but line/column/path remain
+  // the authoritative identity in case key formatting drifts across layers.
+  return (
+    normalizeRelativePath(signal.relativePath) === normalizeRelativePath(scope.filePath) &&
+    signal.line === scope.line &&
+    signal.column === scope.column
+  );
+}
+
+async function getRuntimeSignalsWithTimeout(
+  timeoutMs: number,
+  callbacks?: {
+    onTimeout?: () => void;
+    onSettled?: () => void;
+  }
+): Promise<ApiResponse<RuntimeSignal[]>> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      callbacks?.onTimeout?.();
+      reject(new Error("runtime signal request timed out"));
+    }, timeoutMs);
+
+    getRuntimeSignals()
+      .then((response) => {
+        clearTimeout(timer);
+        resolve(response);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      })
+      .finally(() => {
+        callbacks?.onSettled?.();
+      });
+  });
+}
 
 function isGoFile(path: string | null): path is string {
   return typeof path === "string" && path.toLowerCase().endsWith(".go");
 }
 
 function EditorShell() {
+  const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
   const [isOpening, setIsOpening] = useState(false);
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
@@ -100,6 +178,22 @@ function EditorShell() {
   const completionRequestIdRef = useRef(0);
   const deepTraceRequestIdRef = useRef(0);
   const runtimeCheckRequestIdRef = useRef(0);
+  const runtimeSignalRequestIdRef = useRef(0);
+  const runtimeSignalInFlightRef = useRef(false);
+  const runtimeSignalPendingRequestCountRef = useRef(0);
+  const [deepTraceScope, setDeepTraceScope] = useState<{
+    workspacePath: string;
+    filePath: string;
+    line: number;
+    column: number;
+    scopeKey: string | null;
+    anchorTop: number;
+    anchorLeft: number;
+  } | null>(null);
+  const [activeBlockedSignal, setActiveBlockedSignal] = useState<RuntimeSignal | null>(
+    null
+  );
+  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
     setJumpRequest(null);
@@ -110,12 +204,31 @@ function EditorShell() {
     previousModeRef.current = mode;
     if (previousMode === "deep-trace" && mode !== "deep-trace") {
       void deactivateDeepTrace();
+      setDeepTraceScope(null);
+      setActiveBlockedSignal(null);
     }
   }, [mode]);
 
   useEffect(() => {
     return () => {
       void deactivateDeepTrace();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      return;
+    }
+
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const updatePreference = () => {
+      setPrefersReducedMotion(mediaQuery.matches);
+    };
+
+    updatePreference();
+    mediaQuery.addEventListener("change", updatePreference);
+    return () => {
+      mediaQuery.removeEventListener("change", updatePreference);
     };
   }, []);
 
@@ -152,6 +265,8 @@ function EditorShell() {
 
   const traceBubbleConfidence: TraceBubbleConfidence =
     (activeHint?.confidence?.toLowerCase() as TraceBubbleConfidence) ?? "predicted";
+  const isBlockedConfirmedVisible = mode === "deep-trace" && activeBlockedSignal !== null;
+  const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
 
   const resolveCounterpartLine = useCallback(
     (sourceLine: number, hintSymbol?: string | null) => {
@@ -283,6 +398,15 @@ function EditorShell() {
       }
 
       if (response.ok && response.data?.mode === "deep-trace") {
+        setDeepTraceScope({
+          workspacePath: requestWorkspacePath,
+          filePath: requestFilePath,
+          line,
+          column,
+          scopeKey: response.data.scopeKey ?? null,
+          anchorTop: interactionAnchor?.top ?? 24,
+          anchorLeft: interactionAnchor?.left ?? 12,
+        });
         setMode("deep-trace");
         return;
       }
@@ -291,6 +415,8 @@ function EditorShell() {
     }
 
     setMode("quick-insight");
+    setDeepTraceScope(null);
+    setActiveBlockedSignal(null);
   }, [
     activeFilePath,
     activeHint,
@@ -298,6 +424,118 @@ function EditorShell() {
     runtimeAvailability,
     workspacePath,
   ]);
+
+  useEffect(() => {
+    if (
+      mode !== "deep-trace" ||
+      !deepTraceScope ||
+      workspacePath !== deepTraceScope.workspacePath ||
+      activeFilePath !== deepTraceScope.filePath
+    ) {
+      setActiveBlockedSignal(null);
+      return;
+    }
+
+    const scopeSnapshot = deepTraceScope;
+    let cancelled = false;
+    let intervalId: ReturnType<typeof setInterval> | null = null;
+
+    const pollRuntimeSignals = async () => {
+      if (
+        runtimeSignalInFlightRef.current ||
+        runtimeSignalPendingRequestCountRef.current >=
+          MAX_PENDING_RUNTIME_SIGNAL_REQUESTS
+      ) {
+        return;
+      }
+
+      runtimeSignalInFlightRef.current = true;
+      runtimeSignalPendingRequestCountRef.current += 1;
+      runtimeSignalRequestIdRef.current += 1;
+      const requestId = runtimeSignalRequestIdRef.current;
+      let released = false;
+      let pendingSlotReleased = false;
+      const releaseInFlight = () => {
+        if (
+          !released &&
+          requestId === runtimeSignalRequestIdRef.current
+        ) {
+          released = true;
+          runtimeSignalInFlightRef.current = false;
+        }
+      };
+      const releasePendingSlot = () => {
+        if (!pendingSlotReleased) {
+          pendingSlotReleased = true;
+          runtimeSignalPendingRequestCountRef.current = Math.max(
+            0,
+            runtimeSignalPendingRequestCountRef.current - 1
+          );
+        }
+      };
+
+      try {
+        const response = await getRuntimeSignalsWithTimeout(
+          runtimeSignalTimeoutMs,
+          {
+            onTimeout: () => {
+              if (requestId === runtimeSignalRequestIdRef.current) {
+                releaseInFlight();
+              }
+            },
+            onSettled: () => {
+              releasePendingSlot();
+              releaseInFlight();
+            },
+          }
+        );
+        if (
+          cancelled ||
+          requestId !== runtimeSignalRequestIdRef.current ||
+          workspacePathRef.current !== scopeSnapshot.workspacePath ||
+          activeFilePathRef.current !== scopeSnapshot.filePath
+        ) {
+          return;
+        }
+
+        const blockedCandidates =
+          response.ok && response.data
+            ? response.data.filter(
+                (signal) =>
+                  isBlockedWaitReason(signal.waitReason) &&
+                  runtimeSignalMatchesScope(signal, scopeSnapshot)
+              )
+            : [];
+
+        setActiveBlockedSignal(blockedCandidates[0] ?? null);
+      } catch (_error) {
+        if (
+          !cancelled &&
+          requestId === runtimeSignalRequestIdRef.current &&
+          workspacePathRef.current === scopeSnapshot.workspacePath &&
+          activeFilePathRef.current === scopeSnapshot.filePath
+        ) {
+          setActiveBlockedSignal(null);
+        }
+      } finally {
+        releaseInFlight();
+      }
+    };
+
+    void pollRuntimeSignals();
+    intervalId = setInterval(() => {
+      void pollRuntimeSignals();
+    }, 600);
+
+    return () => {
+      cancelled = true;
+      runtimeSignalInFlightRef.current = false;
+      runtimeSignalPendingRequestCountRef.current = 0;
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [activeFilePath, deepTraceScope, mode, runtimeSignalTimeoutMs, workspacePath]);
 
   const persistActiveFileContent = useCallback(
     async (content: string) => {
@@ -631,6 +869,8 @@ function EditorShell() {
       if (typeof resolvedPath === "string") {
         setMode("quick-insight");
         setRuntimeAvailability("unavailable");
+        setDeepTraceScope(null);
+        setActiveBlockedSignal(null);
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
@@ -677,6 +917,8 @@ function EditorShell() {
           setActiveFileContent(null);
           setMode("quick-insight");
           setRuntimeAvailability("unavailable");
+          setDeepTraceScope(null);
+          setActiveBlockedSignal(null);
           setFileError(response.error?.message ?? "Unable to open file");
           return;
         }
@@ -685,6 +927,8 @@ function EditorShell() {
         activeFilePathRef.current = relativePath;
         setActiveFileContent(response.data);
         setMode("quick-insight");
+        setDeepTraceScope(null);
+        setActiveBlockedSignal(null);
         if (isGoFile(relativePath)) {
           runtimeCheckRequestIdRef.current += 1;
           const requestId = runtimeCheckRequestIdRef.current;
@@ -726,6 +970,8 @@ function EditorShell() {
         if (workspacePathRef.current === startingPath) {
           setMode("quick-insight");
           setRuntimeAvailability("unavailable");
+          setDeepTraceScope(null);
+          setActiveBlockedSignal(null);
           setFileError("An unexpected error occurred while loading the file.");
         }
       } finally {
@@ -855,11 +1101,26 @@ function EditorShell() {
                           targetAnchor={counterpartAnchor}
                         />
                         <TraceBubble
-                          visible={isInlineActionsVisible}
-                          confidence={traceBubbleConfidence}
-                          label={traceBubbleLabel}
-                          anchorTop={Math.max(4, (interactionAnchor?.top ?? 24) - 28)}
-                          anchorLeft={interactionAnchor?.left ?? 12}
+                          visible={isTraceBubbleVisible}
+                          confidence={
+                            isBlockedConfirmedVisible
+                              ? "confirmed"
+                              : traceBubbleConfidence
+                          }
+                          label={isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
+                          blocked={isBlockedConfirmedVisible}
+                          reducedMotion={prefersReducedMotion}
+                          anchorTop={Math.max(
+                            4,
+                            (isBlockedConfirmedVisible
+                              ? deepTraceScope?.anchorTop ?? 24
+                              : interactionAnchor?.top ?? 24) - 28
+                          )}
+                          anchorLeft={
+                            isBlockedConfirmedVisible
+                              ? deepTraceScope?.anchorLeft ?? 12
+                              : interactionAnchor?.left ?? 12
+                          }
                         />
                         <InlineActions
                           visible={isInlineActionsVisible}

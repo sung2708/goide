@@ -121,4 +121,8 @@ export type RuntimeSignal = {
   status: string;
   waitReason: string;
   confidence: ConcurrencyConfidence.Confirmed;
+  scopeKey: string;
+  relativePath: string;
+  line: number;
+  column: number;
 };

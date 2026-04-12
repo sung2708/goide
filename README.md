@@ -15,3 +15,15 @@ $env:CC="cl"
 $env:CXX="cl"
 cargo test
 ```
+
+## Runtime Signal Timeout
+
+Deep Trace runtime polling timeout can be configured with:
+
+- `VITE_RUNTIME_SIGNAL_TIMEOUT_MS`
+
+Behavior:
+
+- Default: `450` ms
+- Accepted range: `100` to `5000` ms
+- Out-of-range or non-numeric values fall back to the default
