@@ -659,6 +659,8 @@ function EditorShell() {
           setActiveFilePath(relativePath);
           activeFilePathRef.current = relativePath;
           setActiveFileContent(null);
+          setMode("quick-insight");
+          setRuntimeAvailability("unavailable");
           setFileError(response.error?.message ?? "Unable to open file");
           return;
         }
@@ -706,6 +708,8 @@ function EditorShell() {
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
+          setMode("quick-insight");
+          setRuntimeAvailability("unavailable");
           setFileError("An unexpected error occurred while loading the file.");
         }
       } finally {
