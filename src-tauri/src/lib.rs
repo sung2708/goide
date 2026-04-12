@@ -19,7 +19,8 @@ pub fn run() {
             ui_bridge::commands::write_workspace_file,
             ui_bridge::commands::run_workspace_file,
             ui_bridge::commands::analyze_active_file_concurrency,
-            ui_bridge::commands::get_active_file_diagnostics
+            ui_bridge::commands::get_active_file_diagnostics,
+            ui_bridge::commands::get_active_file_completions
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

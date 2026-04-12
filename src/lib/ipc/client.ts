@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   AnalyzeConcurrencyRequest,
   ApiResponse,
+  CompletionItem,
+  CompletionRequest,
   ConcurrencyConstruct,
   EditorDiagnostic,
   FsEntry,
@@ -69,5 +71,13 @@ export async function fetchWorkspaceDiagnostics(
   return invoke<ApiResponse<EditorDiagnostic[]>>("get_active_file_diagnostics", {
     workspaceRoot,
     relativePath,
+  });
+}
+
+export async function fetchWorkspaceCompletions(
+  request: CompletionRequest
+): Promise<ApiResponse<CompletionItem[]>> {
+  return invoke<ApiResponse<CompletionItem[]>>("get_active_file_completions", {
+    request,
   });
 }
