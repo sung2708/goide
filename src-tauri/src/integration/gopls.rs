@@ -61,6 +61,23 @@ pub struct FileDiagnostic {
     pub range: DiagnosticRange,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionRange {
+    pub start_line: usize,
+    pub start_column: usize,
+    pub end_line: usize,
+    pub end_column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionItem {
+    pub label: String,
+    pub detail: Option<String>,
+    pub kind: Option<String>,
+    pub insert_text: String,
+    pub range: Option<CompletionRange>,
+}
+
 fn is_mutex_name(text: &str) -> bool {
     text == "Mutex" || text.ends_with(".Mutex")
 }
@@ -722,6 +739,47 @@ pub fn analyze_file_diagnostics(workspace_root: &str, relative_path: &str) -> Re
     Ok(results)
 }
 
+pub fn get_file_completions(
+    workspace_root: &str,
+    relative_path: &str,
+    line: usize,
+    column: usize,
+    _trigger_character: Option<&str>,
+) -> Result<Vec<CompletionItem>> {
+    let location = format!("{relative_path}:{line}:{column}");
+    let output = Command::new("gopls")
+        .arg("completion")
+        .arg(location)
+        .current_dir(workspace_root)
+        .output();
+
+    let output = match output {
+        Ok(out) => out,
+        Err(err) => {
+            if err.kind() == io::ErrorKind::NotFound {
+                return Ok(Vec::new());
+            }
+            return Err(err).context("failed to execute gopls completion command");
+        }
+    };
+
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    if output.stdout.is_empty() && output.stderr.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let output_bytes = if !output.stdout.is_empty() {
+        &output.stdout
+    } else {
+        &output.stderr
+    };
+
+    Ok(parse_gopls_completion_output(output_bytes))
+}
+
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
     let output = Command::new("gopls")
         .arg("symbols")
@@ -791,6 +849,148 @@ fn parse_gopls_symbols_output(stdout: &[u8]) -> Result<Vec<DetectedConstruct>> {
     }
 
     Ok(results)
+}
+
+fn parse_gopls_completion_output(output_bytes: &[u8]) -> Vec<CompletionItem> {
+    let output = String::from_utf8_lossy(output_bytes);
+    let mut items = Vec::new();
+
+    for raw_line in output.lines() {
+        let line = raw_line.trim();
+        if line.is_empty()
+            || line.eq_ignore_ascii_case("completion candidates:")
+            || line.eq_ignore_ascii_case("no completions found")
+        {
+            continue;
+        }
+
+        let without_index = strip_completion_index_prefix(line);
+        let (head, detail) = split_completion_line(without_index);
+        if head.is_empty() {
+            continue;
+        }
+
+        let label = extract_completion_label(head);
+        if label.is_empty() {
+            continue;
+        }
+
+        let insert_text = normalize_insert_text(&label);
+        let kind = infer_completion_kind(detail.as_deref());
+
+        items.push(CompletionItem {
+            label: label.to_string(),
+            detail,
+            kind,
+            insert_text,
+            range: None,
+        });
+    }
+
+    items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
+    items
+}
+
+fn strip_completion_index_prefix(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut idx = 0usize;
+
+    while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+        idx += 1;
+    }
+    while idx < bytes.len() && bytes[idx].is_ascii_digit() {
+        idx += 1;
+    }
+    if idx > 0 && idx < bytes.len() && bytes[idx] == b'.' {
+        idx += 1;
+        while idx < bytes.len() && bytes[idx].is_ascii_whitespace() {
+            idx += 1;
+        }
+        return &line[idx..];
+    }
+    line
+}
+
+fn split_completion_line(line: &str) -> (&str, Option<String>) {
+    if let Some((left, right)) = line.split_once('\t') {
+        let detail = right.trim();
+        return (
+            left.trim(),
+            if detail.is_empty() {
+                None
+            } else {
+                Some(detail.to_string())
+            },
+        );
+    }
+
+    if let Some((left, right)) = split_on_multi_space(line) {
+        let detail = right.trim();
+        return (
+            left.trim(),
+            if detail.is_empty() {
+                None
+            } else {
+                Some(detail.to_string())
+            },
+        );
+    }
+
+    (line.trim(), None)
+}
+
+fn split_on_multi_space(line: &str) -> Option<(&str, &str)> {
+    let bytes = line.as_bytes();
+    let mut i = 0usize;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b' ' && bytes[i + 1] == b' ' {
+            let left = &line[..i];
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] == b' ' {
+                j += 1;
+            }
+            let right = &line[j..];
+            return Some((left, right));
+        }
+        i += 1;
+    }
+    None
+}
+
+fn extract_completion_label(head: &str) -> &str {
+    if let Some((label, _)) = head.split_once(':') {
+        let trimmed = label.trim();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+    head.trim()
+}
+
+fn normalize_insert_text(label: &str) -> String {
+    let token = label
+        .split(|ch: char| ch == '(' || ch == ' ' || ch == '\t')
+        .next()
+        .unwrap_or(label)
+        .trim();
+    if token.is_empty() {
+        label.to_string()
+    } else {
+        token.to_string()
+    }
+}
+
+fn infer_completion_kind(detail: Option<&str>) -> Option<String> {
+    let detail = detail?.trim();
+    if detail.is_empty() {
+        return None;
+    }
+
+    let first = detail
+        .split_whitespace()
+        .next()
+        .map(|v| v.to_ascii_lowercase())?;
+    Some(first)
 }
 
 fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, output_bytes: &[u8]) -> Result<Vec<FileDiagnostic>> {
@@ -1403,5 +1603,50 @@ subdir/main.go:3:1: error in subdir
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "error in root");
+    }
+
+    #[test]
+    fn parses_gopls_completion_output_with_tab_separated_detail() {
+        let output = r#"
+completion candidates:
+1. Println	func(a ...any) (n int, err error)
+2. Printf	func(format string, a ...any) (n int, err error)
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].label, "Println");
+        assert_eq!(items[0].insert_text, "Println");
+        assert_eq!(
+            items[0].detail.as_deref(),
+            Some("func(a ...any) (n int, err error)")
+        );
+        assert_eq!(items[0].kind.as_deref(), Some("func(a"));
+    }
+
+    #[test]
+    fn parses_gopls_completion_output_with_multi_space_detail() {
+        let output = r#"
+1. mutex   var mutex sync.Mutex
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "mutex");
+        assert_eq!(items[0].insert_text, "mutex");
+        assert_eq!(items[0].detail.as_deref(), Some("var mutex sync.Mutex"));
+        assert_eq!(items[0].kind.as_deref(), Some("var"));
+    }
+
+    #[test]
+    fn deduplicates_completion_candidates_by_label_and_detail() {
+        let output = r#"
+1. Println	func(a ...any) (n int, err error)
+2. Println	func(a ...any) (n int, err error)
+"#;
+
+        let items = parse_gopls_completion_output(output.as_bytes());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Println");
     }
 }

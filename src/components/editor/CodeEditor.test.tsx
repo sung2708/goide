@@ -42,6 +42,34 @@ const mockView = {
 };
 
 const setDiagnosticsMock = vi.fn();
+const autocompletionMock = vi.fn();
+const startCompletionMock = vi.fn((_view: unknown) => undefined);
+const acceptCompletionMock = vi.fn((_view: unknown) => false);
+let latestAutocompleteOverride:
+  | ((context: {
+      pos: number;
+      explicit: boolean;
+      state: {
+        sliceDoc: (from: number, to: number) => string;
+        doc: {
+          lineAt: (pos: number) => { number: number; from: number };
+        };
+      };
+    }) => Promise<{
+      from: number;
+      options: Array<{
+        label: string;
+        detail?: string;
+        type?: string;
+        apply: (
+          view: { dispatch: (args: unknown) => void },
+          completion: unknown,
+          from: number,
+          to: number
+        ) => void;
+      }>;
+    } | null>)
+  | null = null;
 
 vi.mock("@codemirror/lint", () => ({
   linter: vi.fn(() => ({ extension: "mock-linter" })),
@@ -50,6 +78,17 @@ vi.mock("@codemirror/lint", () => ({
     setDiagnosticsMock(...args);
     return { effects: [] };
   },
+}));
+
+vi.mock("@codemirror/autocomplete", () => ({
+  autocompletion: (config: { override?: unknown[] }) => {
+    latestAutocompleteOverride =
+      (config.override?.[0] as typeof latestAutocompleteOverride) ?? null;
+    autocompletionMock(config);
+    return { extension: "mock-autocompletion" };
+  },
+  startCompletion: (view: unknown) => startCompletionMock(view),
+  acceptCompletion: (view: unknown) => acceptCompletionMock(view),
 }));
 
 vi.mock("@uiw/react-codemirror", () => ({
@@ -404,5 +443,89 @@ describe("CodeEditor", () => {
     // Container rect is { top: 0, left: 0 } in JSDOM typically
     
     expect(counterpartAnchorSpy).toHaveBeenCalledWith(expect.objectContaining({ top: 44 }));
+  });
+
+  it("requests completions on explicit trigger and applies selected candidate", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "func(a ...any)",
+        kind: "func",
+        insertText: "Println",
+        range: null,
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package main\nfmt.\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    expect(latestAutocompleteOverride).toBeTruthy();
+    const result = await latestAutocompleteOverride?.({
+      pos: 13,
+      explicit: true,
+      state: {
+        sliceDoc: () => "",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+        },
+      },
+    });
+
+    expect(requestCompletions).toHaveBeenCalledWith({
+      line: 2,
+      column: 2,
+      explicit: true,
+      triggerCharacter: null,
+    });
+    expect(result?.options[0].label).toBe("Println");
+
+    const dispatchMock = vi.fn();
+    result?.options[0].apply(
+      { dispatch: dispatchMock },
+      {},
+      13,
+      13
+    );
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.objectContaining({
+          insert: "Println",
+        }),
+      })
+    );
+  });
+
+  it("requests completions when dot is typed without explicit trigger", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([]);
+
+    render(
+      <CodeEditor
+        value={"package main\nfmt.\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    expect(latestAutocompleteOverride).toBeTruthy();
+    await latestAutocompleteOverride?.({
+      pos: 13,
+      explicit: false,
+      state: {
+        sliceDoc: () => ".",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+        },
+      },
+    });
+
+    expect(requestCompletions).toHaveBeenCalledWith({
+      line: 2,
+      column: 2,
+      explicit: false,
+      triggerCharacter: ".",
+    });
   });
 });

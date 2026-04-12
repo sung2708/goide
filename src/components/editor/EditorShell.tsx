@@ -8,9 +8,14 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
+  fetchWorkspaceCompletions,
   fetchWorkspaceDiagnostics,
 } from "../../lib/ipc/client";
-import type { EditorDiagnostic, RunOutputPayload } from "../../lib/ipc/types";
+import type {
+  CompletionItem,
+  EditorDiagnostic,
+  RunOutputPayload,
+} from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -22,7 +27,10 @@ import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek, { type SummaryItem } from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
-import CodeEditor, { type JumpRequest } from "./CodeEditor";
+import CodeEditor, {
+  type EditorCompletionRequest,
+  type JumpRequest,
+} from "./CodeEditor";
 
 const EDITOR_BG = "bg-[#1e1e2e]";
 const PANEL_BG = "bg-[#181825]";
@@ -82,6 +90,7 @@ function EditorShell() {
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
   const diagnosticsRequestIdRef = useRef(0);
+  const completionRequestIdRef = useRef(0);
 
   useEffect(() => {
     setJumpRequest(null);
@@ -323,6 +332,53 @@ function EditorShell() {
     },
     [persistActiveFileContent]
   );
+
+  const handleRequestCompletions = useCallback(
+    async (request: EditorCompletionRequest): Promise<CompletionItem[]> => {
+      const currentWorkspace = workspacePathRef.current;
+      const currentPath = activeFilePathRef.current;
+      if (!currentWorkspace || !currentPath || !isGoFile(currentPath)) {
+        return [];
+      }
+
+      const requestId = completionRequestIdRef.current + 1;
+      completionRequestIdRef.current = requestId;
+
+      try {
+        const response = await fetchWorkspaceCompletions({
+          workspaceRoot: currentWorkspace,
+          relativePath: currentPath,
+          line: request.line,
+          column: request.column,
+          triggerCharacter: request.triggerCharacter ?? null,
+        });
+
+        if (
+          requestId !== completionRequestIdRef.current ||
+          workspacePathRef.current !== currentWorkspace ||
+          activeFilePathRef.current !== currentPath
+        ) {
+          return [];
+        }
+
+        if (!response.ok || !response.data) {
+          return [];
+        }
+
+        return response.data;
+      } catch (_error) {
+        if (
+          requestId === completionRequestIdRef.current &&
+          workspacePathRef.current === currentWorkspace &&
+          activeFilePathRef.current === currentPath
+        ) {
+          return [];
+        }
+        return [];
+      }
+    },
+    []
+  );
   
   const handleRunFile = useCallback(async () => {
     if (!workspacePath || !activeFilePath) return;
@@ -498,6 +554,7 @@ function EditorShell() {
         setActiveFilePath(null);
         setActiveFileContent(null);
         diagnosticsRequestIdRef.current += 1;
+        completionRequestIdRef.current += 1;
         setDiagnostics([]);
         setSelectedLine(null);
         setInteractionAnchor(null);
@@ -522,6 +579,7 @@ function EditorShell() {
       setSelectedLine(null);
       setInteractionAnchor(null);
       diagnosticsRequestIdRef.current += 1;
+      completionRequestIdRef.current += 1;
       setDiagnostics([]);
 
       try {
@@ -708,6 +766,7 @@ function EditorShell() {
                             onViewportRangeChange={setVisibleRange}
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
+                            onRequestCompletions={handleRequestCompletions}
                             diagnostics={diagnostics}
                           />
                         ) : (

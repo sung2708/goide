@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import { EditorState } from "@codemirror/state";
 import {
@@ -8,8 +8,15 @@ import {
 import { EditorView, keymap } from "@codemirror/view";
 import { history, historyKeymap } from "@codemirror/commands";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
+import {
+  acceptCompletion,
+  autocompletion,
+  startCompletion,
+  type CompletionContext,
+  type CompletionResult,
+} from "@codemirror/autocomplete";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
-import type { EditorDiagnostic } from "../../lib/ipc/types";
+import type { CompletionItem, EditorDiagnostic } from "../../lib/ipc/types";
 
 type InteractionAnchor = {
   top: number;
@@ -19,6 +26,13 @@ type InteractionAnchor = {
 export type JumpRequest = {
   line: number;
   requestId: number;
+};
+
+export type EditorCompletionRequest = {
+  line: number;
+  column: number;
+  explicit: boolean;
+  triggerCharacter?: string | null;
 };
 
 type CodeEditorProps = {
@@ -35,6 +49,9 @@ type CodeEditorProps = {
   onViewportRangeChange?: (range: VisibleLineRange | null) => void;
   onSave?: (content: string) => void;
   onChange?: (value: string) => void;
+  onRequestCompletions?: (
+    request: EditorCompletionRequest
+  ) => Promise<CompletionItem[]>;
   editable?: boolean;
   diagnostics?: EditorDiagnostic[];
 };
@@ -53,9 +70,92 @@ function CodeEditor({
   onViewportRangeChange,
   onSave,
   onChange,
+  onRequestCompletions,
   editable = true,
   diagnostics = [],
 }: CodeEditorProps) {
+  const resolveCompletionRange = (
+    view: EditorView,
+    fallbackPos: number,
+    item: CompletionItem,
+    requestLine: number
+  ) => {
+    const range = item.range;
+    if (!range || range.startLine !== requestLine || range.endLine !== requestLine) {
+      return { from: fallbackPos, to: fallbackPos };
+    }
+
+    const lineInfo = view.state.doc.line(requestLine);
+    const lineLength = lineInfo.to - lineInfo.from;
+    const fromOffset = Math.min(
+      lineLength,
+      Math.max(0, range.startColumn - 1)
+    );
+    const toOffset = Math.min(
+      lineLength,
+      Math.max(fromOffset, range.endColumn - 1)
+    );
+
+    return {
+      from: lineInfo.from + fromOffset,
+      to: lineInfo.from + toOffset,
+    };
+  };
+
+  const completionSource = useCallback(
+    async (context: CompletionContext): Promise<CompletionResult | null> => {
+      if (!onRequestCompletions) {
+        return null;
+      }
+
+      const triggerCharacter = context.pos > 0
+        ? context.state.sliceDoc(context.pos - 1, context.pos)
+        : "";
+      const shouldTriggerByDot = triggerCharacter === ".";
+      if (!context.explicit && !shouldTriggerByDot) {
+        return null;
+      }
+
+      const lineInfo = context.state.doc.lineAt(context.pos);
+      const request: EditorCompletionRequest = {
+        line: lineInfo.number,
+        column: Math.max(1, context.pos - lineInfo.from + 1),
+        explicit: context.explicit,
+        triggerCharacter: shouldTriggerByDot ? "." : null,
+      };
+
+      const items = await onRequestCompletions(request);
+      if (items.length === 0) {
+        return null;
+      }
+
+      return {
+        from: context.pos,
+        options: items.map((item) => ({
+          label: item.label,
+          detail: item.detail ?? undefined,
+          type: item.kind ?? undefined,
+          apply: (view, _completion, from, to) => {
+            const range = resolveCompletionRange(
+              view,
+              from,
+              item,
+              request.line
+            );
+            view.dispatch({
+              changes: {
+                from: range.from,
+                to: Math.max(range.to, to),
+                insert: item.insertText || item.label,
+              },
+            });
+          },
+        })),
+      };
+    },
+    [onRequestCompletions]
+  );
+
   const buildCodeMirrorDiagnostics = (view: EditorView): Diagnostic[] => {
     if (diagnostics.length === 0) {
       return [];
@@ -99,8 +199,24 @@ function CodeEditor({
     history(),
     lintGutter(),
     linter(() => []),
+    autocompletion({
+      override: [completionSource],
+      activateOnTyping: true,
+      defaultKeymap: false,
+    }),
     keymap.of([
       ...historyKeymap,
+      {
+        key: "Ctrl-Space",
+        run: (view) => {
+          startCompletion(view);
+          return true;
+        },
+      },
+      {
+        key: "Enter",
+        run: (view) => acceptCompletion(view),
+      },
       {
         key: "Mod-s",
         run: (view) => {
@@ -151,7 +267,14 @@ function CodeEditor({
         });
       }
     })
-  ], [counterpartLine, editable, onCounterpartAnchorChange, onInteractionAnchorChange, onSave]);
+  ], [
+    completionSource,
+    counterpartLine,
+    editable,
+    onCounterpartAnchorChange,
+    onInteractionAnchorChange,
+    onSave,
+  ]);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
