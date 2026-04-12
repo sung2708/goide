@@ -95,6 +95,7 @@ pub struct CompletionRequestDto {
     pub line: usize,
     pub column: usize,
     pub trigger_character: Option<String>,
+    pub file_content: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

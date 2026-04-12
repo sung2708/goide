@@ -49,10 +49,12 @@ let latestAutocompleteOverride:
   | ((context: {
       pos: number;
       explicit: boolean;
+      matchBefore: (re: RegExp) => { from: number; to: number; text: string } | null;
       state: {
         sliceDoc: (from: number, to: number) => string;
         doc: {
           lineAt: (pos: number) => { number: number; from: number };
+          toString: () => string;
         };
       };
     }) => Promise<{
@@ -467,10 +469,12 @@ describe("CodeEditor", () => {
     const result = await latestAutocompleteOverride?.({
       pos: 13,
       explicit: true,
+      matchBefore: () => null,
       state: {
         sliceDoc: () => "",
         doc: {
           lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nfmt.\n",
         },
       },
     });
@@ -480,12 +484,21 @@ describe("CodeEditor", () => {
       column: 2,
       explicit: true,
       triggerCharacter: null,
+      fileContent: "package main\nfmt.\n",
     });
     expect(result?.options[0].label).toBe("Println");
 
     const dispatchMock = vi.fn();
     result?.options[0].apply(
-      { dispatch: dispatchMock },
+      {
+        dispatch: dispatchMock,
+        state: {
+          doc: {
+            lineAt: () => ({ from: 12 }),
+          },
+          sliceDoc: () => "",
+        },
+      },
       {},
       13,
       13
@@ -513,10 +526,12 @@ describe("CodeEditor", () => {
     await latestAutocompleteOverride?.({
       pos: 13,
       explicit: false,
+      matchBefore: () => null,
       state: {
         sliceDoc: () => ".",
         doc: {
           lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nfmt.\n",
         },
       },
     });
@@ -526,6 +541,65 @@ describe("CodeEditor", () => {
       column: 2,
       explicit: false,
       triggerCharacter: ".",
+      fileContent: "package main\nfmt.\n",
     });
+  });
+
+  it("replaces typed identifier prefix when completion range is absent", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "func(a ...any)",
+        kind: "func",
+        insertText: "Println",
+        range: null,
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package main\nPrin\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const result = await latestAutocompleteOverride?.({
+      pos: 16,
+      explicit: true,
+      matchBefore: () => ({ from: 12, to: 16, text: "Prin" }),
+      state: {
+        sliceDoc: () => "",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nPrin\n",
+        },
+      },
+    });
+
+    const dispatchMock = vi.fn();
+    result?.options[0].apply(
+      {
+        dispatch: dispatchMock,
+        state: {
+          doc: {
+            lineAt: () => ({ from: 12 }),
+          },
+          sliceDoc: () => "Prin",
+        },
+      },
+      {},
+      16,
+      16
+    );
+
+    expect(dispatchMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changes: expect.objectContaining({
+          from: 12,
+          to: 16,
+          insert: "Println",
+        }),
+      })
+    );
   });
 });

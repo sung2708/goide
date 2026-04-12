@@ -50,6 +50,7 @@ export type CompletionRequest = {
   line: number;
   column: number;
   triggerCharacter?: string | null;
+  fileContent?: string | null;
 };
 
 export type CompletionRange = {

@@ -3,13 +3,13 @@ use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
     AnalyzeConcurrencyRequest, ApiResponse, ChannelOperationDto, CompletionItemDto,
-    CompletionRangeDto, CompletionRequestDto, ConcurrencyConfidenceDto,
-    ConcurrencyConstructDto, ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto,
-    EditorDiagnosticDto, FsEntryDto,
+    CompletionRangeDto, CompletionRequestDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
+    ConcurrencyConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
+    FsEntryDto,
 };
 use std::path::{Component, Path};
-use tokio::sync::Mutex;
 use std::sync::Arc;
+use tokio::sync::Mutex;
 
 /// Global shared handle to the currently-running `go run` process.
 /// A `OnceLock` gives us a lazily initialized, Send + Sync singleton without unsafe.
@@ -53,8 +53,10 @@ pub async fn read_workspace_file(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<String> {
-    let result = tauri::async_runtime::spawn_blocking(move || fs::read_file(&workspace_root, &relative_path))
-        .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::read_file(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(contents)) => ApiResponse::ok(contents),
@@ -94,8 +96,14 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
 
     let handle = get_process_handle();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) =
-            run_go_file(app.clone(), workspace_root, relative_path, run_id.clone(), handle).await
+        if let Err(e) = run_go_file(
+            app.clone(),
+            workspace_root,
+            relative_path,
+            run_id.clone(),
+            handle,
+        )
+        .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
             eprintln!("[goide] run_go_file error: {e:#}");
@@ -211,6 +219,7 @@ pub async fn get_active_file_completions(
             request.line,
             request.column,
             request.trigger_character.as_deref(),
+            request.file_content.as_deref(),
         )
     })
     .await;
@@ -251,7 +260,10 @@ fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     }
 
     for component in path.components() {
-        if matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_)) {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
             return Err("relative path must stay within workspace".to_string());
         }
     }

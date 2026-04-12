@@ -64,6 +64,7 @@ vi.mock("./CodeEditor", () => ({
       column: number;
       explicit: boolean;
       triggerCharacter?: string | null;
+      fileContent?: string | null;
     }) => Promise<CompletionItem[]>;
   }) => {
     const [label, setLabel] = useState("none");
@@ -121,6 +122,7 @@ describe("EditorShell completions", () => {
         line: 1,
         column: 1,
         triggerCharacter: null,
+        fileContent: "package main\n",
       })
     );
     expect(screen.getByTestId("completion-label")).toHaveTextContent("Println");

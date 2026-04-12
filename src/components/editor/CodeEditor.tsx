@@ -33,6 +33,7 @@ export type EditorCompletionRequest = {
   column: number;
   explicit: boolean;
   triggerCharacter?: string | null;
+  fileContent?: string | null;
 };
 
 type CodeEditorProps = {
@@ -76,13 +77,24 @@ function CodeEditor({
 }: CodeEditorProps) {
   const resolveCompletionRange = (
     view: EditorView,
-    fallbackPos: number,
+    fallbackFrom: number,
+    fallbackTo: number,
     item: CompletionItem,
     requestLine: number
   ) => {
     const range = item.range;
     if (!range || range.startLine !== requestLine || range.endLine !== requestLine) {
-      return { from: fallbackPos, to: fallbackPos };
+      const cursorPos = Math.max(fallbackFrom, fallbackTo);
+      const lineInfo = view.state.doc.lineAt(cursorPos);
+      const beforeCursor = view.state.sliceDoc(lineInfo.from, cursorPos);
+      const prefixMatch = beforeCursor.match(/[A-Za-z_][A-Za-z0-9_]*$/);
+      if (!prefixMatch) {
+        return { from: fallbackFrom, to: cursorPos };
+      }
+      return {
+        from: cursorPos - prefixMatch[0].length,
+        to: cursorPos,
+      };
     }
 
     const lineInfo = view.state.doc.line(requestLine);
@@ -122,6 +134,7 @@ function CodeEditor({
         column: Math.max(1, context.pos - lineInfo.from + 1),
         explicit: context.explicit,
         triggerCharacter: shouldTriggerByDot ? "." : null,
+        fileContent: context.state.doc.toString(),
       };
 
       const items = await onRequestCompletions(request);
@@ -129,8 +142,11 @@ function CodeEditor({
         return null;
       }
 
+      const prefixMatch = context.matchBefore(/[A-Za-z_][A-Za-z0-9_]*/);
+      const completionFrom = prefixMatch ? prefixMatch.from : context.pos;
+
       return {
-        from: context.pos,
+        from: completionFrom,
         options: items.map((item) => ({
           label: item.label,
           detail: item.detail ?? undefined,
@@ -139,6 +155,7 @@ function CodeEditor({
             const range = resolveCompletionRange(
               view,
               from,
+              to,
               item,
               request.line
             );

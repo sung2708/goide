@@ -351,6 +351,10 @@ function EditorShell() {
           line: request.line,
           column: request.column,
           triggerCharacter: request.triggerCharacter ?? null,
+          fileContent:
+            request.fileContent ??
+            latestEditorContentRef.current ??
+            activeFileContent,
         });
 
         if (
@@ -377,7 +381,7 @@ function EditorShell() {
         return [];
       }
     },
-    []
+    [activeFileContent]
   );
   
   const handleRunFile = useCallback(async () => {
