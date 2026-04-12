@@ -6,6 +6,8 @@ type TraceBubbleProps = {
   label: string;
   anchorTop?: number | null;
   anchorLeft?: number | null;
+  blocked?: boolean;
+  reducedMotion?: boolean;
 };
 
 const CONFIDENCE_CONFIG: Record<
@@ -35,6 +37,8 @@ function TraceBubble({
   label,
   anchorTop = null,
   anchorLeft = null,
+  blocked = false,
+  reducedMotion = false,
 }: TraceBubbleProps) {
   if (!visible) {
     return null;
@@ -73,6 +77,20 @@ function TraceBubble({
         >
           {config.chip}
         </span>
+        {blocked ? (
+          <>
+            <span className="opacity-40">·</span>
+            <span className="inline-flex items-center gap-1 uppercase tracking-[0.12em] text-[10px] text-[var(--goide-signal-blocked,#f38ba8)]">
+              <span
+                data-testid="trace-bubble-blocked-indicator"
+                className={`inline-block h-1.5 w-1.5 rounded-full bg-[var(--goide-signal-blocked,#f38ba8)] ${
+                  reducedMotion ? "" : "animate-pulse"
+                }`}
+              />
+              Blocked
+            </span>
+          </>
+        ) : null}
       </div>
     </div>
   );

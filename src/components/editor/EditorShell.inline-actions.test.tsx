@@ -9,6 +9,7 @@ const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
 const activateScopedDeepTraceMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
+const getRuntimeSignalsMock = vi.fn();
 let mockFileToOpen = "main.go";
 let mockConstructs: LensConstruct[] = [
   {
@@ -40,6 +41,7 @@ vi.mock("../../lib/ipc/client", async () => {
       activateScopedDeepTraceMock(...args),
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
+    getRuntimeSignals: (...args: unknown[]) => getRuntimeSignalsMock(...args),
   };
 });
 
@@ -100,6 +102,7 @@ vi.mock("./CodeEditor", () => ({
 
 describe("EditorShell inline actions", () => {
   beforeEach(() => {
+    vi.useRealTimers();
     vi.clearAllMocks();
     mockFileToOpen = "main.go";
     activateScopedDeepTraceMock.mockResolvedValue({
@@ -109,6 +112,10 @@ describe("EditorShell inline actions", () => {
     getRuntimeAvailabilityMock.mockResolvedValue({
       ok: true,
       data: { runtimeAvailability: "available" },
+    });
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [],
     });
   });
 
@@ -493,5 +500,424 @@ describe("EditorShell inline actions", () => {
     await user.click(deepTraceButton);
     expect(activateScopedDeepTraceMock).not.toHaveBeenCalled();
     expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
+  });
+
+  it("does not fetch runtime signals while mode stays quick insight", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 1,
+        symbol: null,
+        scopeKey: null,
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
+    });
+    expect(getRuntimeSignalsMock).not.toHaveBeenCalled();
+  });
+
+  it("renders confirmed blocked signal when deep trace runtime evidence is present", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 1,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(getRuntimeSignalsMock).toHaveBeenCalled();
+      expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
+      expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    });
+  });
+
+  it("clears blocked signal when runtime evidence disappears", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            threadId: 1,
+            status: "chan receive",
+            waitReason: "chan receive",
+            confidence: ConcurrencyConfidence.Confirmed,
+            scopeKey: "default-scope",
+            relativePath: "main.go",
+            line: 1,
+            column: 4,
+          },
+        ],
+      })
+      .mockResolvedValue({
+        ok: true,
+        data: [],
+      });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+    });
+
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(
+        screen.queryByTestId("trace-bubble-blocked-indicator")
+      ).not.toBeInTheDocument();
+    });
+  });
+
+  it("renders a single blocked indicator when multiple matching runtime signals exist", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 1,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+        },
+        {
+          threadId: 2,
+          status: "chan send",
+          waitReason: "chan send",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(getRuntimeSignalsMock).toHaveBeenCalled();
+      expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
+    });
+    expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+  });
+
+  it("does not render blocked confirmed signal when runtime signal location differs", async () => {
+    mockConstructs = [
+      {
+        kind: "mutex",
+        line: 1,
+        column: 2,
+        symbol: "mu",
+        scopeKey: "flow-B",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 3,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 2,
+          column: 2,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(getRuntimeSignalsMock).toHaveBeenCalled();
+      expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
+    });
+    expect(
+      screen.queryByTestId("trace-bubble-blocked-indicator")
+    ).not.toBeInTheDocument();
+  });
+
+  it("renders blocked signal when scope key drifts but location still matches", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 4,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "drifted-scope-key",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+    });
+  });
+
+  it("matches runtime signal path despite slash-format differences", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 5,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "dir\\main.go",
+          line: 1,
+          column: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    mockFileToOpen = "dir/main.go";
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+    });
+  });
+
+  it("recovers from timed-out runtime polling and continues polling", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    let callCount = 0;
+    getRuntimeSignalsMock.mockImplementation(() => {
+      callCount += 1;
+      if (callCount === 1) {
+        return new Promise(() => undefined);
+      }
+      return Promise.resolve({ ok: true, data: [] });
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(
+      () => {
+        expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 2500 }
+    );
+  });
+
+  it("ignores stale runtime responses after switching active file", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [];
+    getRuntimeSignalsMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          setTimeout(
+            () =>
+              resolve({
+                ok: true,
+                data: [
+                  {
+                    threadId: 1,
+                    status: "chan receive",
+                    waitReason: "chan receive",
+                    confidence: ConcurrencyConfidence.Confirmed,
+                    scopeKey: "default-scope",
+                    relativePath: "main.go",
+                    line: 1,
+                    column: 4,
+                  },
+                ],
+              }),
+            200
+          );
+        })
+    );
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    mockFileToOpen = "other.go";
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+
+    await waitFor(
+      () => {
+        expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
+      },
+      { timeout: 1500 }
+    );
+    expect(
+      screen.queryByTestId("trace-bubble-blocked-indicator")
+    ).not.toBeInTheDocument();
   });
 });

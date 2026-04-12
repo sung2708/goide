@@ -127,6 +127,10 @@ pub struct RuntimeSignalDto {
     pub status: String,
     pub wait_reason: String,
     pub confidence: ConcurrencyConfidenceDto,
+    pub scope_key: String,
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

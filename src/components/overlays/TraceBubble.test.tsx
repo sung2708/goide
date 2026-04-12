@@ -125,4 +125,38 @@ describe("TraceBubble", () => {
     expect(bubble.style.top).toBe("0px");
     expect(bubble.style.left).toBe("0px");
   });
+
+  it("renders blocked indicator when blocked runtime state is active", () => {
+    render(
+      <TraceBubble
+        visible={true}
+        confidence="confirmed"
+        label="Blocked Op"
+        blocked={true}
+        anchorTop={40}
+        anchorLeft={10}
+      />
+    );
+
+    expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeDefined();
+    expect(screen.getByText("Blocked")).toBeDefined();
+  });
+
+  it("disables pulse animation for blocked indicator when reduced motion is enabled", () => {
+    render(
+      <TraceBubble
+        visible={true}
+        confidence="confirmed"
+        label="Blocked Op"
+        blocked={true}
+        reducedMotion={true}
+        anchorTop={40}
+        anchorLeft={10}
+      />
+    );
+
+    expect(screen.getByTestId("trace-bubble-blocked-indicator").className).not.toContain(
+      "animate-pulse"
+    );
+  });
 });
