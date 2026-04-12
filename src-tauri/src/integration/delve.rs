@@ -138,13 +138,20 @@ impl DapClient {
         let target_package_dir = canonical_target
             .parent()
             .ok_or_else(|| anyhow!("target file has no parent directory"))?;
+        let launch_program = match mode {
+            // Debug mode expects a runnable package. Point at workspace root to
+            // avoid failing when the selected file sits in a non-main package.
+            LaunchMode::Debug => canonical_root.clone(),
+            // Test mode should continue to scope execution to the selected file's package.
+            LaunchMode::Test => target_package_dir.to_path_buf(),
+        };
 
         let response = self
             .request(
                 "launch",
                 json!({
                     "mode": mode_text,
-                    "program": target_package_dir.to_string_lossy().to_string(),
+                    "program": launch_program.to_string_lossy().to_string(),
                     "cwd": canonical_root.to_string_lossy().to_string(),
                     "stopOnEntry": false
                 }),
@@ -482,7 +489,7 @@ mod tests {
         fs::create_dir_all(&package_dir).expect("create package dir");
         let main_go = package_dir.join("main.go");
         fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
-        let expected_program = package_dir.to_string_lossy().to_string();
+        let expected_program = temp_workspace.to_string_lossy().to_string();
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");
@@ -557,6 +564,79 @@ mod tests {
         server_task.await.expect("server task");
 
         assert_eq!(seq_counter.load(Ordering::SeqCst), 4);
+    }
+
+    #[tokio::test]
+    async fn dap_client_launch_test_mode_uses_target_package_dir() {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind mock dap listener: {error}"),
+        };
+        let addr = listener.local_addr().expect("local addr");
+        let temp_workspace = create_temp_workspace("dap_test_launch_workspace");
+        let package_dir = temp_workspace.join("internal").join("workers");
+        fs::create_dir_all(&package_dir).expect("create package dir");
+        let test_file = package_dir.join("worker_test.go");
+        fs::write(&test_file, "package workers\nfunc TestX(t *testing.T){}\n")
+            .expect("write go test file");
+        let expected_program = package_dir.to_string_lossy().to_string();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            for expected_command in ["initialize", "launch", "disconnect"] {
+                let request = read_raw_dap_message(&mut socket)
+                    .await
+                    .expect("read request");
+                let request_seq = request
+                    .get("seq")
+                    .and_then(Value::as_i64)
+                    .expect("request seq");
+                let command = request
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .expect("command");
+                assert_eq!(command, expected_command);
+                if expected_command == "launch" {
+                    let args = request
+                        .get("arguments")
+                        .and_then(Value::as_object)
+                        .expect("launch arguments");
+                    assert_eq!(
+                        args.get("program")
+                            .and_then(Value::as_str)
+                            .expect("launch program"),
+                        expected_program
+                    );
+                    assert_eq!(
+                        args.get("mode")
+                            .and_then(Value::as_str)
+                            .expect("launch mode"),
+                        "test"
+                    );
+                }
+
+                let response = json!({
+                    "seq": 100 + request_seq,
+                    "type": "response",
+                    "request_seq": request_seq,
+                    "success": true,
+                    "command": expected_command
+                });
+                write_raw_dap_message(&mut socket, &response)
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let mut client = DapClient::connect(addr).await.expect("connect");
+        client.initialize().await.expect("initialize");
+        client
+            .launch(LaunchMode::Test, &temp_workspace, &test_file)
+            .await
+            .expect("launch test mode");
+        client.disconnect().await.expect("disconnect");
+        server_task.await.expect("server task");
     }
 
     #[cfg(unix)]

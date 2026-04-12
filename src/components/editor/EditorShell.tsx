@@ -58,6 +58,7 @@ const BLOCKED_WAIT_REASONS = [
   "io wait",
 ];
 const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
+const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -96,10 +97,15 @@ function runtimeSignalMatchesScope(
 }
 
 async function getRuntimeSignalsWithTimeout(
-  timeoutMs: number
+  timeoutMs: number,
+  callbacks?: {
+    onTimeout?: () => void;
+    onSettled?: () => void;
+  }
 ): Promise<ApiResponse<RuntimeSignal[]>> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
+      callbacks?.onTimeout?.();
       reject(new Error("runtime signal request timed out"));
     }, timeoutMs);
 
@@ -111,6 +117,9 @@ async function getRuntimeSignalsWithTimeout(
       .catch((error) => {
         clearTimeout(timer);
         reject(error);
+      })
+      .finally(() => {
+        callbacks?.onSettled?.();
       });
   });
 }
@@ -171,6 +180,7 @@ function EditorShell() {
   const runtimeCheckRequestIdRef = useRef(0);
   const runtimeSignalRequestIdRef = useRef(0);
   const runtimeSignalInFlightRef = useRef(false);
+  const runtimeSignalPendingRequestCountRef = useRef(0);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -431,15 +441,54 @@ function EditorShell() {
     let intervalId: ReturnType<typeof setInterval> | null = null;
 
     const pollRuntimeSignals = async () => {
-      if (runtimeSignalInFlightRef.current) {
+      if (
+        runtimeSignalInFlightRef.current ||
+        runtimeSignalPendingRequestCountRef.current >=
+          MAX_PENDING_RUNTIME_SIGNAL_REQUESTS
+      ) {
         return;
       }
+
       runtimeSignalInFlightRef.current = true;
+      runtimeSignalPendingRequestCountRef.current += 1;
       runtimeSignalRequestIdRef.current += 1;
       const requestId = runtimeSignalRequestIdRef.current;
+      let released = false;
+      let pendingSlotReleased = false;
+      const releaseInFlight = () => {
+        if (
+          !released &&
+          requestId === runtimeSignalRequestIdRef.current
+        ) {
+          released = true;
+          runtimeSignalInFlightRef.current = false;
+        }
+      };
+      const releasePendingSlot = () => {
+        if (!pendingSlotReleased) {
+          pendingSlotReleased = true;
+          runtimeSignalPendingRequestCountRef.current = Math.max(
+            0,
+            runtimeSignalPendingRequestCountRef.current - 1
+          );
+        }
+      };
+
       try {
         const response = await getRuntimeSignalsWithTimeout(
-          runtimeSignalTimeoutMs
+          runtimeSignalTimeoutMs,
+          {
+            onTimeout: () => {
+              releasePendingSlot();
+              if (requestId === runtimeSignalRequestIdRef.current) {
+                releaseInFlight();
+              }
+            },
+            onSettled: () => {
+              releasePendingSlot();
+              releaseInFlight();
+            },
+          }
         );
         if (
           cancelled ||
@@ -470,7 +519,7 @@ function EditorShell() {
           setActiveBlockedSignal(null);
         }
       } finally {
-        runtimeSignalInFlightRef.current = false;
+        releaseInFlight();
       }
     };
 
@@ -482,6 +531,7 @@ function EditorShell() {
     return () => {
       cancelled = true;
       runtimeSignalInFlightRef.current = false;
+      runtimeSignalPendingRequestCountRef.current = 0;
       if (intervalId !== null) {
         clearInterval(intervalId);
       }
