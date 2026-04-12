@@ -7,21 +7,21 @@ type HintUnderlineProps = {
 const CONFIDENCE_CONFIG = {
   predicted: {
     label: "Predicted",
-    icon: "⚡",
-    color: "var(--goide-signal-predicted)",
-    backgroundColor: "var(--goide-signal-predicted-bg)",
+    icon: "◌",
+    color: "var(--signal-predicted)",
+    backgroundColor: "var(--signal-predicted-bg)",
   },
   likely: {
     label: "Likely",
-    icon: "🔍",
-    color: "var(--goide-signal-likely)",
-    backgroundColor: "var(--goide-signal-likely-bg)",
+    icon: "○",
+    color: "var(--signal-likely)",
+    backgroundColor: "var(--signal-likely-bg)",
   },
   confirmed: {
     label: "Confirmed",
-    icon: "✅",
-    color: "var(--goide-signal-confirmed)",
-    backgroundColor: "var(--goide-signal-confirmed-bg)",
+    icon: "●",
+    color: "var(--signal-confirmed)",
+    backgroundColor: "var(--signal-confirmed-bg)",
   },
 };
 

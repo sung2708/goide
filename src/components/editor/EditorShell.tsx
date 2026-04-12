@@ -32,7 +32,7 @@ import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
 import SummaryPeek, { type SummaryItem } from "../panels/SummaryPeek";
-import SourceTree from "../sidebar/SourceTree";
+import Explorer from "../sidebar/Explorer";
 import StatusBar from "../statusbar/StatusBar";
 import CodeEditor, {
   type EditorCompletionRequest,
@@ -993,13 +993,13 @@ function EditorShell() {
 
   return (
     <div
-      className={`relative flex h-full w-full flex-col ${EDITOR_BG} text-[#cdd6f4]`}
+      className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="flex flex-1 overflow-hidden">
         <aside
-          className={`flex min-w-[220px] basis-[22%] flex-col border-r ${BORDER} ${PANEL_BG}`}
+          className="utilitarian-noise animate-reveal-right flex min-w-[240px] basis-[20%] flex-col border-r border-[var(--surface0)] bg-[var(--mantle)]"
         >
-          <SourceTree
+          <Explorer
             workspacePath={workspacePath}
             activeFilePath={activeFilePath}
             onOpenFile={handleOpenFile}
@@ -1008,74 +1008,80 @@ function EditorShell() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="flex min-w-0 flex-1 flex-col">
+            <section className="animate-reveal-up flex min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-2xl" style={{ animationDelay: '0.1s' }}>
               <header
-                className={`flex items-center justify-between border-b ${BORDER} px-4 py-2 text-[11px] uppercase tracking-[0.18em] ${TEXT_MUTED}`}
+                className="beveled-edge flex items-center justify-between border-b border-[var(--surface0)] bg-[var(--base)] px-4 py-2"
               >
-                <span>{editorTitle}</span>
-                <button
-                  className={`rounded border ${BORDER} px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
-                    isOpening
-                      ? "cursor-not-allowed opacity-60"
-                      : "hover:border-[#45475a] hover:text-white"
-                  }`}
-                  onClick={handleOpenWorkspace}
-                  type="button"
-                  disabled={isOpening}
-                >
-                  {isOpening ? "Opening..." : "Open Workspace"}
-                </button>
-                {activeFilePath && (
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--overlay1)]">Editor</span>
+                  <span className="text-[#a6adc8] opacity-40">/</span>
+                  <span className="text-[12px] font-semibold tracking-tight text-[var(--text)]">{editorTitle}</span>
+                </div>
+                
+                <div className="flex items-center gap-2">
                   <button
-                    className={`ml-2 rounded border ${BORDER} px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
-                      runStatus === "running"
-                        ? "cursor-not-allowed opacity-60"
-                        : "hover:border-[#a6e3a1] hover:text-[#a6e3a1]"
+                    className={`flex items-center gap-2 rounded bg-[var(--surface0)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text)] transition-all hover:bg-[var(--surface1)] ${
+                      isOpening ? "cursor-not-allowed opacity-60" : ""
                     }`}
-                    onClick={handleRunFile}
+                    onClick={handleOpenWorkspace}
                     type="button"
-                    disabled={runStatus === "running"}
+                    disabled={isOpening}
                   >
-                    {runStatus === "running" ? "Running..." : "Run"}
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                    {isOpening ? "Opening..." : "Open"}
                   </button>
-                )}
+
+                  {activeFilePath && (
+                    <button
+                      className={`flex items-center gap-2 rounded px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-all ${
+                        runStatus === "running"
+                          ? "bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "bg-[var(--green)] text-[var(--crust)] hover:opacity-90"
+                      }`}
+                      onClick={handleRunFile}
+                      type="button"
+                      disabled={runStatus === "running"}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                      {runStatus === "running" ? "Running..." : "Run"}
+                    </button>
+                  )}
+                </div>
               </header>
 
               <div className="flex flex-1 flex-col p-6">
                 {!workspacePath && (
-                  <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6 text-center">
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
-                      No Workspace Open
-                    </p>
-                    <p className="mt-3 text-sm text-[#cdd6f4]">
-                      Choose a folder to start. The shell is ready and will remain
-                      instant.
-                    </p>
-                    <button
-                      className={`mt-5 rounded border ${BORDER} px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#cdd6f4] transition ${
-                        isOpening
-                          ? "cursor-not-allowed opacity-60"
-                          : "hover:border-[#45475a] hover:text-white"
-                      }`}
-                      onClick={handleOpenWorkspace}
-                      type="button"
-                      disabled={isOpening}
-                    >
-                      {isOpening ? "Opening..." : "Open Workspace"}
-                    </button>
-                    <p className="mt-3 text-xs text-[#9399b2]">
-                      Canceling keeps this empty state visible so you can retry.
-                    </p>
+                  <div className="flex flex-1 flex-col items-center justify-center animate-fade-in">
+                    <div className="max-w-md text-center">
+                      <div className="mb-6 flex justify-center">
+                        <div className="rounded-full bg-[var(--surface0)] p-4 text-[var(--blue)]">
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                        </div>
+                      </div>
+                      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--text)]">GoIDE</h2>
+                      <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
+                        Open a workspace folder to begin concurrency-first development. 
+                        Your code will stay responsive and fluid.
+                      </p>
+                      <button
+                        className="mt-8 rounded bg-[var(--blue)] px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--crust)] transition-opacity hover:opacity-90"
+                        onClick={handleOpenWorkspace}
+                        type="button"
+                        disabled={isOpening}
+                      >
+                        Open Workspace
+                      </button>
+                    </div>
                   </div>
                 )}
                 {workspacePath && !activeFilePath && (
-                  <div className="max-w-xl rounded border border-[#45475a] bg-[#11111b] p-6">
-                    <p className="text-xs uppercase tracking-[0.16em] text-[#a6adc8]">
-                      Workspace Loaded
-                    </p>
-                    <p className="mt-3 text-sm text-[#cdd6f4]">
-                      Select a file from the source tree to view its contents.
-                    </p>
+                  <div className="flex flex-1 flex-col items-center justify-center animate-fade-in">
+                    <div className="max-w-md text-center">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--overlay1)]">Workspace Active</p>
+                      <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
+                        Select a target file from the explorer to activate the concurrency lens.
+                      </p>
+                    </div>
                   </div>
                 )}
                 {workspacePath && activeFilePath && (
@@ -1085,12 +1091,12 @@ function EditorShell() {
                       {isReading && <span>Loading.</span>}
                     </div>
                     {fileError && (
-                      <div className="rounded border border-[#f38ba8] bg-[#1a1b26] px-3 py-2 text-xs text-[#f38ba8]">
+                      <div className="rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[#313244] bg-[#11111b]">
-                      <div className="border-b border-[#313244] px-3 py-2 text-xs text-[#cdd6f4]">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[var(--surface0)] bg-[var(--crust)]">
+                      <div className="border-b border-[var(--surface0)] px-3 py-2 text-xs text-[var(--text)]">
                         {activeFilePath}
                       </div>
                       <div className="relative flex-1 min-h-0">

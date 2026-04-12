@@ -35,7 +35,7 @@ vi.mock("../../features/concurrency/useLensSignals", () => ({
   }),
 }));
 
-vi.mock("../sidebar/SourceTree", () => ({
+vi.mock("../sidebar/Explorer", () => ({
   default: ({
     workspacePath,
     onOpenFile,

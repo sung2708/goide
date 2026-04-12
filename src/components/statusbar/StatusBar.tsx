@@ -29,73 +29,61 @@ function StatusBar({
 }: StatusBarProps) {
   const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
   const runtimeLabel =
-    runtimeAvailability === "available" ? "Available" : "Unavailable";
+    runtimeAvailability === "available" ? "Active" : "Static";
 
   return (
-    <div className="flex h-8 items-center justify-between border-t border-[#313244] bg-[#11111b] px-4 text-[11px] text-[#a6adc8]">
-      <div className="flex items-center gap-3">
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Workspace
-        </span>
-        <span className="truncate text-[#cdd6f4]">
-          {workspacePath ?? "None selected"}
-        </span>
+    <footer className="beveled-edge glass-morphism flex h-7 items-center justify-between border-t border-[var(--surface0)] bg-[rgba(17,17,27,0.7)] px-3 text-[10px] uppercase tracking-[0.08em] font-medium text-[var(--overlay1)] relative z-50">
+      <div className="flex items-center gap-4 overflow-hidden">
+        <div className="flex items-center gap-2">
+          <span className="flex h-1.5 w-1.5 rounded-full bg-[var(--green)] shadow-[0_0_4px_var(--green)]"></span>
+          <span className="truncate max-w-[120px] font-bold text-[var(--subtext1)] tracking-widest">{workspacePath ? workspacePath.split(/[\\/]/).pop() : "OFFLINE"}</span>
+        </div>
+        <div className="flex items-center gap-2 opacity-60">
+          <span className="text-[var(--surface2)]">/</span>
+          <span className="truncate max-w-[180px]">{activeFilePath ?? "IDLE"}</span>
+        </div>
       </div>
-      <div className="flex items-center gap-3">
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">File</span>
-        <span className="truncate text-[#cdd6f4]">
-          {activeFilePath ?? "None"}
-        </span>
+
+      <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
+          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-sm bg-[var(--surface0)] text-[var(--subtext0)] font-bold">
+            <span className={`h-1.5 w-1.5 rounded-full ${mode === "deep-trace" ? "bg-[var(--mauve)] animate-pulse" : "bg-[var(--overlay2)]"}`}></span>
+            {modeLabel}
+          </span>
+          <span className={`px-2 py-0.5 rounded-sm font-bold ${runtimeAvailability === "available" ? "text-[var(--green)] bg-[var(--signal-confirmed-bg)] phosphor-text" : "text-[var(--overlay1)] bg-[var(--surface0)]"}`}>
+            {runtimeLabel}
+          </span>
+        </div>
+
+        <div className="h-3 w-[1px] bg-[var(--surface0)] opacity-50"></div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isSummaryOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
+            onClick={onToggleSummary}
+          >
+            SUMMARY
+          </button>
+          <button
+            type="button"
+            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isBottomPanelOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
+            onClick={onToggleBottomPanel}
+          >
+            TERMINAL
+          </button>
+        </div>
+
+        <div className="h-3 w-[1px] bg-[var(--surface0)] opacity-50"></div>
+
+        <div className="flex items-center gap-3 min-w-[80px] justify-end">
+          <span className="font-bold text-[var(--mauve)]">{saveStatus === "saving" ? "SYNCING..." : saveStatus === "saved" ? "READY" : saveStatus === "error" ? "FAULT" : ""}</span>
+          <span className={`font-bold ${runStatus === "running" ? "text-[var(--green)] animate-phosphor" : ""}`}>
+            {runStatus === "running" ? "LIVE" : ""}
+          </span>
+        </div>
       </div>
-      <div className="flex items-center gap-3">
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Mode: {modeLabel}
-        </span>
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Runtime: {runtimeLabel}
-        </span>
-        <button
-          type="button"
-          className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onToggleCommandPalette}
-          aria-expanded={isCommandPaletteOpen}
-          aria-controls="command-palette"
-          aria-label="Toggle command palette"
-          aria-keyshortcuts="Control+K Meta+K"
-        >
-          Command Palette
-        </button>
-        <button
-          type="button"
-          className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onToggleSummary}
-          aria-expanded={isSummaryOpen}
-          aria-controls="summary-panel"
-          aria-label="Toggle summary panel"
-        >
-          Summary
-        </button>
-        <button
-          type="button"
-          className="rounded border border-[#313244] px-2 py-1 uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
-          onMouseDown={(event) => event.preventDefault()}
-          onClick={onToggleBottomPanel}
-          aria-expanded={isBottomPanelOpen}
-          aria-controls="bottom-panel"
-          aria-label="Toggle bottom panel"
-        >
-          Bottom
-        </button>
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Save: {saveStatus === "saving" ? "Saving..." : saveStatus === "saved" ? "Saved" : saveStatus === "error" ? "Error" : "Ready"}
-        </span>
-        <span className="uppercase tracking-[0.16em] text-[#9399b2]">
-          Run: {runStatus === "running" ? "Running..." : runStatus === "done" ? "Done" : runStatus === "error" ? "Error" : "Ready"}
-        </span>
-      </div>
-    </div>
+    </footer>
   );
 }
 
