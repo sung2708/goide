@@ -41,6 +41,18 @@ pub struct RuntimeSignal {
     pub status: String,
     pub wait_reason: String,
     pub confidence: String,
+    pub scope_key: String,
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSignalScope {
+    pub scope_key: String,
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -123,13 +135,16 @@ impl DapClient {
             LaunchMode::Debug => "debug",
             LaunchMode::Test => "test",
         };
+        let target_package_dir = canonical_target
+            .parent()
+            .ok_or_else(|| anyhow!("target file has no parent directory"))?;
 
         let response = self
             .request(
                 "launch",
                 json!({
                     "mode": mode_text,
-                    "program": canonical_root.to_string_lossy().to_string(),
+                    "program": target_package_dir.to_string_lossy().to_string(),
                     "cwd": canonical_root.to_string_lossy().to_string(),
                     "stopOnEntry": false
                 }),
@@ -217,13 +232,17 @@ pub async fn spawn_dlv_dap(workspace_root: &Path) -> Result<DapProcess> {
     spawn_dlv_dap_with("dlv", &["dap", "--listen=127.0.0.1:0"], workspace_root).await
 }
 
-pub fn thread_to_runtime_signal(thread: &DapThread) -> Option<RuntimeSignal> {
+pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) -> Option<RuntimeSignal> {
     let parsed = parse_thread_wait_state(&thread.name)?;
     Some(RuntimeSignal {
         thread_id: thread.id,
         status: parsed.status,
         wait_reason: parsed.wait_reason,
         confidence: "confirmed".to_string(),
+        scope_key: scope.scope_key.clone(),
+        relative_path: scope.relative_path.clone(),
+        line: scope.line,
+        column: scope.column,
     })
 }
 
@@ -421,10 +440,23 @@ mod tests {
             id: 42,
             name: "Goroutine 42 [IO wait] netpoll".to_string(),
         };
-        let signal = thread_to_runtime_signal(&thread).expect("must map supported thread");
+        let signal = thread_to_runtime_signal(
+            &thread,
+            &RuntimeSignalScope {
+                scope_key: "pkg/main.go:10:2:channel:jobs".to_string(),
+                relative_path: "pkg/main.go".to_string(),
+                line: 10,
+                column: 2,
+            },
+        )
+        .expect("must map supported thread");
         assert_eq!(signal.thread_id, 42);
         assert_eq!(signal.wait_reason, "io wait");
         assert_eq!(signal.confidence, "confirmed");
+        assert_eq!(signal.scope_key, "pkg/main.go:10:2:channel:jobs");
+        assert_eq!(signal.relative_path, "pkg/main.go");
+        assert_eq!(signal.line, 10);
+        assert_eq!(signal.column, 2);
     }
 
     #[test]
@@ -445,6 +477,12 @@ mod tests {
         let addr = listener.local_addr().expect("local addr");
         let seq_counter = std::sync::Arc::new(AtomicUsize::new(0));
         let seq_counter_server = seq_counter.clone();
+        let temp_workspace = create_temp_workspace("dap_launch_workspace");
+        let package_dir = temp_workspace.join("pkg");
+        fs::create_dir_all(&package_dir).expect("create package dir");
+        let main_go = package_dir.join("main.go");
+        fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
+        let expected_program = package_dir.to_string_lossy().to_string();
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");
@@ -461,6 +499,18 @@ mod tests {
                     .and_then(Value::as_str)
                     .expect("command");
                 assert_eq!(command, expected_command);
+                if expected_command == "launch" {
+                    let args = request
+                        .get("arguments")
+                        .and_then(Value::as_object)
+                        .expect("launch arguments");
+                    assert_eq!(
+                        args.get("program")
+                            .and_then(Value::as_str)
+                            .expect("launch program"),
+                        expected_program
+                    );
+                }
                 seq_counter_server.fetch_add(1, Ordering::SeqCst);
 
                 let response = if expected_command == "threads" {
@@ -494,10 +544,6 @@ mod tests {
 
         let mut client = DapClient::connect(addr).await.expect("connect");
         client.initialize().await.expect("initialize");
-
-        let temp_workspace = create_temp_workspace("dap_launch_workspace");
-        let main_go = temp_workspace.join("main.go");
-        fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
         client
             .launch(LaunchMode::Debug, &temp_workspace, &main_go)
             .await
