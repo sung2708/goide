@@ -97,6 +97,15 @@ export async function activateScopedDeepTrace(
   );
 }
 
+export async function deactivateDeepTrace(): Promise<ApiResponse<void>> {
+  const tauriInternals = (globalThis as { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
+  if (!tauriInternals) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("deactivate_deep_trace");
+}
+
 export async function getRuntimeAvailability(): Promise<
   ApiResponse<RuntimeAvailabilityResponse>
 > {

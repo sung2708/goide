@@ -6,6 +6,7 @@ import type { VisibleLineRange } from "../../features/concurrency/signalDensity"
 import { useHoverHint } from "../../hooks/useHoverHint";
 import {
   activateScopedDeepTrace,
+  deactivateDeepTrace,
   getRuntimeAvailability,
   readWorkspaceFile,
   writeWorkspaceFile,
@@ -62,6 +63,7 @@ function EditorShell() {
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
     "quick-insight"
   );
+  const previousModeRef = useRef<"quick-insight" | "deep-trace">("quick-insight");
   const [runtimeAvailability, setRuntimeAvailability] = useState<
     "available" | "unavailable"
   >("unavailable");
@@ -102,6 +104,20 @@ function EditorShell() {
   useEffect(() => {
     setJumpRequest(null);
   }, [workspacePath, activeFilePath]);
+
+  useEffect(() => {
+    const previousMode = previousModeRef.current;
+    previousModeRef.current = mode;
+    if (previousMode === "deep-trace" && mode !== "deep-trace") {
+      void deactivateDeepTrace();
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    return () => {
+      void deactivateDeepTrace();
+    };
+  }, []);
 
   // Clear the auto-dismiss timer on unmount to prevent setState on unmounted component
   useEffect(() => {

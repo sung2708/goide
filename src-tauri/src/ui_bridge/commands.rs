@@ -478,6 +478,24 @@ pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
     ApiResponse::ok(signals.into_iter().map(map_runtime_signal).collect())
 }
 
+#[tauri::command]
+pub async fn deactivate_deep_trace() -> ApiResponse<()> {
+    let session_handle = get_dap_session_handle();
+    let existing_session = {
+        let mut guard = session_handle.lock().await;
+        guard.take()
+    };
+
+    if let Some(session) = existing_session {
+        stop_dap_session(session).await;
+    }
+
+    let signals_handle = get_runtime_signals_handle();
+    let mut signals = signals_handle.lock().await;
+    signals.clear();
+    ApiResponse::ok(())
+}
+
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     let normalized = relative_path.trim();
     if normalized.is_empty() {
