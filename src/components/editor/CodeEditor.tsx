@@ -7,7 +7,9 @@ import {
 } from "./codemirrorTheme";
 import { EditorView, keymap } from "@codemirror/view";
 import { history, historyKeymap } from "@codemirror/commands";
+import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
+import type { EditorDiagnostic } from "../../lib/ipc/types";
 
 type InteractionAnchor = {
   top: number;
@@ -34,6 +36,7 @@ type CodeEditorProps = {
   onSave?: (content: string) => void;
   onChange?: (value: string) => void;
   editable?: boolean;
+  diagnostics?: EditorDiagnostic[];
 };
 
 function CodeEditor({
@@ -51,12 +54,56 @@ function CodeEditor({
   onSave,
   onChange,
   editable = true,
+  diagnostics = [],
 }: CodeEditorProps) {
+  const buildCodeMirrorDiagnostics = (view: EditorView): Diagnostic[] => {
+    if (diagnostics.length === 0) {
+      return [];
+    }
+
+    return diagnostics.map((diagnostic) => {
+      const maxLine = view.state.doc.lines;
+      const startLine = Math.min(maxLine, Math.max(1, diagnostic.range.startLine));
+      const endLine = Math.min(maxLine, Math.max(startLine, diagnostic.range.endLine));
+      const startLineInfo = view.state.doc.line(startLine);
+      const endLineInfo = view.state.doc.line(endLine);
+      const endLineTo =
+        typeof endLineInfo.to === "number"
+          ? endLineInfo.to
+          : endLineInfo.from + 1;
+
+      const startOffset = Math.max(0, diagnostic.range.startColumn - 1);
+      const lineLength = startLineInfo.to - startLineInfo.from;
+      const clampedStartOffset = Math.min(lineLength, startOffset);
+      const from = startLineInfo.from + clampedStartOffset;
+      
+      const requestedEnd = endLineInfo.from + Math.max(startOffset + 1, diagnostic.range.endColumn - 1);
+      const endLineLength = endLineInfo.to - endLineInfo.from;
+      const to = Math.min(endLineInfo.to, Math.max(from + 1, requestedEnd));
+      const severity: Diagnostic["severity"] =
+        diagnostic.severity === "warning"
+          ? "warning"
+          : diagnostic.severity === "info"
+            ? "info"
+            : "error";
+
+      return {
+        from,
+        to,
+        severity,
+        source: diagnostic.source ?? undefined,
+        message: diagnostic.message,
+      };
+    });
+  };
+
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
     EditorState.readOnly.of(!editable),
     EditorView.editable.of(editable),
     history(),
+    lintGutter(),
+    linter(() => []),
     keymap.of([
       ...historyKeymap,
       {
@@ -177,6 +224,16 @@ function CodeEditor({
     // New file/content context should not inherit previous-line dedupe state.
     selectedLineRef.current = null;
   }, [selectionContextKey, value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    const cmDiagnostics = buildCodeMirrorDiagnostics(view);
+    view.dispatch(setDiagnostics(view.state, cmDiagnostics));
+  }, [diagnostics, value]);
 
   useEffect(() => {
     const view = viewRef.current;
