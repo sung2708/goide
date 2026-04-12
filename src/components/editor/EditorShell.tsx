@@ -19,7 +19,7 @@ import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
-import SummaryPeek from "../panels/SummaryPeek";
+import SummaryPeek, { type SummaryItem } from "../panels/SummaryPeek";
 import SourceTree from "../sidebar/SourceTree";
 import StatusBar from "../statusbar/StatusBar";
 import CodeEditor, { type JumpRequest } from "./CodeEditor";
@@ -166,8 +166,41 @@ function EditorShell() {
     [resolveCounterpartFromActiveHint]
   );
 
+  const summaryItems = useMemo<SummaryItem[]>(() => {
+    return detectedConstructs
+      .filter(
+        (construct) =>
+          Number.isFinite(construct.line) && Number.isInteger(construct.line) && construct.line >= 1
+      )
+      .sort((a, b) => {
+        if (a.line !== b.line) {
+          return a.line - b.line;
+        }
+        if (a.column !== b.column) {
+          return a.column - b.column;
+        }
+        return a.kind.localeCompare(b.kind);
+      })
+      .map((construct) => ({
+        line: construct.line,
+        label: KIND_LABELS[construct.kind] ?? construct.kind,
+        confidence: construct.confidence,
+        symbol: construct.symbol,
+      }));
+  }, [detectedConstructs]);
+
   const requestJump = useCallback((targetLine: number | null) => {
     if (targetLine === null) {
+      return;
+    }
+    if (targetLine < 1 || !Number.isInteger(targetLine)) {
+      return;
+    }
+    if (activeFileContent === null) {
+      return;
+    }
+    const maxLine = activeFileContent.split("\n").length;
+    if (targetLine > maxLine) {
       return;
     }
 
@@ -176,7 +209,7 @@ function EditorShell() {
       line: targetLine,
       requestId: jumpRequestIdRef.current,
     });
-  }, []);
+  }, [activeFileContent]);
 
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint());
@@ -694,7 +727,11 @@ function EditorShell() {
             </section>
 
             {isSummaryOpen && (
-              <SummaryPeek onClose={() => setIsSummaryOpen(false)} />
+              <SummaryPeek
+                items={summaryItems}
+                onJumpToLine={(line) => requestJump(line)}
+                onClose={() => setIsSummaryOpen(false)}
+              />
             )}
           </div>
 
