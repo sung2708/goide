@@ -819,8 +819,12 @@ fn parse_gopls_diagnostics_output(workspace_root: &str, relative_path: &str, out
         };
 
         let (start_column, end_column, message_part) = if let Some((col_p, msg_p)) = rest_after_line.split_once(':') {
-            let (sc, ec) = parse_column_range(col_p.trim());
-            (sc, ec, msg_p)
+            if let Some((sc, ec)) = parse_column_range(col_p.trim()) {
+                (sc, ec, msg_p)
+            } else {
+                // No valid column part found, treat the whole remainder as message.
+                (1, 2, rest_after_line)
+            }
         } else {
             // No column part found, gopls might have output path:line: message
             (1, 2, rest_after_line)
@@ -875,20 +879,24 @@ fn split_diagnostic_path_prefix(line: &str) -> Option<(&str, &str)> {
     None
 }
 
-fn parse_column_range(column_part: &str) -> (usize, usize) {
+fn parse_column_range(column_part: &str) -> Option<(usize, usize)> {
+    let column_part = column_part.trim();
+    if column_part.is_empty() {
+        return None;
+    }
+
     let Some((start_col_text, end_col_text)) = column_part.split_once('-') else {
-        let start_column = column_part.parse::<usize>().unwrap_or(1).max(1);
-        return (start_column, start_column.saturating_add(1));
+        let start_column = column_part.parse::<usize>().ok()?.max(1);
+        return Some((start_column, start_column.saturating_add(1)));
     };
 
-    let start_column = start_col_text.parse::<usize>().unwrap_or(1).max(1);
-    let end_column = end_col_text
-        .parse::<usize>()
-        .ok()
-        .filter(|value| *value >= start_column)
-        .unwrap_or_else(|| start_column.saturating_add(1));
+    let start_column = start_col_text.trim().parse::<usize>().ok()?.max(1);
+    let end_column = end_col_text.trim().parse::<usize>().ok()?;
+    if end_column < start_column {
+        return None;
+    }
 
-    (start_column, end_column)
+    Some((start_column, end_column))
 }
 
 fn normalize_diagnostic_message(raw_message: &str) -> (DiagnosticSeverity, String) {
@@ -1348,6 +1356,25 @@ C:/workspace/main.go:12:3: undeclared name: foo
         assert_eq!(diagnostics[0].range.start_column, 3);
         assert_eq!(diagnostics[0].message, "undeclared name: foo");
         assert_eq!(diagnostics[0].severity, DiagnosticSeverity::Error);
+    }
+
+    #[test]
+    fn preserves_message_when_column_is_omitted_and_message_contains_colon() {
+        let output = r#"
+main.go:14: syntax error: unexpected semicolon, expected expression
+"#;
+
+        let diagnostics =
+            parse_gopls_diagnostics_output(".", "main.go", output.as_bytes()).expect("parse diagnostics");
+
+        assert_eq!(diagnostics.len(), 1);
+        assert_eq!(diagnostics[0].range.start_line, 14);
+        assert_eq!(diagnostics[0].range.start_column, 1);
+        assert_eq!(diagnostics[0].range.end_column, 2);
+        assert_eq!(
+            diagnostics[0].message,
+            "syntax error: unexpected semicolon, expected expression"
+        );
     }
 
     #[test]
