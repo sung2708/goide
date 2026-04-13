@@ -1,3 +1,6 @@
+use crate::core::analysis::causal::{
+    enrich_runtime_signals_with_correlation, StaticCounterpartHint,
+};
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::gopls;
@@ -66,15 +69,33 @@ async fn stop_dap_session(session: DapSessionHandle) {
 }
 
 fn map_runtime_signal(signal: RuntimeSignal) -> RuntimeSignalDto {
+    let confidence = match signal.confidence.to_ascii_lowercase().as_str() {
+        "likely" => ConcurrencyConfidenceDto::Likely,
+        "predicted" => ConcurrencyConfidenceDto::Predicted,
+        _ => ConcurrencyConfidenceDto::Confirmed,
+    };
+    let counterpart_confidence = signal.counterpart_confidence.as_ref().map(|value| {
+        match value.to_ascii_lowercase().as_str() {
+            "confirmed" => ConcurrencyConfidenceDto::Confirmed,
+            "predicted" => ConcurrencyConfidenceDto::Predicted,
+            _ => ConcurrencyConfidenceDto::Likely,
+        }
+    });
+
     RuntimeSignalDto {
         thread_id: signal.thread_id,
         status: signal.status,
         wait_reason: signal.wait_reason,
-        confidence: ConcurrencyConfidenceDto::Confirmed,
+        confidence,
         scope_key: signal.scope_key,
         relative_path: signal.relative_path,
         line: signal.line,
         column: signal.column,
+        correlation_id: signal.correlation_id,
+        counterpart_relative_path: signal.counterpart_relative_path,
+        counterpart_line: signal.counterpart_line,
+        counterpart_column: signal.counterpart_column,
+        counterpart_confidence,
     }
 }
 
@@ -407,6 +428,26 @@ pub async fn activate_scoped_deep_trace(
         line: request.line,
         column: request.column,
     };
+    let static_counterpart_hint = match (
+        request.counterpart_relative_path.clone(),
+        request.counterpart_line,
+        request.counterpart_column,
+    ) {
+        (Some(relative_path), Some(line), Some(column)) => Some(StaticCounterpartHint {
+            relative_path,
+            line,
+            column,
+            confidence: request
+                .counterpart_confidence
+                .map(|value| match value {
+                    ConcurrencyConfidenceDto::Predicted => "predicted".to_string(),
+                    ConcurrencyConfidenceDto::Likely => "likely".to_string(),
+                    ConcurrencyConfidenceDto::Confirmed => "confirmed".to_string(),
+                })
+                .unwrap_or_else(|| "predicted".to_string()),
+        }),
+        _ => None,
+    };
     let sampler_task = tokio::spawn(async move {
         let mut client = client;
         loop {
@@ -422,8 +463,12 @@ pub async fn activate_scoped_deep_trace(
                                 .iter()
                                 .filter_map(|thread| delve::thread_to_runtime_signal(thread, &runtime_scope))
                                 .collect::<Vec<_>>();
+                            let correlated = enrich_runtime_signals_with_correlation(
+                                &mapped,
+                                static_counterpart_hint.as_ref(),
+                            );
                             let mut store = signals_handle.lock().await;
-                            *store = mapped;
+                            *store = correlated;
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;

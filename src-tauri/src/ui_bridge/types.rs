@@ -105,6 +105,10 @@ pub struct ActivateDeepTraceRequestDto {
     pub column: usize,
     pub construct_kind: DeepTraceConstructKindDto,
     pub symbol: Option<String>,
+    pub counterpart_relative_path: Option<String>,
+    pub counterpart_line: Option<usize>,
+    pub counterpart_column: Option<usize>,
+    pub counterpart_confidence: Option<ConcurrencyConfidenceDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -131,6 +135,11 @@ pub struct RuntimeSignalDto {
     pub relative_path: String,
     pub line: usize,
     pub column: usize,
+    pub correlation_id: Option<String>,
+    pub counterpart_relative_path: Option<String>,
+    pub counterpart_line: Option<usize>,
+    pub counterpart_column: Option<usize>,
+    pub counterpart_confidence: Option<ConcurrencyConfidenceDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

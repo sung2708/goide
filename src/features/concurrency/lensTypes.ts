@@ -22,7 +22,7 @@ export type LensHoverHint = {
   column: number;
   symbol: string | null;
   scopeKey: string | null;
-  confidence: ConcurrencyConfidence.Predicted;
+  confidence: ConcurrencyConfidence;
 };
 
 export type LensCounterpartMapping = {

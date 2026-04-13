@@ -18,6 +18,7 @@ import {
 import type {
   ApiResponse,
   CompletionItem,
+  ConcurrencyConfidence,
   DeepTraceConstructKind,
   EditorDiagnostic,
   RuntimeSignal,
@@ -76,6 +77,25 @@ function resolveRuntimeSignalTimeoutMs(): number {
 
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/").trim();
+}
+
+type CounterpartResolution = {
+  line: number;
+  confidence: ConcurrencyConfidence;
+  source: "runtime" | "static";
+};
+
+function toTraceBubbleConfidence(
+  confidence?: ConcurrencyConfidence | null
+): TraceBubbleConfidence {
+  switch ((confidence ?? "").toLowerCase()) {
+    case "confirmed":
+      return "confirmed";
+    case "likely":
+      return "likely";
+    default:
+      return "predicted";
+  }
 }
 
 function runtimeSignalMatchesScope(
@@ -262,13 +282,10 @@ function EditorShell() {
   const traceBubbleLabel = activeHint?.kind
     ? (KIND_LABELS[activeHint.kind] ?? activeHint.kind)
     : "";
-
-  const traceBubbleConfidence: TraceBubbleConfidence =
-    (activeHint?.confidence?.toLowerCase() as TraceBubbleConfidence) ?? "predicted";
   const isBlockedConfirmedVisible = mode === "deep-trace" && activeBlockedSignal !== null;
   const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
 
-  const resolveCounterpartLine = useCallback(
+  const resolveStaticCounterpart = useCallback(
     (sourceLine: number, hintSymbol?: string | null) => {
       const candidates = counterpartMappings.filter(
         (mapping) => mapping.sourceLine === sourceLine
@@ -281,7 +298,13 @@ function EditorShell() {
         typeof hintSymbol === "string" ? hintSymbol.trim() : "";
 
       if (!normalizedSymbol) {
-        return candidates.length === 1 ? candidates[0].counterpartLine : null;
+        return candidates.length === 1
+          ? {
+              line: candidates[0].counterpartLine,
+              confidence: candidates[0].confidence,
+              source: "static" as const,
+            }
+          : null;
       }
 
       const filtered = candidates.filter(
@@ -295,23 +318,72 @@ function EditorShell() {
       const uniqueCounterpartLines = [
         ...new Set(filtered.map((m) => m.counterpartLine)),
       ];
-      return uniqueCounterpartLines.length === 1 ? uniqueCounterpartLines[0] : null;
+      if (uniqueCounterpartLines.length !== 1) {
+        return null;
+      }
+
+      const confidence = filtered[0]?.confidence ?? "predicted";
+      return {
+        line: uniqueCounterpartLines[0],
+        confidence,
+        source: "static" as const,
+      };
     },
     [counterpartMappings]
   );
+
+  const resolveRuntimeCounterpart = useCallback((): CounterpartResolution | null => {
+    if (!activeBlockedSignal) {
+      return null;
+    }
+    const counterpartLine = activeBlockedSignal.counterpartLine ?? null;
+    if (
+      counterpartLine === null ||
+      !Number.isInteger(counterpartLine) ||
+      counterpartLine < 1
+    ) {
+      return null;
+    }
+
+    return {
+      line: counterpartLine,
+      confidence:
+        (activeBlockedSignal.counterpartConfidence ?? "likely") as ConcurrencyConfidence,
+      source: "runtime",
+    };
+  }, [activeBlockedSignal]);
 
   const resolveCounterpartFromActiveHint = useCallback(() => {
     if (activeHintLine === null || activeHint?.kind !== "channel") {
       return null;
     }
 
-    return resolveCounterpartLine(activeHintLine, activeHint.symbol);
-  }, [activeHint, activeHintLine, resolveCounterpartLine]);
+    const runtimeResolution =
+      mode === "deep-trace" ? resolveRuntimeCounterpart() : null;
+    if (runtimeResolution) {
+      return runtimeResolution;
+    }
+    return resolveStaticCounterpart(activeHintLine, activeHint.symbol);
+  }, [
+    activeHint,
+    activeHintLine,
+    mode,
+    resolveRuntimeCounterpart,
+    resolveStaticCounterpart,
+  ]);
 
   const hasCounterpart = useMemo(
     () => resolveCounterpartFromActiveHint() !== null,
     [resolveCounterpartFromActiveHint]
   );
+  const counterpartResolution = resolveCounterpartFromActiveHint();
+  const effectiveHint =
+    isBlockedConfirmedVisible && activeHint
+      ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
+      : activeHint;
+  const traceBubbleConfidence = isBlockedConfirmedVisible
+    ? toTraceBubbleConfidence(counterpartResolution?.confidence ?? "likely")
+    : toTraceBubbleConfidence(effectiveHint?.confidence);
 
   const summaryItems = useMemo<SummaryItem[]>(() => {
     return detectedConstructs
@@ -359,7 +431,7 @@ function EditorShell() {
   }, [activeFileContent]);
 
   const handleJump = useCallback(() => {
-    requestJump(resolveCounterpartFromActiveHint());
+    requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
   }, [requestJump, resolveCounterpartFromActiveHint]);
 
   const handleDeepTrace = useCallback(async () => {
@@ -375,6 +447,7 @@ function EditorShell() {
     if (line < 1 || column < 1) {
       return;
     }
+    const staticCounterpart = resolveStaticCounterpart(line, activeHint.symbol);
     const requestWorkspacePath = workspacePath;
     const requestFilePath = activeFilePath;
     deepTraceRequestIdRef.current += 1;
@@ -388,6 +461,10 @@ function EditorShell() {
         column,
         constructKind: activeHint.kind as DeepTraceConstructKind,
         symbol: activeHint.symbol,
+        counterpartRelativePath: staticCounterpart ? requestFilePath : null,
+        counterpartLine: staticCounterpart?.line ?? null,
+        counterpartColumn: activeHint.column,
+        counterpartConfidence: staticCounterpart?.confidence ?? null,
       });
       if (
         requestId !== deepTraceRequestIdRef.current ||
@@ -421,6 +498,7 @@ function EditorShell() {
     activeFilePath,
     activeHint,
     activeHintLine,
+    resolveStaticCounterpart,
     runtimeAvailability,
     workspacePath,
   ]);
@@ -506,8 +584,13 @@ function EditorShell() {
                   runtimeSignalMatchesScope(signal, scopeSnapshot)
               )
             : [];
-
-        setActiveBlockedSignal(blockedCandidates[0] ?? null);
+        const prioritizedCandidate =
+          blockedCandidates.find(
+            (signal) =>
+              signal.counterpartLine !== null &&
+              signal.counterpartLine !== undefined
+          ) ?? blockedCandidates[0] ?? null;
+        setActiveBlockedSignal(prioritizedCandidate);
       } catch (_error) {
         if (
           !cancelled &&
@@ -799,7 +882,12 @@ function EditorShell() {
         return false;
       }
 
-      const targetLine = resolveCounterpartLine(line, activeHint.symbol);
+      const runtimeResolution =
+        mode === "deep-trace" ? resolveRuntimeCounterpart() : null;
+      const targetLine =
+        runtimeResolution?.line ??
+        resolveStaticCounterpart(line, activeHint.symbol)?.line ??
+        null;
       if (targetLine === null) {
         return false;
       }
@@ -807,7 +895,14 @@ function EditorShell() {
       requestJump(targetLine);
       return true;
     },
-    [activeHint, activeHintLine, requestJump, resolveCounterpartLine]
+    [
+      activeHint,
+      activeHintLine,
+      mode,
+      requestJump,
+      resolveRuntimeCounterpart,
+      resolveStaticCounterpart,
+    ]
   );
 
   const openCommandPalette = useCallback(() => {
@@ -1094,7 +1189,7 @@ function EditorShell() {
                         {activeFilePath}
                       </div>
                       <div className="relative flex-1 min-h-0">
-                        <HintUnderline hint={activeHint} />
+                        <HintUnderline hint={effectiveHint} />
                         <ThreadLine 
                           visible={isInlineActionsVisible && hasCounterpart}
                           sourceAnchor={interactionAnchor}
@@ -1102,11 +1197,7 @@ function EditorShell() {
                         />
                         <TraceBubble
                           visible={isTraceBubbleVisible}
-                          confidence={
-                            isBlockedConfirmedVisible
-                              ? "confirmed"
-                              : traceBubbleConfidence
-                          }
+                            confidence={traceBubbleConfidence}
                           label={isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
                           reducedMotion={prefersReducedMotion}
@@ -1135,8 +1226,8 @@ function EditorShell() {
                           <CodeEditor
                             value={activeFileContent}
                             selectionContextKey={activeFilePath}
-                            hintLine={activeHintLine}
-                            counterpartLine={resolveCounterpartFromActiveHint()}
+                              hintLine={activeHintLine}
+                              counterpartLine={counterpartResolution?.line ?? null}
                             jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}

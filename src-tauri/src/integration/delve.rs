@@ -45,6 +45,11 @@ pub struct RuntimeSignal {
     pub relative_path: String,
     pub line: usize,
     pub column: usize,
+    pub correlation_id: Option<String>,
+    pub counterpart_relative_path: Option<String>,
+    pub counterpart_line: Option<usize>,
+    pub counterpart_column: Option<usize>,
+    pub counterpart_confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -250,6 +255,11 @@ pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) 
         relative_path: scope.relative_path.clone(),
         line: scope.line,
         column: scope.column,
+        correlation_id: None,
+        counterpart_relative_path: None,
+        counterpart_line: None,
+        counterpart_column: None,
+        counterpart_confidence: None,
     })
 }
 
@@ -464,6 +474,8 @@ mod tests {
         assert_eq!(signal.relative_path, "pkg/main.go");
         assert_eq!(signal.line, 10);
         assert_eq!(signal.column, 2);
+        assert!(signal.correlation_id.is_none());
+        assert!(signal.counterpart_line.is_none());
     }
 
     #[test]

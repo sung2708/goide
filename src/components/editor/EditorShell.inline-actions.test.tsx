@@ -78,11 +78,13 @@ vi.mock("./CodeEditor", () => ({
     onSelectionLineChange,
     onModifierClickLine,
     jumpRequest,
+    counterpartLine,
   }: {
     onHoverLineChange?: (line: number | null) => void;
     onSelectionLineChange?: (line: number | null) => void;
     onModifierClickLine?: (line: number) => boolean;
     jumpRequest?: { line: number; requestId: number } | null;
+    counterpartLine?: number | null;
   }) => (
     <div
       data-testid="mock-code-editor"
@@ -96,6 +98,7 @@ vi.mock("./CodeEditor", () => ({
         Modifier Click Line 1
       </button>
       <output data-testid="jump-request-line">{jumpRequest?.line ?? "none"}</output>
+      <output data-testid="counterpart-line">{counterpartLine ?? "none"}</output>
     </div>
   ),
 }));
@@ -431,6 +434,10 @@ describe("EditorShell inline actions", () => {
       column: 4,
       constructKind: "channel",
       symbol: "jobs",
+      counterpartRelativePath: null,
+      counterpartLine: null,
+      counterpartColumn: 4,
+      counterpartConfidence: null,
     });
   });
 
@@ -573,6 +580,120 @@ describe("EditorShell inline actions", () => {
       expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
       expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
       expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    });
+  });
+
+  it("prefers runtime counterpart mapping over static mapping in deep trace mode", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 8,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+          counterpartRelativePath: "main.go",
+          counterpartLine: 5,
+          counterpartColumn: 2,
+          counterpartConfidence: ConcurrencyConfidence.Likely,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({
+      ok: true,
+      data: "package main\nline2\nline3\nline4\nline5\n",
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
+
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId("counterpart-line")).toHaveTextContent("5");
+      expect(screen.getByText("Likely")).toBeInTheDocument();
+      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+    });
+  });
+
+  it("falls back to static counterpart mapping when runtime correlation is unavailable", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    getRuntimeSignalsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          threadId: 1,
+          status: "chan receive",
+          waitReason: "chan receive",
+          confidence: ConcurrencyConfidence.Confirmed,
+          scopeKey: "default-scope",
+          relativePath: "main.go",
+          line: 1,
+          column: 4,
+        },
+      ],
+    });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({
+      ok: true,
+      data: "package main\nline2\n",
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
+
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
     });
   });
 
