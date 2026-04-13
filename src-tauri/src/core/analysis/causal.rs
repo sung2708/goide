@@ -93,7 +93,14 @@ pub fn enrich_runtime_signals_with_correlation(
             if score >= 0.70 {
                 output.correlation_id =
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
-                output.counterpart_confidence = Some("likely".to_string());
+                if let Some(hint) = static_hint {
+                    output.counterpart_relative_path = Some(hint.relative_path.clone());
+                    output.counterpart_line = Some(hint.line);
+                    output.counterpart_column = Some(hint.column);
+                    output.counterpart_confidence = Some("confirmed".to_string());
+                } else {
+                    output.counterpart_confidence = Some("likely".to_string());
+                }
             }
         }
 
@@ -145,11 +152,11 @@ mod tests {
             .find(|item| item.wait_reason == "chan receive")
             .expect("receiver signal exists");
         
-        // Should NOT emit location data because candidate signals mirror source scope coordinates.
-        // UI will fall back to accurately precomputed static hints for jump targets.
-        assert!(receiver.counterpart_line.is_none());
-        assert!(receiver.counterpart_relative_path.is_none());
-        assert_eq!(receiver.counterpart_confidence.as_deref(), Some("likely"));
+        // Should emit location data from hint (22) because correlation was confirmed by runtime.
+        // Frontend will treat this as an authoritative override.
+        assert_eq!(receiver.counterpart_line, Some(22));
+        assert_eq!(receiver.counterpart_relative_path.as_deref(), Some("main.go"));
+        assert_eq!(receiver.counterpart_confidence.as_deref(), Some("confirmed"));
         assert!(receiver
             .correlation_id
             .as_deref()
