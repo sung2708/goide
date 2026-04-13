@@ -91,12 +91,10 @@ pub fn enrich_runtime_signals_with_correlation(
                 
                 // Confirmed requires both runtime proximity and matching static evidence (score >= 0.70).
                 if score >= 0.70 {
-                    if let Some(hint) = static_hint {
-                        output.counterpart_relative_path = Some(hint.relative_path.clone());
-                        output.counterpart_line = Some(hint.line);
-                        output.counterpart_column = Some(hint.column);
-                        output.counterpart_confidence = Some("confirmed".to_string());
-                    }
+                    output.counterpart_relative_path = Some(candidate.relative_path.clone());
+                    output.counterpart_line = Some(candidate.line);
+                    output.counterpart_column = Some(candidate.column);
+                    output.counterpart_confidence = Some("confirmed".to_string());
                 } else {
                     output.counterpart_confidence = Some("likely".to_string());
                 }
@@ -136,7 +134,8 @@ mod tests {
     fn enriches_with_confirmed_when_both_runtime_and_static_evidence_exists() {
         // Source line 10, candidate line 15. Static hint suggests line 22.
         // Even though candidate line (15) != hint line (22), we should correlate
-        // and mark as confirmed because both runtime peer and static prediction exist.
+        // and mark as confirmed. The output should use the RUNTIME line (15)
+        // to override the static analysis guess.
         let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
         let hint = StaticCounterpartHint {
             relative_path: "main.go".to_string(),
@@ -150,7 +149,8 @@ mod tests {
         
         // Base 0.5 + proximity 0.15 + static 0.20 = 0.85 (>= 0.70 gate)
         assert_eq!(receiver.counterpart_confidence.as_deref(), Some("confirmed"));
-        assert_eq!(receiver.counterpart_line, Some(22));
+        assert_eq!(receiver.counterpart_line, Some(15));
+        assert_eq!(receiver.counterpart_relative_path.as_deref(), Some("main.go"));
     }
 
     #[test]

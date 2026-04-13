@@ -381,8 +381,6 @@ function EditorShell() {
   const hasCounterpart = useMemo(() => {
     const resolution = resolveCounterpartFromActiveHint();
     return resolution !== null && resolution.line !== null;
-  }, [resolveCounterpartFromActiveHint]);
-  );
   const counterpartResolution = resolveCounterpartFromActiveHint();
   const effectiveHint =
     isBlockedConfirmedVisible && activeHint
