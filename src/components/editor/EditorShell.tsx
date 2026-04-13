@@ -389,8 +389,8 @@ function EditorShell() {
       ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
       : activeHint;
   const traceBubbleConfidence = isBlockedConfirmedVisible
-    ? toTraceBubbleConfidence(counterpartResolution?.confidence ?? "likely")
-    : toTraceBubbleConfidence(effectiveHint?.confidence);
+    ? "confirmed" as const
+    : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
   const summaryItems = useMemo<SummaryItem[]>(() => {
     return detectedConstructs
