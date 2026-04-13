@@ -890,7 +890,9 @@ function EditorShell() {
       }
 
       const runtimeResolution =
-        mode === "deep-trace" ? resolveRuntimeCounterpart() : null;
+        mode === "deep-trace" && deepTraceScope && line === deepTraceScope.line
+          ? resolveRuntimeCounterpart()
+          : null;
       const targetLine =
         runtimeResolution?.line ??
         resolveStaticCounterpart(line, activeHint.symbol)?.line ??
@@ -906,6 +908,7 @@ function EditorShell() {
       activeHint,
       activeHintLine,
       mode,
+      deepTraceScope,
       requestJump,
       resolveRuntimeCounterpart,
       resolveStaticCounterpart,
