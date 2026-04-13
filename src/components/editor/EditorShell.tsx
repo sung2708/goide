@@ -359,7 +359,9 @@ function EditorShell() {
     }
 
     const runtimeResolution =
-      mode === "deep-trace" ? resolveRuntimeCounterpart() : null;
+      mode === "deep-trace" && deepTraceScope && activeHintLine === deepTraceScope.line
+        ? resolveRuntimeCounterpart()
+        : null;
     if (runtimeResolution) {
       return runtimeResolution;
     }
@@ -368,6 +370,7 @@ function EditorShell() {
     activeHint,
     activeHintLine,
     mode,
+    deepTraceScope,
     resolveRuntimeCounterpart,
     resolveStaticCounterpart,
   ]);
