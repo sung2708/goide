@@ -90,14 +90,18 @@ pub fn enrich_runtime_signals_with_correlation(
         }
 
         if let Some((candidate, score)) = best {
-            if score >= 0.70 {
+            if score >= 0.60 {
                 output.correlation_id =
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
-                if let Some(hint) = static_hint {
-                    output.counterpart_relative_path = Some(hint.relative_path.clone());
-                    output.counterpart_line = Some(hint.line);
-                    output.counterpart_column = Some(hint.column);
-                    output.counterpart_confidence = Some("confirmed".to_string());
+                
+                // Confirmed requires both runtime proximity and matching static evidence (score >= 0.70).
+                if score >= 0.70 {
+                    if let Some(hint) = static_hint {
+                        output.counterpart_relative_path = Some(hint.relative_path.clone());
+                        output.counterpart_line = Some(hint.line);
+                        output.counterpart_column = Some(hint.column);
+                        output.counterpart_confidence = Some("confirmed".to_string());
+                    }
                 } else {
                     output.counterpart_confidence = Some("likely".to_string());
                 }
@@ -174,26 +178,16 @@ mod tests {
     }
 
     #[test]
-    fn does_not_boost_score_for_non_matching_static_hint() {
-        // Source is line 10, candidate is line 15.
-        // Static hint suggests line 99, which is DIFFERENT from candidate.
+    fn enriches_with_likely_when_proximity_is_high_but_static_hint_is_missing() {
+        // Source line 10, candidate line 15. No static hint.
         let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
-        let hint = StaticCounterpartHint {
-            relative_path: "main.go".to_string(),
-            line: 99,
-            column: 4,
-            confidence: "predicted".to_string(),
-        };
-
-        // Base 0.5 + proximity (approx 0.15 for 10-to-11 distance).
-        // Total should be around 0.65, which is BELOW the 0.70 threshold.
-        let enriched = enrich_runtime_signals_with_correlation(&signals, Some(&hint));
         
-        let receiver = enriched
-            .iter()
-            .find(|item| item.wait_reason == "chan receive")
-            .expect("receiver signal exists");
-
-        assert!(receiver.correlation_id.is_none(), "Should not correlate without hint match boost");
+        let enriched = enrich_runtime_signals_with_correlation(&signals, None);
+        let receiver = enriched.iter().find(|s| s.thread_id == 10).unwrap();
+        
+        // Should reach 0.65 score (base 0.5 + proximity 0.15) which passes 0.60 gate.
+        assert!(receiver.correlation_id.is_some());
+        assert_eq!(receiver.counterpart_confidence.as_deref(), Some("likely"));
+        assert!(receiver.counterpart_line.is_none(), "Likely correlation should not emit unreliable location");
     }
 }
