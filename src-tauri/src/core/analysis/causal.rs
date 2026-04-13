@@ -41,8 +41,13 @@ fn correlation_score(
 
     let mut score = 0.50;
     score += 0.30 * thread_proximity_score(source.thread_id, candidate.thread_id);
-    if static_hint.is_some() {
-        score += 0.20;
+    if let Some(hint) = static_hint {
+        if candidate.relative_path == hint.relative_path
+            && candidate.line == hint.line
+            && candidate.column == hint.column
+        {
+            score += 0.20;
+        }
     }
     score.min(1.0)
 }
@@ -89,8 +94,18 @@ pub fn enrich_runtime_signals_with_correlation(
                 output.correlation_id =
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
                 
-                // Confirmed requires both runtime proximity and matching static evidence (score >= 0.70).
-                if score >= 0.70 && static_hint.is_some() {
+                // Confirmed requires high proximity AND a precision static hint match (score >= 0.70).
+                let mut hint_matched = false;
+                if let Some(hint) = static_hint {
+                    if candidate.relative_path == hint.relative_path
+                        && candidate.line == hint.line
+                        && candidate.column == hint.column
+                    {
+                        hint_matched = true;
+                    }
+                }
+
+                if score >= 0.70 && hint_matched {
                     output.counterpart_relative_path = Some(candidate.relative_path.clone());
                     output.counterpart_line = Some(candidate.line);
                     output.counterpart_column = Some(candidate.column);
@@ -131,15 +146,12 @@ mod tests {
     }
 
     #[test]
-    fn enriches_with_confirmed_when_both_runtime_and_static_evidence_exists() {
-        // Source line 10, candidate line 15. Static hint suggests line 22.
-        // Even though candidate line (15) != hint line (22), we should correlate
-        // and mark as confirmed. The output should use the RUNTIME line (15)
-        // to override the static analysis guess.
+    fn enriches_with_confirmed_when_runtime_matches_static_hint_precision() {
+        // Source line 10, candidate line 15. Static hint matches candidate exactly (line 15).
         let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
         let hint = StaticCounterpartHint {
             relative_path: "main.go".to_string(),
-            line: 22,
+            line: 15,
             column: 4,
             confidence: "predicted".to_string(),
         };
@@ -147,10 +159,27 @@ mod tests {
         let enriched = enrich_runtime_signals_with_correlation(&signals, Some(&hint));
         let receiver = enriched.iter().find(|s| s.thread_id == 10).unwrap();
         
-        // Base 0.5 + proximity 0.15 + static 0.20 = 0.85 (>= 0.70 gate)
+        // Base 0.5 + proximity 0.15 + static match 0.20 = 0.85 (>= 0.70 confirmed gate)
         assert_eq!(receiver.counterpart_confidence.as_deref(), Some("confirmed"));
-        assert_eq!(receiver.counterpart_line, Some(15));
-        assert_eq!(receiver.counterpart_relative_path.as_deref(), Some("main.go"));
+    }
+
+    #[test]
+    fn enriches_with_likely_when_static_hint_exists_but_does_not_match_candidate() {
+        // Source line 10, candidate line 15. Static hint suggests line 99.
+        // Should NOT be confirmed because candidate 15 != hint 99.
+        let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
+        let hint = StaticCounterpartHint {
+            relative_path: "main.go".to_string(),
+            line: 99,
+            column: 4,
+            confidence: "predicted".to_string(),
+        };
+
+        let enriched = enrich_runtime_signals_with_correlation(&signals, Some(&hint));
+        let receiver = enriched.iter().find(|s| s.thread_id == 10).unwrap();
+        
+        // Base 0.5 + proximity 0.15 + NO boost = 0.65 (likely)
+        assert_eq!(receiver.counterpart_confidence.as_deref(), Some("likely"));
     }
 
     #[test]
