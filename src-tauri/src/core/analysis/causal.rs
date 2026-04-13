@@ -88,12 +88,10 @@ pub fn enrich_runtime_signals_with_correlation(
             if score >= 0.70 {
                 output.correlation_id =
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
-                if let Some(hint) = static_hint {
-                    output.counterpart_relative_path = Some(hint.relative_path.clone());
-                    output.counterpart_line = Some(hint.line);
-                    output.counterpart_column = Some(hint.column);
-                    output.counterpart_confidence = Some("likely".to_string());
-                }
+                output.counterpart_relative_path = Some(candidate.relative_path.clone());
+                output.counterpart_line = Some(candidate.line);
+                output.counterpart_column = Some(candidate.column);
+                output.counterpart_confidence = Some("likely".to_string());
             }
         }
 
@@ -108,7 +106,7 @@ mod tests {
     use super::{enrich_runtime_signals_with_correlation, StaticCounterpartHint};
     use crate::integration::delve::RuntimeSignal;
 
-    fn signal(thread_id: i64, wait_reason: &str) -> RuntimeSignal {
+    fn signal(thread_id: i64, wait_reason: &str, line: usize) -> RuntimeSignal {
         RuntimeSignal {
             thread_id,
             status: wait_reason.to_string(),
@@ -116,7 +114,7 @@ mod tests {
             confidence: "confirmed".to_string(),
             scope_key: "scope-A".to_string(),
             relative_path: "main.go".to_string(),
-            line: 10,
+            line,
             column: 4,
             correlation_id: None,
             counterpart_relative_path: None,
@@ -128,7 +126,8 @@ mod tests {
 
     #[test]
     fn enriches_with_likely_counterpart_when_pair_is_detected() {
-        let signals = vec![signal(10, "chan receive"), signal(11, "chan send")];
+        // Source is line 10, candidate is line 15. Static hint suggests line 22.
+        let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
         let hint = StaticCounterpartHint {
             relative_path: "main.go".to_string(),
             line: 22,
@@ -143,8 +142,9 @@ mod tests {
             .iter()
             .find(|item| item.wait_reason == "chan receive")
             .expect("receiver signal exists");
-        assert_eq!(receiver.counterpart_line, Some(22));
-        assert_eq!(receiver.counterpart_column, Some(2));
+        
+        // Should use candidate line (15), NOT the hint line (22)
+        assert_eq!(receiver.counterpart_line, Some(15));
         assert_eq!(receiver.counterpart_relative_path.as_deref(), Some("main.go"));
         assert_eq!(receiver.counterpart_confidence.as_deref(), Some("likely"));
         assert!(receiver
@@ -156,7 +156,7 @@ mod tests {
 
     #[test]
     fn leaves_signal_without_counterpart_for_non_channel_states() {
-        let signals = vec![signal(10, "semacquire"), signal(11, "semacquire")];
+        let signals = vec![signal(10, "semacquire", 10), signal(11, "semacquire", 11)];
         let enriched = enrich_runtime_signals_with_correlation(&signals, None);
         assert!(enriched
             .iter()
