@@ -80,7 +80,7 @@ function normalizeRelativePath(path: string): string {
 }
 
 type CounterpartResolution = {
-  line: number;
+  line: number | null;
   confidence: ConcurrencyConfidence;
   source: "runtime" | "static";
 };
@@ -337,16 +337,11 @@ function EditorShell() {
       return null;
     }
     const counterpartLine = activeBlockedSignal.counterpartLine ?? null;
-    if (
-      counterpartLine === null ||
-      !Number.isInteger(counterpartLine) ||
-      counterpartLine < 1
-    ) {
-      return null;
-    }
+    const isValidLine =
+      Number.isInteger(counterpartLine) && counterpartLine !== null && counterpartLine >= 1;
 
     return {
-      line: counterpartLine,
+      line: isValidLine ? counterpartLine : null,
       confidence:
         (activeBlockedSignal.counterpartConfidence ?? "likely") as ConcurrencyConfidence,
       source: "runtime",
@@ -375,9 +370,10 @@ function EditorShell() {
     resolveStaticCounterpart,
   ]);
 
-  const hasCounterpart = useMemo(
-    () => resolveCounterpartFromActiveHint() !== null,
-    [resolveCounterpartFromActiveHint]
+  const hasCounterpart = useMemo(() => {
+    const resolution = resolveCounterpartFromActiveHint();
+    return resolution !== null && resolution.line !== null;
+  }, [resolveCounterpartFromActiveHint]);
   );
   const counterpartResolution = resolveCounterpartFromActiveHint();
   const effectiveHint =
