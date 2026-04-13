@@ -93,9 +93,6 @@ pub fn enrich_runtime_signals_with_correlation(
             if score >= 0.70 {
                 output.correlation_id =
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
-                output.counterpart_relative_path = Some(candidate.relative_path.clone());
-                output.counterpart_line = Some(candidate.line);
-                output.counterpart_column = Some(candidate.column);
                 output.counterpart_confidence = Some("likely".to_string());
             }
         }
@@ -148,9 +145,10 @@ mod tests {
             .find(|item| item.wait_reason == "chan receive")
             .expect("receiver signal exists");
         
-        // Should use candidate line (15), NOT the hint line (22)
-        assert_eq!(receiver.counterpart_line, Some(15));
-        assert_eq!(receiver.counterpart_relative_path.as_deref(), Some("main.go"));
+        // Should NOT emit location data because candidate signals mirror source scope coordinates.
+        // UI will fall back to accurately precomputed static hints for jump targets.
+        assert!(receiver.counterpart_line.is_none());
+        assert!(receiver.counterpart_relative_path.is_none());
         assert_eq!(receiver.counterpart_confidence.as_deref(), Some("likely"));
         assert!(receiver
             .correlation_id
