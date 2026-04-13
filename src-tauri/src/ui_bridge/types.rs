@@ -132,6 +132,8 @@ pub struct RuntimeSignalDto {
     pub wait_reason: String,
     pub confidence: ConcurrencyConfidenceDto,
     pub scope_key: String,
+    pub scope_line: usize,
+    pub scope_column: usize,
     pub relative_path: String,
     pub line: usize,
     pub column: usize,

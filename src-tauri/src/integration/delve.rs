@@ -42,6 +42,8 @@ pub struct RuntimeSignal {
     pub wait_reason: String,
     pub confidence: String,
     pub scope_key: String,
+    pub scope_line: usize,
+    pub scope_column: usize,
     pub relative_path: String,
     pub line: usize,
     pub column: usize,
@@ -317,6 +319,8 @@ pub fn thread_to_runtime_signal(
         wait_reason: parsed.wait_reason,
         confidence: "confirmed".to_string(),
         scope_key: scope.scope_key.clone(),
+        scope_line: scope.line,
+        scope_column: scope.column,
         relative_path: real_location
             .map(|loc| loc.relative_path.clone())
             .unwrap_or_else(|| scope.relative_path.clone()),

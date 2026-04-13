@@ -81,6 +81,7 @@ function normalizeRelativePath(path: string): string {
 
 type CounterpartResolution = {
   line: number | null;
+  column: number | null;
   confidence: ConcurrencyConfidence;
   source: "runtime" | "static";
 };
@@ -109,10 +110,14 @@ function runtimeSignalMatchesScope(
 ): boolean {
   // Scope key is treated as a preferred discriminator, but line/column/path remain
   // the authoritative identity in case key formatting drifts across layers.
+  const matchLine = signal.scopeLine ?? signal.line;
+  const matchColumn = signal.scopeColumn ?? signal.column;
+
   return (
-    normalizeRelativePath(signal.relativePath) === normalizeRelativePath(scope.filePath) &&
-    signal.line === scope.line &&
-    signal.column === scope.column
+    normalizeRelativePath(signal.relativePath) ===
+      normalizeRelativePath(scope.filePath) &&
+    matchLine === scope.line &&
+    matchColumn === scope.column
   );
 }
 
@@ -301,6 +306,7 @@ function EditorShell() {
         return candidates.length === 1
           ? {
               line: candidates[0].counterpartLine,
+              column: candidates[0].counterpartColumn,
               confidence: candidates[0].confidence,
               source: "static" as const,
             }
@@ -324,7 +330,8 @@ function EditorShell() {
 
       const confidence = filtered[0]?.confidence ?? "predicted";
       return {
-        line: uniqueCounterpartLines[0],
+        line: filtered[0].counterpartLine,
+        column: filtered[0].counterpartColumn,
         confidence,
         source: "static" as const,
       };
@@ -342,6 +349,7 @@ function EditorShell() {
 
     return {
       line: isValidLine ? counterpartLine : null,
+      column: activeBlockedSignal.counterpartColumn ?? null,
       confidence:
         (activeBlockedSignal.counterpartConfidence ?? "likely") as ConcurrencyConfidence,
       source: "runtime",
@@ -470,7 +478,7 @@ function EditorShell() {
         symbol: activeHint.symbol,
         counterpartRelativePath: staticCounterpart ? requestFilePath : null,
         counterpartLine: staticCounterpart?.line ?? null,
-        counterpartColumn: activeHint.column,
+        counterpartColumn: staticCounterpart?.column ?? null,
         counterpartConfidence: staticCounterpart?.confidence ?? null,
       });
       if (

@@ -27,7 +27,9 @@ export type LensHoverHint = {
 
 export type LensCounterpartMapping = {
   sourceLine: number;
+  sourceColumn: number;
   counterpartLine: number;
+  counterpartColumn: number;
   symbol: string;
   confidence: ConcurrencyConfidence;
 };
