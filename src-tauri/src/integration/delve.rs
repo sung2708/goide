@@ -66,6 +66,13 @@ pub struct DapThread {
     pub name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DapStackFrame {
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
+}
+
 pub struct DapClient {
     reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
     writer: tokio::net::tcp::OwnedWriteHalf,
@@ -197,6 +204,60 @@ impl DapClient {
         Ok(items)
     }
 
+    pub async fn stack_trace(&mut self, thread_id: i64) -> Result<Option<DapStackFrame>> {
+        let response = self
+            .request(
+                "stackTrace",
+                json!({
+                    "threadId": thread_id,
+                    "startFrame": 0,
+                    "levels": 1
+                }),
+            )
+            .await?;
+        ensure_success("stackTrace", &response)?;
+
+        let body = response
+            .get("body")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("stackTrace response missing body"))?;
+        let frames = body
+            .get("stackFrames")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("stackTrace response missing stackFrames array"))?;
+
+        if frames.is_empty() {
+            return Ok(None);
+        }
+
+        let frame = &frames[0];
+        let line = frame
+            .get("line")
+            .and_then(Value::as_u64)
+            .map(|l| l as usize)
+            .unwrap_or(0);
+        let column = frame
+            .get("column")
+            .and_then(Value::as_u64)
+            .map(|c| c as usize)
+            .unwrap_or(0);
+        let source_path = frame
+            .get("source")
+            .and_then(|s| s.get("path"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if source_path.is_empty() || line == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(DapStackFrame {
+            relative_path: source_path.to_string(),
+            line,
+            column,
+        }))
+    }
+
     pub async fn disconnect(&mut self) -> Result<()> {
         let response = self
             .request("disconnect", json!({ "terminateDebuggee": true }))
@@ -244,7 +305,11 @@ pub async fn spawn_dlv_dap(workspace_root: &Path) -> Result<DapProcess> {
     spawn_dlv_dap_with("dlv", &["dap", "--listen=127.0.0.1:0"], workspace_root).await
 }
 
-pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) -> Option<RuntimeSignal> {
+pub fn thread_to_runtime_signal(
+    thread: &DapThread,
+    scope: &RuntimeSignalScope,
+    real_location: Option<&DapStackFrame>,
+) -> Option<RuntimeSignal> {
     let parsed = parse_thread_wait_state(&thread.name)?;
     Some(RuntimeSignal {
         thread_id: thread.id,
@@ -252,9 +317,11 @@ pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) 
         wait_reason: parsed.wait_reason,
         confidence: "confirmed".to_string(),
         scope_key: scope.scope_key.clone(),
-        relative_path: scope.relative_path.clone(),
-        line: scope.line,
-        column: scope.column,
+        relative_path: real_location
+            .map(|loc| loc.relative_path.clone())
+            .unwrap_or_else(|| scope.relative_path.clone()),
+        line: real_location.map(|loc| loc.line).unwrap_or(scope.line),
+        column: real_location.map(|loc| loc.column).unwrap_or(scope.column),
         correlation_id: None,
         counterpart_relative_path: None,
         counterpart_line: None,

@@ -459,10 +459,20 @@ pub async fn activate_scoped_deep_trace(
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
                     match client.threads().await {
                         Ok(threads) => {
-                            let mapped = threads
-                                .iter()
-                                .filter_map(|thread| delve::thread_to_runtime_signal(thread, &runtime_scope))
-                                .collect::<Vec<_>>();
+                            let mut mapped = Vec::new();
+                            for thread in threads {
+                                // Performance: only fetch stack trace for relevant concurrency threads
+                                if delve::parse_thread_wait_state(&thread.name).is_some() {
+                                    let frame = client.stack_trace(thread.id).await.unwrap_or(None);
+                                    if let Some(signal) = delve::thread_to_runtime_signal(
+                                        &thread,
+                                        &runtime_scope,
+                                        frame.as_ref(),
+                                    ) {
+                                        mapped.push(signal);
+                                    }
+                                }
+                            }
                             let correlated = enrich_runtime_signals_with_correlation(
                                 &mapped,
                                 static_counterpart_hint.as_ref(),
