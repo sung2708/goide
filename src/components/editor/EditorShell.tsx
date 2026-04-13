@@ -357,10 +357,18 @@ function EditorShell() {
       mode === "deep-trace" && deepTraceScope && activeHintLine === deepTraceScope.line
         ? resolveRuntimeCounterpart()
         : null;
+    const staticResolution = resolveStaticCounterpart(activeHintLine, activeHint.symbol);
+
     if (runtimeResolution) {
+      if (runtimeResolution.line !== null) {
+        return runtimeResolution;
+      }
+      if (staticResolution) {
+        return { ...staticResolution, confidence: runtimeResolution.confidence };
+      }
       return runtimeResolution;
     }
-    return resolveStaticCounterpart(activeHintLine, activeHint.symbol);
+    return staticResolution;
   }, [
     activeHint,
     activeHintLine,
