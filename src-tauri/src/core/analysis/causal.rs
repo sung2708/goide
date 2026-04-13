@@ -41,8 +41,13 @@ fn correlation_score(
 
     let mut score = 0.50;
     score += 0.30 * thread_proximity_score(source.thread_id, candidate.thread_id);
-    if static_hint.is_some() {
-        score += 0.20;
+    if let Some(hint) = static_hint {
+        if candidate.relative_path == hint.relative_path
+            && candidate.line == hint.line
+            && candidate.column == hint.column
+        {
+            score += 0.20;
+        }
     }
     score.min(1.0)
 }
@@ -161,5 +166,29 @@ mod tests {
         assert!(enriched
             .iter()
             .all(|item| item.counterpart_line.is_none() && item.correlation_id.is_none()));
+    }
+
+    #[test]
+    fn does_not_boost_score_for_non_matching_static_hint() {
+        // Source is line 10, candidate is line 15.
+        // Static hint suggests line 99, which is DIFFERENT from candidate.
+        let signals = vec![signal(10, "chan receive", 10), signal(11, "chan send", 15)];
+        let hint = StaticCounterpartHint {
+            relative_path: "main.go".to_string(),
+            line: 99,
+            column: 4,
+            confidence: "predicted".to_string(),
+        };
+
+        // Base 0.5 + proximity (approx 0.15 for 10-to-11 distance).
+        // Total should be around 0.65, which is BELOW the 0.70 threshold.
+        let enriched = enrich_runtime_signals_with_correlation(&signals, Some(&hint));
+        
+        let receiver = enriched
+            .iter()
+            .find(|item| item.wait_reason == "chan receive")
+            .expect("receiver signal exists");
+
+        assert!(receiver.correlation_id.is_none(), "Should not correlate without hint match boost");
     }
 }
