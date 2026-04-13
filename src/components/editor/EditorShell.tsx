@@ -333,7 +333,7 @@ function EditorShell() {
   );
 
   const resolveRuntimeCounterpart = useCallback((): CounterpartResolution | null => {
-    if (!activeBlockedSignal) {
+    if (!activeBlockedSignal || activeBlockedSignal.correlationId === null) {
       return null;
     }
     const counterpartLine = activeBlockedSignal.counterpartLine ?? null;

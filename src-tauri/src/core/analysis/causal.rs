@@ -90,7 +90,7 @@ pub fn enrich_runtime_signals_with_correlation(
                     Some(correlation_id(&source.scope_key, source.thread_id, candidate.thread_id));
                 
                 // Confirmed requires both runtime proximity and matching static evidence (score >= 0.70).
-                if score >= 0.70 {
+                if score >= 0.70 && static_hint.is_some() {
                     output.counterpart_relative_path = Some(candidate.relative_path.clone());
                     output.counterpart_line = Some(candidate.line);
                     output.counterpart_column = Some(candidate.column);
