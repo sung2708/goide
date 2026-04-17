@@ -82,11 +82,26 @@ function normalizeRelativePath(path: string): string {
 function pathsReferToSameFile(pathA: string, pathB: string): boolean {
   const normalizedA = normalizeRelativePath(pathA).toLowerCase();
   const normalizedB = normalizeRelativePath(pathB).toLowerCase();
-  return (
-    normalizedA === normalizedB ||
-    normalizedA.endsWith(`/${normalizedB}`) ||
-    normalizedB.endsWith(`/${normalizedA}`)
-  );
+  if (normalizedA === normalizedB) {
+    return true;
+  }
+
+  const segmentsA = normalizedA.split("/").filter(Boolean);
+  const segmentsB = normalizedB.split("/").filter(Boolean);
+  const shorter = segmentsA.length <= segmentsB.length ? segmentsA : segmentsB;
+  const longer = segmentsA.length <= segmentsB.length ? segmentsB : segmentsA;
+
+  // Avoid basename-only matches (e.g. "main.go" vs "/repo/pkg/main.go").
+  if (shorter.length < 2) {
+    return false;
+  }
+
+  for (let index = 1; index <= shorter.length; index += 1) {
+    if (shorter[shorter.length - index] !== longer[longer.length - index]) {
+      return false;
+    }
+  }
+  return true;
 }
 
 type CounterpartResolution = {
@@ -1375,7 +1390,9 @@ function EditorShell() {
                         />
                         <TraceBubble
                           visible={isTraceBubbleVisible}
-                            confidence={traceBubbleConfidence}
+                          confidence={
+                            isBlockedConfirmedVisible ? "confirmed" : traceBubbleConfidence
+                          }
                           label={isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
                           reducedMotion={prefersReducedMotion}
