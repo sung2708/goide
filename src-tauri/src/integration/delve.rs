@@ -42,9 +42,20 @@ pub struct RuntimeSignal {
     pub wait_reason: String,
     pub confidence: String,
     pub scope_key: String,
+    pub scope_relative_path: String,
+    pub scope_line: usize,
+    pub scope_column: usize,
     pub relative_path: String,
     pub line: usize,
     pub column: usize,
+    pub sample_relative_path: Option<String>,
+    pub sample_line: Option<usize>,
+    pub sample_column: Option<usize>,
+    pub correlation_id: Option<String>,
+    pub counterpart_relative_path: Option<String>,
+    pub counterpart_line: Option<usize>,
+    pub counterpart_column: Option<usize>,
+    pub counterpart_confidence: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +70,13 @@ pub struct RuntimeSignalScope {
 pub struct DapThread {
     pub id: i64,
     pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DapStackFrame {
+    pub relative_path: String,
+    pub line: usize,
+    pub column: usize,
 }
 
 pub struct DapClient {
@@ -192,6 +210,60 @@ impl DapClient {
         Ok(items)
     }
 
+    pub async fn stack_trace(&mut self, thread_id: i64) -> Result<Option<DapStackFrame>> {
+        let response = self
+            .request(
+                "stackTrace",
+                json!({
+                    "threadId": thread_id,
+                    "startFrame": 0,
+                    "levels": 1
+                }),
+            )
+            .await?;
+        ensure_success("stackTrace", &response)?;
+
+        let body = response
+            .get("body")
+            .and_then(Value::as_object)
+            .ok_or_else(|| anyhow!("stackTrace response missing body"))?;
+        let frames = body
+            .get("stackFrames")
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow!("stackTrace response missing stackFrames array"))?;
+
+        if frames.is_empty() {
+            return Ok(None);
+        }
+
+        let frame = &frames[0];
+        let line = frame
+            .get("line")
+            .and_then(Value::as_u64)
+            .map(|l| l as usize)
+            .unwrap_or(0);
+        let column = frame
+            .get("column")
+            .and_then(Value::as_u64)
+            .map(|c| c as usize)
+            .unwrap_or(0);
+        let source_path = frame
+            .get("source")
+            .and_then(|s| s.get("path"))
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+
+        if source_path.is_empty() || line == 0 {
+            return Ok(None);
+        }
+
+        Ok(Some(DapStackFrame {
+            relative_path: source_path.to_string(),
+            line,
+            column,
+        }))
+    }
+
     pub async fn disconnect(&mut self) -> Result<()> {
         let response = self
             .request("disconnect", json!({ "terminateDebuggee": true }))
@@ -239,7 +311,11 @@ pub async fn spawn_dlv_dap(workspace_root: &Path) -> Result<DapProcess> {
     spawn_dlv_dap_with("dlv", &["dap", "--listen=127.0.0.1:0"], workspace_root).await
 }
 
-pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) -> Option<RuntimeSignal> {
+pub fn thread_to_runtime_signal(
+    thread: &DapThread,
+    scope: &RuntimeSignalScope,
+    real_location: Option<&DapStackFrame>,
+) -> Option<RuntimeSignal> {
     let parsed = parse_thread_wait_state(&thread.name)?;
     Some(RuntimeSignal {
         thread_id: thread.id,
@@ -247,9 +323,21 @@ pub fn thread_to_runtime_signal(thread: &DapThread, scope: &RuntimeSignalScope) 
         wait_reason: parsed.wait_reason,
         confidence: "confirmed".to_string(),
         scope_key: scope.scope_key.clone(),
+        scope_relative_path: scope.relative_path.clone(),
+        scope_line: scope.line,
+        scope_column: scope.column,
+        // Keep primary coordinates scoped so frontend scope filtering stays stable.
         relative_path: scope.relative_path.clone(),
         line: scope.line,
         column: scope.column,
+        sample_relative_path: real_location.map(|loc| loc.relative_path.clone()),
+        sample_line: real_location.map(|loc| loc.line),
+        sample_column: real_location.map(|loc| loc.column),
+        correlation_id: None,
+        counterpart_relative_path: None,
+        counterpart_line: None,
+        counterpart_column: None,
+        counterpart_confidence: None,
     })
 }
 
@@ -455,15 +543,22 @@ mod tests {
                 line: 10,
                 column: 2,
             },
+            None,
         )
         .expect("must map supported thread");
         assert_eq!(signal.thread_id, 42);
         assert_eq!(signal.wait_reason, "io wait");
         assert_eq!(signal.confidence, "confirmed");
         assert_eq!(signal.scope_key, "pkg/main.go:10:2:channel:jobs");
+        assert_eq!(signal.scope_relative_path, "pkg/main.go");
         assert_eq!(signal.relative_path, "pkg/main.go");
         assert_eq!(signal.line, 10);
         assert_eq!(signal.column, 2);
+        assert!(signal.sample_relative_path.is_none());
+        assert!(signal.sample_line.is_none());
+        assert!(signal.sample_column.is_none());
+        assert!(signal.correlation_id.is_none());
+        assert!(signal.counterpart_line.is_none());
     }
 
     #[test]

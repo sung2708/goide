@@ -18,6 +18,7 @@ import {
 import type {
   ApiResponse,
   CompletionItem,
+  ConcurrencyConfidence,
   DeepTraceConstructKind,
   EditorDiagnostic,
   RuntimeSignal,
@@ -78,6 +79,51 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/").trim();
 }
 
+function pathsReferToSameFile(pathA: string, pathB: string): boolean {
+  const normalizedA = normalizeRelativePath(pathA).toLowerCase();
+  const normalizedB = normalizeRelativePath(pathB).toLowerCase();
+  if (normalizedA === normalizedB) {
+    return true;
+  }
+
+  const segmentsA = normalizedA.split("/").filter(Boolean);
+  const segmentsB = normalizedB.split("/").filter(Boolean);
+  const shorter = segmentsA.length <= segmentsB.length ? segmentsA : segmentsB;
+  const longer = segmentsA.length <= segmentsB.length ? segmentsB : segmentsA;
+
+  // Avoid basename-only matches (e.g. "main.go" vs "/repo/pkg/main.go").
+  if (shorter.length < 2) {
+    return false;
+  }
+
+  for (let index = 1; index <= shorter.length; index += 1) {
+    if (shorter[shorter.length - index] !== longer[longer.length - index]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+type CounterpartResolution = {
+  line: number | null;
+  column: number | null;
+  confidence: ConcurrencyConfidence;
+  source: "runtime" | "static";
+};
+
+function toTraceBubbleConfidence(
+  confidence?: ConcurrencyConfidence | null
+): TraceBubbleConfidence {
+  switch ((confidence ?? "").toLowerCase()) {
+    case "confirmed":
+      return "confirmed";
+    case "likely":
+      return "likely";
+    default:
+      return "predicted";
+  }
+}
+
 function runtimeSignalMatchesScope(
   signal: RuntimeSignal,
   scope: {
@@ -89,11 +135,108 @@ function runtimeSignalMatchesScope(
 ): boolean {
   // Scope key is treated as a preferred discriminator, but line/column/path remain
   // the authoritative identity in case key formatting drifts across layers.
+  const matchLine = signal.scopeLine ?? signal.line;
+  const matchColumn = signal.scopeColumn ?? signal.column;
+
   return (
-    normalizeRelativePath(signal.relativePath) === normalizeRelativePath(scope.filePath) &&
-    signal.line === scope.line &&
-    signal.column === scope.column
+    normalizeRelativePath(signal.scopeRelativePath ?? signal.relativePath) ===
+      normalizeRelativePath(scope.filePath) &&
+    matchLine === scope.line &&
+    matchColumn === scope.column
   );
+}
+
+function isHintInDeepTraceScope(
+  hint: {
+    line: number;
+    column: number;
+    symbol: string | null;
+  } | null,
+  scope: {
+    line: number;
+    column: number;
+    symbol: string | null;
+  } | null
+): boolean {
+  if (!hint || !scope) {
+    return false;
+  }
+  return (
+    hint.line === scope.line &&
+    hint.column === scope.column &&
+    hint.symbol === scope.symbol
+  );
+}
+
+function confidenceRank(confidence?: ConcurrencyConfidence | null): number {
+  switch ((confidence ?? "").toLowerCase()) {
+    case "confirmed":
+      return 3;
+    case "likely":
+      return 2;
+    case "predicted":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function isUsableRuntimeCounterpart(
+  signal: RuntimeSignal,
+  activeFilePath: string
+): boolean {
+  const line = signal.counterpartLine ?? null;
+  const hasValidLine = Number.isInteger(line) && line !== null && line >= 1;
+  if (!hasValidLine) {
+    return false;
+  }
+  const counterpartPath = signal.counterpartRelativePath ?? null;
+  return (
+    counterpartPath === null || pathsReferToSameFile(counterpartPath, activeFilePath)
+  );
+}
+
+function selectActiveBlockedSignal(
+  blockedCandidates: RuntimeSignal[],
+  activeFilePath: string
+): RuntimeSignal | null {
+  if (blockedCandidates.length === 0) {
+    return null;
+  }
+
+  const sorted = [...blockedCandidates].sort((left, right) => {
+    const leftUsable = isUsableRuntimeCounterpart(left, activeFilePath) ? 1 : 0;
+    const rightUsable = isUsableRuntimeCounterpart(right, activeFilePath) ? 1 : 0;
+    if (leftUsable !== rightUsable) {
+      return rightUsable - leftUsable;
+    }
+
+    const leftConfidence = confidenceRank(left.counterpartConfidence ?? left.confidence);
+    const rightConfidence = confidenceRank(right.counterpartConfidence ?? right.confidence);
+    if (leftConfidence !== rightConfidence) {
+      return rightConfidence - leftConfidence;
+    }
+
+    const leftHasCounterpartLine =
+      Number.isInteger(left.counterpartLine) && (left.counterpartLine ?? 0) >= 1 ? 1 : 0;
+    const rightHasCounterpartLine =
+      Number.isInteger(right.counterpartLine) && (right.counterpartLine ?? 0) >= 1 ? 1 : 0;
+    if (leftHasCounterpartLine !== rightHasCounterpartLine) {
+      return rightHasCounterpartLine - leftHasCounterpartLine;
+    }
+
+    const leftHasCorrelationId = left.correlationId ? 1 : 0;
+    const rightHasCorrelationId = right.correlationId ? 1 : 0;
+    if (leftHasCorrelationId !== rightHasCorrelationId) {
+      return rightHasCorrelationId - leftHasCorrelationId;
+    }
+
+    if (left.threadId !== right.threadId) {
+      return left.threadId - right.threadId;
+    }
+    return left.waitReason.localeCompare(right.waitReason);
+  });
+  return sorted[0] ?? null;
 }
 
 async function getRuntimeSignalsWithTimeout(
@@ -186,6 +329,7 @@ function EditorShell() {
     filePath: string;
     line: number;
     column: number;
+    symbol: string | null;
     scopeKey: string | null;
     anchorTop: number;
     anchorLeft: number;
@@ -262,13 +406,10 @@ function EditorShell() {
   const traceBubbleLabel = activeHint?.kind
     ? (KIND_LABELS[activeHint.kind] ?? activeHint.kind)
     : "";
-
-  const traceBubbleConfidence: TraceBubbleConfidence =
-    (activeHint?.confidence?.toLowerCase() as TraceBubbleConfidence) ?? "predicted";
   const isBlockedConfirmedVisible = mode === "deep-trace" && activeBlockedSignal !== null;
   const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
 
-  const resolveCounterpartLine = useCallback(
+  const resolveStaticCounterpart = useCallback(
     (sourceLine: number, hintSymbol?: string | null) => {
       const candidates = counterpartMappings.filter(
         (mapping) => mapping.sourceLine === sourceLine
@@ -281,7 +422,14 @@ function EditorShell() {
         typeof hintSymbol === "string" ? hintSymbol.trim() : "";
 
       if (!normalizedSymbol) {
-        return candidates.length === 1 ? candidates[0].counterpartLine : null;
+        return candidates.length === 1
+          ? {
+              line: candidates[0].counterpartLine,
+              column: candidates[0].counterpartColumn,
+              confidence: candidates[0].confidence,
+              source: "static" as const,
+            }
+          : null;
       }
 
       const filtered = candidates.filter(
@@ -295,23 +443,125 @@ function EditorShell() {
       const uniqueCounterpartLines = [
         ...new Set(filtered.map((m) => m.counterpartLine)),
       ];
-      return uniqueCounterpartLines.length === 1 ? uniqueCounterpartLines[0] : null;
+      if (uniqueCounterpartLines.length !== 1) {
+        return null;
+      }
+
+      const confidence = filtered[0]?.confidence ?? "predicted";
+      return {
+        line: filtered[0].counterpartLine,
+        column: filtered[0].counterpartColumn,
+        confidence,
+        source: "static" as const,
+      };
     },
     [counterpartMappings]
   );
+
+  const resolveRuntimeCounterpart = useCallback((): CounterpartResolution | null => {
+    if (
+      !activeBlockedSignal ||
+      activeBlockedSignal.correlationId === null ||
+      activeFilePath === null
+    ) {
+      return null;
+    }
+    const counterpartPath = activeBlockedSignal.counterpartRelativePath ?? null;
+    const isSameFile =
+      counterpartPath === null ||
+      pathsReferToSameFile(counterpartPath, activeFilePath);
+    const counterpartLine = activeBlockedSignal.counterpartLine ?? null;
+    const isValidLine =
+      isSameFile &&
+      Number.isInteger(counterpartLine) &&
+      counterpartLine !== null &&
+      counterpartLine >= 1;
+
+    return {
+      line: isValidLine ? counterpartLine : null,
+      column: activeBlockedSignal.counterpartColumn ?? null,
+      confidence:
+        (activeBlockedSignal.counterpartConfidence ?? "likely") as ConcurrencyConfidence,
+      source: "runtime",
+    };
+  }, [activeBlockedSignal, activeFilePath]);
 
   const resolveCounterpartFromActiveHint = useCallback(() => {
     if (activeHintLine === null || activeHint?.kind !== "channel") {
       return null;
     }
 
-    return resolveCounterpartLine(activeHintLine, activeHint.symbol);
-  }, [activeHint, activeHintLine, resolveCounterpartLine]);
+    const isActiveHintTraced = isHintInDeepTraceScope(
+      {
+        line: activeHintLine,
+        column: activeHint.column,
+        symbol: activeHint.symbol ?? null,
+      },
+      deepTraceScope
+        ? {
+            line: deepTraceScope.line,
+            column: deepTraceScope.column,
+            symbol: deepTraceScope.symbol,
+          }
+        : null
+    );
 
-  const hasCounterpart = useMemo(
-    () => resolveCounterpartFromActiveHint() !== null,
-    [resolveCounterpartFromActiveHint]
-  );
+    const runtimeResolution =
+      mode === "deep-trace" && deepTraceScope && isActiveHintTraced
+        ? resolveRuntimeCounterpart()
+        : null;
+    const staticResolution = resolveStaticCounterpart(activeHintLine, activeHint.symbol);
+
+    if (runtimeResolution) {
+      if (runtimeResolution.line !== null) {
+        return runtimeResolution;
+      }
+      if (staticResolution) {
+        return staticResolution;
+      }
+      return runtimeResolution;
+    }
+    return staticResolution;
+  }, [
+    activeHint,
+    activeHintLine,
+    mode,
+    deepTraceScope,
+    resolveRuntimeCounterpart,
+    resolveStaticCounterpart,
+  ]);
+
+  const hasCounterpart = useMemo(() => {
+    const resolution = resolveCounterpartFromActiveHint();
+    return resolution !== null && resolution.line !== null;
+  }, [resolveCounterpartFromActiveHint]);
+
+  const counterpartResolution = resolveCounterpartFromActiveHint();
+  const isActiveHintRuntimeConfirmed =
+    isBlockedConfirmedVisible &&
+    mode === "deep-trace" &&
+    deepTraceScope !== null &&
+    activeHint !== null &&
+    activeHintLine !== null &&
+    isHintInDeepTraceScope(
+      {
+        line: activeHintLine,
+        column: activeHint.column,
+        symbol: activeHint.symbol ?? null,
+      },
+      {
+        line: deepTraceScope.line,
+        column: deepTraceScope.column,
+        symbol: deepTraceScope.symbol,
+      }
+    );
+  const effectiveHint =
+    isActiveHintRuntimeConfirmed && activeHint
+      ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
+      : activeHint;
+  const traceBubbleConfidence = isActiveHintRuntimeConfirmed
+    ? "confirmed" as const
+    : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
   const summaryItems = useMemo<SummaryItem[]>(() => {
     return detectedConstructs
@@ -359,7 +609,7 @@ function EditorShell() {
   }, [activeFileContent]);
 
   const handleJump = useCallback(() => {
-    requestJump(resolveCounterpartFromActiveHint());
+    requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
   }, [requestJump, resolveCounterpartFromActiveHint]);
 
   const handleDeepTrace = useCallback(async () => {
@@ -375,6 +625,7 @@ function EditorShell() {
     if (line < 1 || column < 1) {
       return;
     }
+    const staticCounterpart = resolveStaticCounterpart(line, activeHint.symbol);
     const requestWorkspacePath = workspacePath;
     const requestFilePath = activeFilePath;
     deepTraceRequestIdRef.current += 1;
@@ -388,6 +639,10 @@ function EditorShell() {
         column,
         constructKind: activeHint.kind as DeepTraceConstructKind,
         symbol: activeHint.symbol,
+        counterpartRelativePath: staticCounterpart ? requestFilePath : null,
+        counterpartLine: staticCounterpart?.line ?? null,
+        counterpartColumn: staticCounterpart?.column ?? null,
+        counterpartConfidence: staticCounterpart?.confidence ?? null,
       });
       if (
         requestId !== deepTraceRequestIdRef.current ||
@@ -403,6 +658,7 @@ function EditorShell() {
           filePath: requestFilePath,
           line,
           column,
+          symbol: activeHint.symbol ?? null,
           scopeKey: response.data.scopeKey ?? null,
           anchorTop: interactionAnchor?.top ?? 24,
           anchorLeft: interactionAnchor?.left ?? 12,
@@ -421,6 +677,7 @@ function EditorShell() {
     activeFilePath,
     activeHint,
     activeHintLine,
+    resolveStaticCounterpart,
     runtimeAvailability,
     workspacePath,
   ]);
@@ -506,8 +763,11 @@ function EditorShell() {
                   runtimeSignalMatchesScope(signal, scopeSnapshot)
               )
             : [];
-
-        setActiveBlockedSignal(blockedCandidates[0] ?? null);
+        const prioritizedCandidate = selectActiveBlockedSignal(
+          blockedCandidates,
+          scopeSnapshot.filePath
+        );
+        setActiveBlockedSignal(prioritizedCandidate);
       } catch (_error) {
         if (
           !cancelled &&
@@ -799,7 +1059,27 @@ function EditorShell() {
         return false;
       }
 
-      const targetLine = resolveCounterpartLine(line, activeHint.symbol);
+      const runtimeResolution =
+        mode === "deep-trace" &&
+        deepTraceScope &&
+        isHintInDeepTraceScope(
+          {
+            line,
+            column: activeHint.column,
+            symbol: activeHint.symbol ?? null,
+          },
+          {
+            line: deepTraceScope.line,
+            column: deepTraceScope.column,
+            symbol: deepTraceScope.symbol,
+          }
+        )
+          ? resolveRuntimeCounterpart()
+          : null;
+      const targetLine =
+        runtimeResolution?.line ??
+        resolveStaticCounterpart(line, activeHint.symbol)?.line ??
+        null;
       if (targetLine === null) {
         return false;
       }
@@ -807,7 +1087,15 @@ function EditorShell() {
       requestJump(targetLine);
       return true;
     },
-    [activeHint, activeHintLine, requestJump, resolveCounterpartLine]
+    [
+      activeHint,
+      activeHintLine,
+      mode,
+      deepTraceScope,
+      requestJump,
+      resolveRuntimeCounterpart,
+      resolveStaticCounterpart,
+    ]
   );
 
   const openCommandPalette = useCallback(() => {
@@ -1094,7 +1382,7 @@ function EditorShell() {
                         {activeFilePath}
                       </div>
                       <div className="relative flex-1 min-h-0">
-                        <HintUnderline hint={activeHint} />
+                        <HintUnderline hint={effectiveHint} />
                         <ThreadLine 
                           visible={isInlineActionsVisible && hasCounterpart}
                           sourceAnchor={interactionAnchor}
@@ -1103,9 +1391,7 @@ function EditorShell() {
                         <TraceBubble
                           visible={isTraceBubbleVisible}
                           confidence={
-                            isBlockedConfirmedVisible
-                              ? "confirmed"
-                              : traceBubbleConfidence
+                            isBlockedConfirmedVisible ? "confirmed" : traceBubbleConfidence
                           }
                           label={isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
@@ -1135,8 +1421,8 @@ function EditorShell() {
                           <CodeEditor
                             value={activeFileContent}
                             selectionContextKey={activeFilePath}
-                            hintLine={activeHintLine}
-                            counterpartLine={resolveCounterpartFromActiveHint()}
+                              hintLine={activeHintLine}
+                              counterpartLine={counterpartResolution?.line ?? null}
                             jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
