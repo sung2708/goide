@@ -9,7 +9,7 @@ import {
 type UseHoverHintArgs = {
   workspacePath: string | null;
   activeFilePath: string | null;
-  runtimeAvailability: "available" | "unavailable";
+  runtimeAvailability: "available" | "unavailable" | "degraded";
   selectedLine?: number | null;
   visibleRange?: VisibleLineRange | null;
   detectedConstructs: LensConstruct[];
@@ -54,7 +54,11 @@ export function useHoverHint({
 
     // Explicitly consume runtime availability so degraded-mode fallback is part
     // of the hint pipeline contract even when only predicted hints are present.
-    if (runtimeAvailability !== "available" && runtimeAvailability !== "unavailable") {
+    if (
+      runtimeAvailability !== "available" &&
+      runtimeAvailability !== "unavailable" &&
+      runtimeAvailability !== "degraded"
+    ) {
       return null;
     }
 

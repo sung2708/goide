@@ -50,4 +50,17 @@ describe("InlineActions", () => {
     expect(onJump).toHaveBeenCalledTimes(1);
     expect(onDeepTrace).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps Deep Trace enabled when runtime is degraded", () => {
+    render(
+      <InlineActions
+        visible
+        runtimeAvailability="degraded"
+        hasCounterpart
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /jump/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /deep trace/i })).toBeEnabled();
+  });
 });

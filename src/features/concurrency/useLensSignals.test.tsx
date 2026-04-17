@@ -215,13 +215,17 @@ describe("useLensSignals", () => {
       expect(result.current.counterpartMappings).toEqual([
         {
           sourceLine: 10,
+          sourceColumn: 1,
           counterpartLine: 22,
+          counterpartColumn: 1,
           symbol: "jobs",
           confidence: ConcurrencyConfidence.Predicted,
         },
         {
           sourceLine: 22,
+          sourceColumn: 1,
           counterpartLine: 10,
+          counterpartColumn: 1,
           symbol: "jobs",
           confidence: ConcurrencyConfidence.Predicted,
         },

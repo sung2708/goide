@@ -138,4 +138,25 @@ describe("useHoverHint", () => {
     expect(result.current.activeHint?.line).toBe(9);
     expect(result.current.activeHintLine).toBe(9);
   });
+
+  it("keeps predicted fallback hints active when runtime is degraded", () => {
+    const { result } = renderHook(() =>
+      useHoverHint({
+        workspacePath: "C:/repo",
+        activeFilePath: "main.go",
+        runtimeAvailability: "degraded",
+        visibleRange: { fromLine: 1, toLine: 20 },
+        detectedConstructs: [makeConstruct(11, ConcurrencyConfidence.Predicted)],
+      })
+    );
+
+    act(() => {
+      result.current.setHoveredLine(11);
+    });
+
+    expect(result.current.activeHint?.line).toBe(11);
+    expect(result.current.activeHint?.confidence).toBe(
+      ConcurrencyConfidence.Predicted
+    );
+  });
 });
