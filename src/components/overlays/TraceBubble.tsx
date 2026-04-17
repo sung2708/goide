@@ -16,18 +16,18 @@ const CONFIDENCE_CONFIG: Record<
 > = {
   predicted: {
     chip: "Predicted",
-    color: "var(--goide-signal-predicted, #9399b2)",
-    bgColor: "var(--goide-signal-predicted-bg, rgba(147,153,178,0.08))",
+    color: "var(--signal-predicted)",
+    bgColor: "var(--signal-predicted-bg)",
   },
   likely: {
     chip: "Likely",
-    color: "var(--goide-signal-likely, #89b4fa)",
-    bgColor: "var(--goide-signal-likely-bg, rgba(137,180,250,0.08))",
+    color: "var(--signal-likely)",
+    bgColor: "var(--signal-likely-bg)",
   },
   confirmed: {
     chip: "Confirmed",
-    color: "var(--goide-signal-confirmed, #a6e3a1)",
-    bgColor: "var(--goide-signal-confirmed-bg, rgba(166,227,161,0.08))",
+    color: "var(--signal-confirmed)",
+    bgColor: "var(--signal-confirmed-bg)",
   },
 };
 
@@ -57,33 +57,33 @@ function TraceBubble({
       }}
     >
       <div
-        className="flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium"
+        className="glass-morphism flex items-center gap-2 rounded-full border px-3 py-1 text-[9px] font-bold shadow-2xl transition-all animate-reveal-up"
         style={{
           borderColor: config.color,
-          backgroundColor: config.bgColor,
-          color: "var(--goide-text-muted, #a6adc8)",
+          backgroundColor: `rgba(30, 30, 46, 0.45)`,
+          color: "var(--text)",
         }}
       >
         {/* Operation type label */}
-        <span className="uppercase tracking-[0.1em]">{label}</span>
+        <span className="uppercase tracking-[0.16em] opacity-80">{label}</span>
 
         {/* Separator */}
-        <span className="opacity-40">·</span>
+        <span className="opacity-20">|</span>
 
         {/* Confidence chip */}
         <span
-          className="uppercase tracking-[0.12em]"
+          className="uppercase tracking-[0.2em]"
           style={{ color: config.color }}
         >
           {config.chip}
         </span>
         {blocked ? (
           <>
-            <span className="opacity-40">·</span>
-            <span className="inline-flex items-center gap-1 uppercase tracking-[0.12em] text-[10px] text-[var(--goide-signal-blocked,#f38ba8)]">
+            <span className="opacity-20">|</span>
+            <span className="inline-flex items-center gap-1.5 uppercase tracking-[0.16em] text-[9px] text-[var(--signal-blocked)]">
               <span
                 data-testid="trace-bubble-blocked-indicator"
-                className={`inline-block h-1.5 w-1.5 rounded-full bg-[var(--goide-signal-blocked,#f38ba8)] ${
+                className={`inline-block h-2 w-2 rounded-full bg-[var(--signal-blocked)] ${
                   reducedMotion ? "" : "animate-pulse"
                 }`}
               />

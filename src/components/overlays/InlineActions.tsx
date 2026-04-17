@@ -1,6 +1,6 @@
 type InlineActionsProps = {
   visible: boolean;
-  runtimeAvailability: "available" | "unavailable";
+  runtimeAvailability: "available" | "unavailable" | "degraded";
   hasCounterpart?: boolean;
   anchorTop?: number | null;
   anchorLeft?: number | null;
@@ -22,7 +22,7 @@ function InlineActions({
   }
 
   const canJump = hasCounterpart;
-  const canDeepTrace = runtimeAvailability === "available";
+  const canDeepTrace = runtimeAvailability !== "unavailable";
 
   return (
     <div
