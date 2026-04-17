@@ -38,9 +38,7 @@ describe("BottomPanel", () => {
     await user.click(screen.getByRole("button", { name: /clear/i }));
 
     expect(screen.queryByText("line 1")).toBeNull();
-    expect(
-      screen.getByText(/No output to display\. Click "Run" to execute the program\./i)
-    ).toBeInTheDocument();
+    expect(screen.getByText(/Unit idle\. Standby for output\./i)).toBeInTheDocument();
   });
 
   it("invokes onRun when run-again is clicked", async () => {
@@ -52,5 +50,12 @@ describe("BottomPanel", () => {
     await user.click(screen.getByRole("button", { name: /run again/i }));
 
     expect(onRun).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the panel height bounded for long output", () => {
+    render(<BottomPanel output={[]} />);
+
+    expect(screen.getByTestId("bottom-panel")).toHaveClass("max-h-[40vh]");
+    expect(screen.getByTestId("bottom-panel")).toHaveClass("min-h-[11rem]");
   });
 });

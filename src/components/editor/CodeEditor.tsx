@@ -537,6 +537,7 @@ function CodeEditor({
         value={value}
         height="100%"
         width="100%"
+        theme="dark"
         basicSetup={false}
         extensions={extensions}
         onCreateEditor={(view) => {

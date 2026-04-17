@@ -1,4 +1,4 @@
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView, lineNumbers, drawSelection } from "@codemirror/view";
 import { go } from "@codemirror/lang-go";
 import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
@@ -10,14 +10,17 @@ const editorTheme = EditorView.theme(
   {
     "&": {
       height: "100%",
-      backgroundColor: "#11111b",
-      color: "#cdd6f4",
+      backgroundColor: "var(--crust) !important",
+      color: "var(--text) !important",
+    },
+    "&.cm-focused": {
+      outline: "none",
     },
     ".cm-scroller": {
       fontFamily:
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
-      fontSize: "12px",
-      lineHeight: "1.55",
+      fontSize: "13.5px",
+      lineHeight: "1.65",
     },
     ".cm-content": {
       padding: "10px 0",
@@ -28,64 +31,77 @@ const editorTheme = EditorView.theme(
     [`.cm-line.${PREDICTED_HINT_UNDERLINE_CLASS}`]: {
       textDecorationLine: "underline",
       textDecorationStyle: "dotted",
-      textDecorationColor: GOIDE_SIGNAL_PREDICTED_TOKEN,
+      textDecorationColor: "var(--signal-predicted)",
       textDecorationThickness: "1px",
       textUnderlineOffset: "3px",
     },
     ".cm-lintRange-error": {
-      backgroundColor: "rgba(243, 139, 168, 0.22)",
-      textDecoration: "underline wavy #f38ba8",
+      backgroundColor: "var(--signal-blocked-bg)",
+      textDecoration: "underline wavy var(--red)",
       textUnderlineOffset: "2px",
     },
     ".cm-lintRange-warning": {
-      backgroundColor: "rgba(249, 226, 175, 0.2)",
-      textDecoration: "underline wavy #f9e2af",
+      backgroundColor: "var(--signal-likely-bg)",
+      textDecoration: "underline wavy var(--yellow)",
       textUnderlineOffset: "2px",
     },
     ".cm-lintPoint-error, .cm-diagnostic-error": {
-      color: "#f38ba8",
-      borderColor: "#f38ba8",
+      color: "var(--red)",
+      borderColor: "var(--red)",
     },
     ".cm-lintPoint-warning, .cm-diagnostic-warning": {
-      color: "#f9e2af",
-      borderColor: "#f9e2af",
+      color: "var(--yellow)",
+      borderColor: "var(--yellow)",
     },
     ".cm-gutters": {
-      backgroundColor: "#11111b",
-      color: "#6c7086",
-      borderRight: "1px solid #313244",
+      backgroundColor: "var(--crust) !important",
+      color: "var(--overlay0)",
+      borderRight: "1px solid var(--surface0)",
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
       fontSize: "11px",
     },
     ".cm-activeLine": {
-      backgroundColor: "#181825",
+      backgroundColor: "var(--surface0)",
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: "var(--surface0)",
+      color: "var(--text)",
     },
     ".cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "#313244",
+      backgroundColor: "var(--surface1) !important",
     },
-    ".cm-cursor": {
-      borderLeftColor: "#f5e0dc",
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeft: "2.5px solid var(--rosewater)",
+      animation: "cm-blink 1s steps(1) infinite",
+    },
+    "@keyframes cm-blink": {
+      "0%": { opacity: "1" },
+      "50%": { opacity: "0" },
+      "100%": { opacity: "1" },
     },
   },
   { dark: true }
 );
 
 const syntaxStyle = HighlightStyle.define([
-  { tag: tags.comment, color: "#6c7086" },
-  { tag: tags.keyword, color: "#cba6f7" },
-  { tag: tags.string, color: "#a6e3a1" },
-  { tag: [tags.number, tags.bool, tags.null], color: "#fab387" },
-  { tag: tags.typeName, color: "#f9e2af" },
-  { tag: tags.className, color: "#f9e2af" },
-  { tag: tags.function(tags.variableName), color: "#89b4fa" },
-  { tag: tags.operator, color: "#89b4fa" },
-  { tag: tags.variableName, color: "#cdd6f4" },
+  { tag: tags.comment, color: "var(--overlay0)", fontStyle: "italic" },
+  { tag: tags.keyword, color: "var(--mauve)", fontWeight: "700" },
+  { tag: tags.string, color: "var(--green)" },
+  { tag: [tags.number, tags.bool, tags.null], color: "var(--peach)" },
+  { tag: tags.typeName, color: "var(--yellow)" },
+  { tag: tags.className, color: "var(--yellow)" },
+  { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "500" },
+  { tag: tags.operator, color: "var(--sky)" },
+  { tag: tags.variableName, color: "var(--text)" },
+  { tag: tags.propertyName, color: "var(--blue)" },
+  { tag: tags.atom, color: "var(--maroon)" },
 ]);
 
 export const goideEditorExtensions = [
   lineNumbers(),
+  drawSelection(),
   go(),
   syntaxHighlighting(syntaxStyle),
   editorTheme,

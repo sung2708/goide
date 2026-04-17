@@ -19,9 +19,9 @@ function CommandPalette({ onClose }: CommandPaletteProps) {
       role="dialog"
       aria-modal="true"
       aria-label="Command palette"
-      className="absolute inset-0 z-20 flex items-start justify-center bg-[#11111b]/70 px-4 pt-20"
+      className="absolute inset-0 z-50 flex items-start justify-center backdrop-blur-md bg-[rgba(17,17,27,0.4)] px-4 pt-24 animate-fade-in"
     >
-      <section className="w-full max-w-xl rounded border border-[#313244] bg-[#181825] shadow-lg">
+      <section className="glass-morphism utilitarian-noise w-full max-w-xl rounded-lg border border-[var(--surface0)] shadow-2xl overflow-hidden" style={{ backgroundColor: 'rgba(30, 30, 46, 0.85)' }}>
         <div className="flex items-center justify-between border-b border-[#313244] px-4 py-3">
           <p className="text-[11px] uppercase tracking-[0.16em] text-[#a6adc8]">
             Command Palette

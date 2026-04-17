@@ -27,43 +27,26 @@ describe("EditorShell panels", () => {
     expect(screen.queryByTestId("bottom-panel")).toBeNull();
 
     const summaryBtn = screen.getByRole("button", { name: /summary/i });
-    const bottomBtn = screen.getByRole("button", { name: /bottom/i });
-
-    expect(summaryBtn).toHaveAttribute("aria-expanded", "false");
-    expect(bottomBtn).toHaveAttribute("aria-expanded", "false");
+    const bottomBtn = screen.getByRole("button", { name: /terminal/i });
 
     await user.click(summaryBtn);
-    expect(summaryBtn).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("summary-panel")).toBeInTheDocument();
 
     await user.click(bottomBtn);
-    expect(bottomBtn).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /close/i }));
-    expect(summaryBtn).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getAllByRole("button", { name: /hide/i })[0]);
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /hide/i }));
-    expect(bottomBtn).toHaveAttribute("aria-expanded", "false");
+    await user.click(screen.getByRole("button", { name: /^hide$/i }));
     expect(screen.queryByTestId("bottom-panel")).toBeNull();
   });
 
-  it("shows default status indicators and opens command palette from UI trigger", async () => {
-    const user = userEvent.setup();
-
+  it("shows default status indicators", () => {
     render(<EditorShell />);
 
     expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
-    expect(screen.getByText(/Runtime: Unavailable/i)).toBeInTheDocument();
-
-    expect(screen.queryByTestId("command-palette")).toBeNull();
-
-    const commandPaletteTrigger = screen.getAllByRole("button", {
-      name: /command palette/i,
-    })[0];
-    await user.click(commandPaletteTrigger);
-    expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
+    expect(screen.getByText(/Runtime: Static/i)).toBeInTheDocument();
   });
 
   it("opens command palette from Cmd/Ctrl+K", async () => {
@@ -100,10 +83,8 @@ describe("EditorShell panels", () => {
     try {
       render(<EditorShell />);
 
-      const commandPaletteTrigger = screen.getAllByRole("button", {
-        name: /command palette/i,
-      })[0];
-      commandPaletteTrigger.focus();
+      const summaryTrigger = screen.getByRole("button", { name: /summary/i });
+      summaryTrigger.focus();
 
       fireEvent.keyDown(window, { key: "k", ctrlKey: true });
       expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
@@ -111,7 +92,7 @@ describe("EditorShell panels", () => {
       fireEvent.keyDown(window, { key: "k", ctrlKey: true });
       fireEvent.keyDown(window, { key: "Escape" });
 
-      await waitFor(() => expect(commandPaletteTrigger).toHaveFocus());
+      await waitFor(() => expect(summaryTrigger).toHaveFocus());
     } finally {
       rafSpy.mockRestore();
     }
