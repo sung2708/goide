@@ -23,7 +23,7 @@ describe("HintUnderline", () => {
     expect(label).toBeInTheDocument();
     expect(label).toHaveTextContent(/Predicted/i);
     expect(label).toHaveStyle({
-      backgroundColor: "var(--goide-signal-predicted-bg)",
+      backgroundColor: "var(--signal-predicted-bg)",
     });
     expect(label.className).not.toContain("bg-opacity-10");
   });

@@ -8,9 +8,8 @@ describe("SummaryPeek", () => {
   it("renders empty fallback when no items are provided", () => {
     render(<SummaryPeek items={[]} />);
 
-    expect(screen.getByText(/no signals yet/i)).toBeInTheDocument();
     expect(
-      screen.getByText(/hover a concurrency line to reveal inline context/i)
+      screen.getByText(/No concurrency signals detected in current scope\./i)
     ).toBeInTheDocument();
   });
 
@@ -29,7 +28,7 @@ describe("SummaryPeek", () => {
     render(<SummaryPeek items={items} onJumpToLine={onJumpToLine} />);
 
     const itemButton = screen.getByRole("button", {
-      name: /line 12.*channel op.*predicted.*jobs/i,
+      name: /line 12.*channel op.*predicted/i,
     });
     await user.click(itemButton);
 

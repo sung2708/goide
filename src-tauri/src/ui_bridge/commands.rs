@@ -30,8 +30,14 @@ fn get_process_handle() -> ProcessHandle {
 
 static DAP_SESSION_HANDLE: std::sync::OnceLock<Arc<Mutex<Option<DapSessionHandle>>>> =
     std::sync::OnceLock::new();
-static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<Vec<RuntimeSignal>>>> =
+static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<RuntimeSignalStore>>> =
     std::sync::OnceLock::new();
+
+#[derive(Default)]
+struct RuntimeSignalStore {
+    healthy: bool,
+    signals: Vec<RuntimeSignal>,
+}
 
 struct DapSessionHandle {
     child: tokio::process::Child,
@@ -45,9 +51,9 @@ fn get_dap_session_handle() -> Arc<Mutex<Option<DapSessionHandle>>> {
         .clone()
 }
 
-fn get_runtime_signals_handle() -> Arc<Mutex<Vec<RuntimeSignal>>> {
+fn get_runtime_signals_handle() -> Arc<Mutex<RuntimeSignalStore>> {
     RUNTIME_SIGNALS
-        .get_or_init(|| Arc::new(Mutex::new(Vec::new())))
+        .get_or_init(|| Arc::new(Mutex::new(RuntimeSignalStore::default())))
         .clone()
 }
 
@@ -421,8 +427,9 @@ pub async fn activate_scoped_deep_trace(
 
     let signals_handle = get_runtime_signals_handle();
     {
-        let mut signals = signals_handle.lock().await;
-        signals.clear();
+        let mut store = signals_handle.lock().await;
+        store.signals.clear();
+        store.healthy = true;
     }
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
@@ -484,13 +491,15 @@ pub async fn activate_scoped_deep_trace(
                                 static_counterpart_hint.as_ref(),
                             );
                             let mut store = signals_handle.lock().await;
-                            *store = correlated;
+                            store.signals = correlated;
+                            store.healthy = true;
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;
                             {
                                 let mut store = signals_handle.lock().await;
-                                store.clear();
+                                store.signals.clear();
+                                store.healthy = false;
                             }
                             let mut session_guard = session_handle_for_sampler.lock().await;
                             let should_clear_current = session_guard
@@ -545,8 +554,23 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
 
 #[tauri::command]
 pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
-    let signals = get_runtime_signals_handle().lock().await.clone();
-    ApiResponse::ok(signals.into_iter().map(map_runtime_signal).collect())
+    let signals_handle = get_runtime_signals_handle();
+    let store = signals_handle.lock().await;
+    if !store.healthy {
+        return ApiResponse::err(
+            "deep_trace_session_inactive",
+            "Deep Trace session is not active",
+        );
+    }
+
+    ApiResponse::ok(
+        store
+            .signals
+            .clone()
+            .into_iter()
+            .map(map_runtime_signal)
+            .collect(),
+    )
 }
 
 #[tauri::command]
@@ -562,8 +586,9 @@ pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     }
 
     let signals_handle = get_runtime_signals_handle();
-    let mut signals = signals_handle.lock().await;
-    signals.clear();
+    let mut store = signals_handle.lock().await;
+    store.signals.clear();
+    store.healthy = false;
     ApiResponse::ok(())
 }
 
@@ -650,8 +675,9 @@ fn validate_workspace_scoped_go_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
-        validate_go_diagnostics_path, validate_workspace_scoped_go_path,
+        get_runtime_signals, get_runtime_signals_handle, validate_completion_cursor,
+        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
+        validate_workspace_scoped_go_path,
     };
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -765,5 +791,24 @@ mod tests {
 
         validate_workspace_scoped_go_path(root.to_str().unwrap_or(""), "main.go")
             .expect("must accept in-workspace go file");
+    }
+
+    #[tokio::test]
+    async fn runtime_signals_reject_when_deep_trace_session_is_inactive() {
+        let signals_handle = get_runtime_signals_handle();
+        {
+            let mut store = signals_handle.lock().await;
+            store.signals.clear();
+            store.healthy = false;
+        }
+
+        let response = get_runtime_signals().await;
+        assert!(!response.ok, "inactive session should reject runtime signal reads");
+
+        let error = response
+            .error
+            .expect("error payload must be present for inactive session");
+        assert_eq!(error.code, "deep_trace_session_inactive");
+        assert!(error.message.contains("not active"));
     }
 }

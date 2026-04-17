@@ -2,7 +2,7 @@ type StatusBarProps = {
   workspacePath: string | null;
   activeFilePath: string | null;
   mode: "quick-insight" | "deep-trace";
-  runtimeAvailability: "available" | "unavailable";
+  runtimeAvailability: "available" | "unavailable" | "degraded";
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
   isSummaryOpen: boolean;
@@ -29,7 +29,11 @@ function StatusBar({
 }: StatusBarProps) {
   const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
   const runtimeLabel =
-    runtimeAvailability === "available" ? "Active" : "Static";
+    runtimeAvailability === "available"
+      ? "Active"
+      : runtimeAvailability === "degraded"
+        ? "Degraded"
+        : "Static";
 
   return (
     <footer className="beveled-edge glass-morphism flex h-7 items-center justify-between border-t border-[var(--surface0)] bg-[rgba(17,17,27,0.7)] px-3 text-[10px] uppercase tracking-[0.08em] font-medium text-[var(--overlay1)] relative z-50">
@@ -49,9 +53,19 @@ function StatusBar({
           <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-sm bg-[var(--surface0)] text-[var(--subtext0)] font-bold">
             <span className={`h-1.5 w-1.5 rounded-full ${mode === "deep-trace" ? "bg-[var(--mauve)] animate-pulse" : "bg-[var(--overlay2)]"}`}></span>
             {modeLabel}
+            <span className="sr-only">Mode: {modeLabel}</span>
           </span>
-          <span className={`px-2 py-0.5 rounded-sm font-bold ${runtimeAvailability === "available" ? "text-[var(--green)] bg-[var(--signal-confirmed-bg)] phosphor-text" : "text-[var(--overlay1)] bg-[var(--surface0)]"}`}>
+          <span
+            className={`px-2 py-0.5 rounded-sm font-bold ${
+              runtimeAvailability === "available"
+                ? "text-[var(--green)] bg-[var(--signal-confirmed-bg)] phosphor-text"
+                : runtimeAvailability === "degraded"
+                  ? "text-[var(--peach)] bg-[var(--signal-blocked-bg)]"
+                  : "text-[var(--overlay1)] bg-[var(--surface0)]"
+            }`}
+          >
             {runtimeLabel}
+            <span className="sr-only">Runtime: {runtimeLabel}</span>
           </span>
         </div>
 

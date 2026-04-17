@@ -47,6 +47,7 @@
   --signal-confirmed: var(--green);
   --signal-confirmed-bg: rgba(166, 227, 161, 0.1);
   --signal-blocked: var(--red);
+  --signal-blocked-bg: rgba(243, 139, 168, 0.12);
   --signal-flow: var(--blue);
 }
 

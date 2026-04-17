@@ -1,4 +1,4 @@
-# last_updated: 2026-04-12T22:44:08+07:00
+# last_updated: 2026-04-17T22:19:00+07:00
 # project: goide
 # tracking_system: file-system
 # story_location: _bmad-output\implementation-artifacts
@@ -26,7 +26,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-13T09:26:00+07:00
+last_updated: 2026-04-17T22:19:00+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -64,6 +64,6 @@ development_status:
   4-2-delve-dap-runtime-sampling: done
   4-3-blocked-signal-rendering-confirmed: done
   4-4-causal-correlation-runtime: done
-  4-5-runtime-failure-fallback: backlog
+  4-5-runtime-failure-fallback: done
   4-6-run-with-race-detector: backlog
   epic-4-retrospective: optional
