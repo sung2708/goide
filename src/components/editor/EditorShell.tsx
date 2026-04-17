@@ -286,7 +286,7 @@ function EditorShell() {
   );
   const previousModeRef = useRef<"quick-insight" | "deep-trace">("quick-insight");
   const [runtimeAvailability, setRuntimeAvailability] = useState<
-    "available" | "unavailable"
+    "available" | "unavailable" | "degraded"
   >("unavailable");
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
@@ -408,6 +408,19 @@ function EditorShell() {
     : "";
   const isBlockedConfirmedVisible = mode === "deep-trace" && activeBlockedSignal !== null;
   const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
+
+  const markRuntimeDegraded = useCallback(() => {
+    setRuntimeAvailability((current) =>
+      current === "degraded" ? current : "degraded"
+    );
+    setActiveBlockedSignal(null);
+  }, []);
+
+  const markRuntimeAvailable = useCallback(() => {
+    setRuntimeAvailability((current) =>
+      current === "available" ? current : "available"
+    );
+  }, []);
 
   const resolveStaticCounterpart = useCallback(
     (sourceLine: number, hintSymbol?: string | null) => {
@@ -613,7 +626,7 @@ function EditorShell() {
   }, [requestJump, resolveCounterpartFromActiveHint]);
 
   const handleDeepTrace = useCallback(async () => {
-    if (runtimeAvailability !== "available") {
+    if (runtimeAvailability === "unavailable") {
       return;
     }
     if (!workspacePath || !activeFilePath || !activeHint) {
@@ -653,6 +666,7 @@ function EditorShell() {
       }
 
       if (response.ok && response.data?.mode === "deep-trace") {
+        markRuntimeAvailable();
         setDeepTraceScope({
           workspacePath: requestWorkspacePath,
           filePath: requestFilePath,
@@ -670,6 +684,7 @@ function EditorShell() {
       console.error("Failed to activate Deep Trace:", error);
     }
 
+    markRuntimeDegraded();
     setMode("quick-insight");
     setDeepTraceScope(null);
     setActiveBlockedSignal(null);
@@ -677,6 +692,8 @@ function EditorShell() {
     activeFilePath,
     activeHint,
     activeHintLine,
+    markRuntimeAvailable,
+    markRuntimeDegraded,
     resolveStaticCounterpart,
     runtimeAvailability,
     workspacePath,
@@ -755,14 +772,18 @@ function EditorShell() {
           return;
         }
 
+        if (!response.ok || !response.data) {
+          markRuntimeDegraded();
+          return;
+        }
+
+        markRuntimeAvailable();
         const blockedCandidates =
-          response.ok && response.data
-            ? response.data.filter(
-                (signal) =>
-                  isBlockedWaitReason(signal.waitReason) &&
-                  runtimeSignalMatchesScope(signal, scopeSnapshot)
-              )
-            : [];
+          response.data.filter(
+            (signal) =>
+              isBlockedWaitReason(signal.waitReason) &&
+              runtimeSignalMatchesScope(signal, scopeSnapshot)
+          );
         const prioritizedCandidate = selectActiveBlockedSignal(
           blockedCandidates,
           scopeSnapshot.filePath
@@ -775,7 +796,7 @@ function EditorShell() {
           workspacePathRef.current === scopeSnapshot.workspacePath &&
           activeFilePathRef.current === scopeSnapshot.filePath
         ) {
-          setActiveBlockedSignal(null);
+          markRuntimeDegraded();
         }
       } finally {
         releaseInFlight();
@@ -795,7 +816,15 @@ function EditorShell() {
         clearInterval(intervalId);
       }
     };
-  }, [activeFilePath, deepTraceScope, mode, runtimeSignalTimeoutMs, workspacePath]);
+  }, [
+    activeFilePath,
+    deepTraceScope,
+    markRuntimeAvailable,
+    markRuntimeDegraded,
+    mode,
+    runtimeSignalTimeoutMs,
+    workspacePath,
+  ]);
 
   const persistActiveFileContent = useCallback(
     async (content: string) => {

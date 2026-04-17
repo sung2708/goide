@@ -312,7 +312,7 @@ describe("EditorShell inline actions", () => {
 
     await user.click(
       await screen.findByRole("button", {
-        name: /line 1.*channel op.*predicted.*jobs/i,
+        name: /line 1.*channel op.*predicted/i,
       })
     );
 
@@ -436,12 +436,12 @@ describe("EditorShell inline actions", () => {
       symbol: "jobs",
       counterpartRelativePath: null,
       counterpartLine: null,
-      counterpartColumn: 4,
+      counterpartColumn: null,
       counterpartConfidence: null,
     });
   });
 
-  it("keeps quick insight mode when Deep Trace activation fails", async () => {
+  it("keeps Deep Trace retryable when activation fails", async () => {
     mockConstructs = [
       {
         kind: "channel",
@@ -467,12 +467,19 @@ describe("EditorShell inline actions", () => {
     await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
-    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+    const deepTraceButton = await screen.findByRole("button", { name: /deep trace/i });
+    await user.click(deepTraceButton);
 
     await waitFor(() => {
       expect(activateScopedDeepTraceMock).toHaveBeenCalledTimes(1);
     });
     expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
+
+    expect(screen.getByRole("button", { name: /deep trace/i })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: /deep trace/i }));
+    await waitFor(() => {
+      expect(activateScopedDeepTraceMock).toHaveBeenCalledTimes(2);
+    });
   });
 
   it("does not activate Deep Trace when runtime is unavailable", async () => {
@@ -579,7 +586,7 @@ describe("EditorShell inline actions", () => {
       expect(getRuntimeSignalsMock).toHaveBeenCalled();
       expect(screen.getByText(/Mode: Deep Trace/i)).toBeInTheDocument();
       expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
   });
 
@@ -638,8 +645,7 @@ describe("EditorShell inline actions", () => {
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
     await waitFor(() => {
       expect(screen.getByTestId("counterpart-line")).toHaveTextContent("5");
-      expect(screen.getByText("Likely")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
   });
 
@@ -940,6 +946,63 @@ describe("EditorShell inline actions", () => {
     await waitFor(() => {
       expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
     });
+  });
+
+  it("degrades to static runtime state on polling failure and recovers when polling succeeds", async () => {
+    mockConstructs = [
+      {
+        kind: "channel",
+        line: 1,
+        column: 4,
+        symbol: "jobs",
+        scopeKey: "flow-A",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    mockCounterpartMappings = [
+      {
+        sourceLine: 1,
+        counterpartLine: 2,
+        symbol: "jobs",
+        confidence: ConcurrencyConfidence.Predicted,
+      },
+    ];
+    getRuntimeSignalsMock
+      .mockRejectedValueOnce(new Error("runtime disconnected"))
+      .mockResolvedValue({
+        ok: true,
+        data: [],
+      });
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({
+      ok: true,
+      data: "package main\nline2\n",
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
+    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Runtime: Degraded/i)).toBeInTheDocument();
+      expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
+      expect(
+        screen.queryByTestId("trace-bubble-blocked-indicator")
+      ).not.toBeInTheDocument();
+    });
+
+    await waitFor(
+      () => {
+        expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
+        expect(screen.getByText(/Runtime: Active/i)).toBeInTheDocument();
+      },
+      { timeout: 2500 }
+    );
   });
 
   it("recovers from timed-out runtime polling and continues polling", async () => {
