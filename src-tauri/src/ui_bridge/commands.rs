@@ -496,18 +496,21 @@ pub async fn activate_scoped_deep_trace(
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;
-                            {
+                            let should_clear_current = {
+                                let mut session_guard = session_handle_for_sampler.lock().await;
+                                let should_clear_current = session_guard
+                                    .as_ref()
+                                    .and_then(|session| session.child.id())
+                                    == session_pid;
+                                if should_clear_current {
+                                    *session_guard = None;
+                                }
+                                should_clear_current
+                            };
+                            if should_clear_current {
                                 let mut store = signals_handle.lock().await;
                                 store.signals.clear();
                                 store.healthy = false;
-                            }
-                            let mut session_guard = session_handle_for_sampler.lock().await;
-                            let should_clear_current = session_guard
-                                .as_ref()
-                                .and_then(|session| session.child.id())
-                                == session_pid;
-                            if should_clear_current {
-                                *session_guard = None;
                             }
                             break;
                         }

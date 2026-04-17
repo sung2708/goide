@@ -29,7 +29,7 @@ function BottomPanel({
     <section
       id="bottom-panel"
       aria-label="Bottom panel"
-      className="glass-morphism utilitarian-noise scanline-effect flex flex-col border-t border-[var(--surface0)] animate-reveal-up shadow-2xl relative z-40"
+      className="glass-morphism utilitarian-noise scanline-effect relative z-40 flex max-h-[40vh] min-h-[11rem] flex-col border-t border-[var(--surface0)] shadow-2xl animate-reveal-up"
       style={{ backgroundColor: 'rgba(17, 17, 27, 0.6)' }}
       data-testid="bottom-panel"
     >

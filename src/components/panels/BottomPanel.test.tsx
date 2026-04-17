@@ -51,4 +51,11 @@ describe("BottomPanel", () => {
 
     expect(onRun).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps the panel height bounded for long output", () => {
+    render(<BottomPanel output={[]} />);
+
+    expect(screen.getByTestId("bottom-panel")).toHaveClass("max-h-[40vh]");
+    expect(screen.getByTestId("bottom-panel")).toHaveClass("min-h-[11rem]");
+  });
 });
