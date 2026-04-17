@@ -44,12 +44,14 @@ function pickNearestCounterpart(
   sourceLine: number,
   candidates: Array<{
     line: number;
+    column: number;
     scopeKey: string;
     confidence: ConcurrencyConfidence;
   }>
 ):
   | {
       line: number;
+      column: number;
       scopeKey: string;
       confidence: ConcurrencyConfidence;
     }
@@ -57,6 +59,7 @@ function pickNearestCounterpart(
   let nearest:
     | {
         line: number;
+        column: number;
         scopeKey: string;
         confidence: ConcurrencyConfidence;
       }
@@ -145,6 +148,7 @@ export function buildCounterpartMappings(
       .filter((construct) => toChannelOperationKey(construct.channelOperation) === "send")
       .map((construct) => ({
         line: construct.line,
+        column: construct.column,
         scopeKey: toScopeKey(construct.scopeKey),
         confidence: construct.confidence,
       }))
@@ -153,6 +157,7 @@ export function buildCounterpartMappings(
           point
         ): point is {
           line: number;
+          column: number;
           scopeKey: string;
           confidence: ConcurrencyConfidence;
         } =>
@@ -162,6 +167,7 @@ export function buildCounterpartMappings(
       .filter((construct) => toChannelOperationKey(construct.channelOperation) === "receive")
       .map((construct) => ({
         line: construct.line,
+        column: construct.column,
         scopeKey: toScopeKey(construct.scopeKey),
         confidence: construct.confidence,
       }))
@@ -170,6 +176,7 @@ export function buildCounterpartMappings(
           point
         ): point is {
           line: number;
+          column: number;
           scopeKey: string;
           confidence: ConcurrencyConfidence;
         } =>
@@ -190,7 +197,9 @@ export function buildCounterpartMappings(
       }
       mappings.push({
         sourceLine: sourcePoint.line,
+        sourceColumn: sourcePoint.column,
         counterpartLine: counterpartPoint.line,
+        counterpartColumn: counterpartPoint.column,
         symbol,
         confidence: pairConfidence(sourcePoint.confidence, counterpartPoint.confidence),
       });
@@ -206,7 +215,9 @@ export function buildCounterpartMappings(
       }
       mappings.push({
         sourceLine: sourcePoint.line,
+        sourceColumn: sourcePoint.column,
         counterpartLine: counterpartPoint.line,
+        counterpartColumn: counterpartPoint.column,
         symbol,
         confidence: pairConfidence(sourcePoint.confidence, counterpartPoint.confidence),
       });

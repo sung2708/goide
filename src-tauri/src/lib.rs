@@ -1,3 +1,4 @@
+mod core;
 mod integration;
 mod ui_bridge;
 

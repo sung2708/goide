@@ -105,6 +105,10 @@ export type ActivateDeepTraceRequest = {
   column: number;
   constructKind: DeepTraceConstructKind;
   symbol?: string | null;
+  counterpartRelativePath?: string | null;
+  counterpartLine?: number | null;
+  counterpartColumn?: number | null;
+  counterpartConfidence?: ConcurrencyConfidence | null;
 };
 
 export type ActivateDeepTraceResponse = {
@@ -120,9 +124,20 @@ export type RuntimeSignal = {
   threadId: number;
   status: string;
   waitReason: string;
-  confidence: ConcurrencyConfidence.Confirmed;
+  confidence: ConcurrencyConfidence;
   scopeKey: string;
+  scopeRelativePath?: string;
+  scopeLine?: number;
+  scopeColumn?: number;
   relativePath: string;
   line: number;
   column: number;
+  sampleRelativePath?: string | null;
+  sampleLine?: number | null;
+  sampleColumn?: number | null;
+  correlationId?: string | null;
+  counterpartRelativePath?: string | null;
+  counterpartLine?: number | null;
+  counterpartColumn?: number | null;
+  counterpartConfidence?: ConcurrencyConfidence | null;
 };

@@ -1,3 +1,6 @@
+use crate::core::analysis::causal::{
+    enrich_runtime_signals_with_correlation, StaticCounterpartHint,
+};
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::gopls;
@@ -66,15 +69,39 @@ async fn stop_dap_session(session: DapSessionHandle) {
 }
 
 fn map_runtime_signal(signal: RuntimeSignal) -> RuntimeSignalDto {
+    let confidence = match signal.confidence.to_ascii_lowercase().as_str() {
+        "likely" => ConcurrencyConfidenceDto::Likely,
+        "predicted" => ConcurrencyConfidenceDto::Predicted,
+        _ => ConcurrencyConfidenceDto::Confirmed,
+    };
+    let counterpart_confidence = signal.counterpart_confidence.as_ref().map(|value| {
+        match value.to_ascii_lowercase().as_str() {
+            "confirmed" => ConcurrencyConfidenceDto::Confirmed,
+            "predicted" => ConcurrencyConfidenceDto::Predicted,
+            _ => ConcurrencyConfidenceDto::Likely,
+        }
+    });
+
     RuntimeSignalDto {
         thread_id: signal.thread_id,
         status: signal.status,
         wait_reason: signal.wait_reason,
-        confidence: ConcurrencyConfidenceDto::Confirmed,
+        confidence,
         scope_key: signal.scope_key,
+        scope_relative_path: signal.scope_relative_path,
+        scope_line: signal.scope_line,
+        scope_column: signal.scope_column,
         relative_path: signal.relative_path,
         line: signal.line,
         column: signal.column,
+        sample_relative_path: signal.sample_relative_path,
+        sample_line: signal.sample_line,
+        sample_column: signal.sample_column,
+        correlation_id: signal.correlation_id,
+        counterpart_relative_path: signal.counterpart_relative_path,
+        counterpart_line: signal.counterpart_line,
+        counterpart_column: signal.counterpart_column,
+        counterpart_confidence,
     }
 }
 
@@ -407,6 +434,26 @@ pub async fn activate_scoped_deep_trace(
         line: request.line,
         column: request.column,
     };
+    let static_counterpart_hint = match (
+        request.counterpart_relative_path.clone(),
+        request.counterpart_line,
+        request.counterpart_column,
+    ) {
+        (Some(relative_path), Some(line), Some(column)) => Some(StaticCounterpartHint {
+            relative_path,
+            line,
+            column,
+            confidence: request
+                .counterpart_confidence
+                .map(|value| match value {
+                    ConcurrencyConfidenceDto::Predicted => "predicted".to_string(),
+                    ConcurrencyConfidenceDto::Likely => "likely".to_string(),
+                    ConcurrencyConfidenceDto::Confirmed => "confirmed".to_string(),
+                })
+                .unwrap_or_else(|| "predicted".to_string()),
+        }),
+        _ => None,
+    };
     let sampler_task = tokio::spawn(async move {
         let mut client = client;
         loop {
@@ -418,12 +465,26 @@ pub async fn activate_scoped_deep_trace(
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
                     match client.threads().await {
                         Ok(threads) => {
-                            let mapped = threads
-                                .iter()
-                                .filter_map(|thread| delve::thread_to_runtime_signal(thread, &runtime_scope))
-                                .collect::<Vec<_>>();
+                            let mut mapped = Vec::new();
+                            for thread in threads {
+                                // Performance: only fetch stack trace for relevant concurrency threads
+                                if delve::parse_thread_wait_state(&thread.name).is_some() {
+                                    let frame = client.stack_trace(thread.id).await.unwrap_or(None);
+                                    if let Some(signal) = delve::thread_to_runtime_signal(
+                                        &thread,
+                                        &runtime_scope,
+                                        frame.as_ref(),
+                                    ) {
+                                        mapped.push(signal);
+                                    }
+                                }
+                            }
+                            let correlated = enrich_runtime_signals_with_correlation(
+                                &mapped,
+                                static_counterpart_hint.as_ref(),
+                            );
                             let mut store = signals_handle.lock().await;
-                            *store = mapped;
+                            *store = correlated;
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;
