@@ -126,9 +126,15 @@ export type RuntimeSignal = {
   waitReason: string;
   confidence: ConcurrencyConfidence;
   scopeKey: string;
+  scopeRelativePath?: string;
+  scopeLine?: number;
+  scopeColumn?: number;
   relativePath: string;
   line: number;
   column: number;
+  sampleRelativePath?: string | null;
+  sampleLine?: number | null;
+  sampleColumn?: number | null;
   correlationId?: string | null;
   counterpartRelativePath?: string | null;
   counterpartLine?: number | null;

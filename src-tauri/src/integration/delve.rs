@@ -42,11 +42,15 @@ pub struct RuntimeSignal {
     pub wait_reason: String,
     pub confidence: String,
     pub scope_key: String,
+    pub scope_relative_path: String,
     pub scope_line: usize,
     pub scope_column: usize,
     pub relative_path: String,
     pub line: usize,
     pub column: usize,
+    pub sample_relative_path: Option<String>,
+    pub sample_line: Option<usize>,
+    pub sample_column: Option<usize>,
     pub correlation_id: Option<String>,
     pub counterpart_relative_path: Option<String>,
     pub counterpart_line: Option<usize>,
@@ -319,13 +323,16 @@ pub fn thread_to_runtime_signal(
         wait_reason: parsed.wait_reason,
         confidence: "confirmed".to_string(),
         scope_key: scope.scope_key.clone(),
+        scope_relative_path: scope.relative_path.clone(),
         scope_line: scope.line,
         scope_column: scope.column,
-        relative_path: real_location
-            .map(|loc| loc.relative_path.clone())
-            .unwrap_or_else(|| scope.relative_path.clone()),
-        line: real_location.map(|loc| loc.line).unwrap_or(scope.line),
-        column: real_location.map(|loc| loc.column).unwrap_or(scope.column),
+        // Keep primary coordinates scoped so frontend scope filtering stays stable.
+        relative_path: scope.relative_path.clone(),
+        line: scope.line,
+        column: scope.column,
+        sample_relative_path: real_location.map(|loc| loc.relative_path.clone()),
+        sample_line: real_location.map(|loc| loc.line),
+        sample_column: real_location.map(|loc| loc.column),
         correlation_id: None,
         counterpart_relative_path: None,
         counterpart_line: None,
@@ -536,15 +543,20 @@ mod tests {
                 line: 10,
                 column: 2,
             },
+            None,
         )
         .expect("must map supported thread");
         assert_eq!(signal.thread_id, 42);
         assert_eq!(signal.wait_reason, "io wait");
         assert_eq!(signal.confidence, "confirmed");
         assert_eq!(signal.scope_key, "pkg/main.go:10:2:channel:jobs");
+        assert_eq!(signal.scope_relative_path, "pkg/main.go");
         assert_eq!(signal.relative_path, "pkg/main.go");
         assert_eq!(signal.line, 10);
         assert_eq!(signal.column, 2);
+        assert!(signal.sample_relative_path.is_none());
+        assert!(signal.sample_line.is_none());
+        assert!(signal.sample_column.is_none());
         assert!(signal.correlation_id.is_none());
         assert!(signal.counterpart_line.is_none());
     }

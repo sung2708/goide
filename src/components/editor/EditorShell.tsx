@@ -79,6 +79,16 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/").trim();
 }
 
+function pathsReferToSameFile(pathA: string, pathB: string): boolean {
+  const normalizedA = normalizeRelativePath(pathA).toLowerCase();
+  const normalizedB = normalizeRelativePath(pathB).toLowerCase();
+  return (
+    normalizedA === normalizedB ||
+    normalizedA.endsWith(`/${normalizedB}`) ||
+    normalizedB.endsWith(`/${normalizedA}`)
+  );
+}
+
 type CounterpartResolution = {
   line: number | null;
   column: number | null;
@@ -114,11 +124,104 @@ function runtimeSignalMatchesScope(
   const matchColumn = signal.scopeColumn ?? signal.column;
 
   return (
-    normalizeRelativePath(signal.relativePath) ===
+    normalizeRelativePath(signal.scopeRelativePath ?? signal.relativePath) ===
       normalizeRelativePath(scope.filePath) &&
     matchLine === scope.line &&
     matchColumn === scope.column
   );
+}
+
+function isHintInDeepTraceScope(
+  hint: {
+    line: number;
+    column: number;
+    symbol: string | null;
+  } | null,
+  scope: {
+    line: number;
+    column: number;
+    symbol: string | null;
+  } | null
+): boolean {
+  if (!hint || !scope) {
+    return false;
+  }
+  return (
+    hint.line === scope.line &&
+    hint.column === scope.column &&
+    hint.symbol === scope.symbol
+  );
+}
+
+function confidenceRank(confidence?: ConcurrencyConfidence | null): number {
+  switch ((confidence ?? "").toLowerCase()) {
+    case "confirmed":
+      return 3;
+    case "likely":
+      return 2;
+    case "predicted":
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function isUsableRuntimeCounterpart(
+  signal: RuntimeSignal,
+  activeFilePath: string
+): boolean {
+  const line = signal.counterpartLine ?? null;
+  const hasValidLine = Number.isInteger(line) && line !== null && line >= 1;
+  if (!hasValidLine) {
+    return false;
+  }
+  const counterpartPath = signal.counterpartRelativePath ?? null;
+  return (
+    counterpartPath === null || pathsReferToSameFile(counterpartPath, activeFilePath)
+  );
+}
+
+function selectActiveBlockedSignal(
+  blockedCandidates: RuntimeSignal[],
+  activeFilePath: string
+): RuntimeSignal | null {
+  if (blockedCandidates.length === 0) {
+    return null;
+  }
+
+  const sorted = [...blockedCandidates].sort((left, right) => {
+    const leftUsable = isUsableRuntimeCounterpart(left, activeFilePath) ? 1 : 0;
+    const rightUsable = isUsableRuntimeCounterpart(right, activeFilePath) ? 1 : 0;
+    if (leftUsable !== rightUsable) {
+      return rightUsable - leftUsable;
+    }
+
+    const leftConfidence = confidenceRank(left.counterpartConfidence ?? left.confidence);
+    const rightConfidence = confidenceRank(right.counterpartConfidence ?? right.confidence);
+    if (leftConfidence !== rightConfidence) {
+      return rightConfidence - leftConfidence;
+    }
+
+    const leftHasCounterpartLine =
+      Number.isInteger(left.counterpartLine) && (left.counterpartLine ?? 0) >= 1 ? 1 : 0;
+    const rightHasCounterpartLine =
+      Number.isInteger(right.counterpartLine) && (right.counterpartLine ?? 0) >= 1 ? 1 : 0;
+    if (leftHasCounterpartLine !== rightHasCounterpartLine) {
+      return rightHasCounterpartLine - leftHasCounterpartLine;
+    }
+
+    const leftHasCorrelationId = left.correlationId ? 1 : 0;
+    const rightHasCorrelationId = right.correlationId ? 1 : 0;
+    if (leftHasCorrelationId !== rightHasCorrelationId) {
+      return rightHasCorrelationId - leftHasCorrelationId;
+    }
+
+    if (left.threadId !== right.threadId) {
+      return left.threadId - right.threadId;
+    }
+    return left.waitReason.localeCompare(right.waitReason);
+  });
+  return sorted[0] ?? null;
 }
 
 async function getRuntimeSignalsWithTimeout(
@@ -211,6 +314,7 @@ function EditorShell() {
     filePath: string;
     line: number;
     column: number;
+    symbol: string | null;
     scopeKey: string | null;
     anchorTop: number;
     anchorLeft: number;
@@ -340,12 +444,23 @@ function EditorShell() {
   );
 
   const resolveRuntimeCounterpart = useCallback((): CounterpartResolution | null => {
-    if (!activeBlockedSignal || activeBlockedSignal.correlationId === null) {
+    if (
+      !activeBlockedSignal ||
+      activeBlockedSignal.correlationId === null ||
+      activeFilePath === null
+    ) {
       return null;
     }
+    const counterpartPath = activeBlockedSignal.counterpartRelativePath ?? null;
+    const isSameFile =
+      counterpartPath === null ||
+      pathsReferToSameFile(counterpartPath, activeFilePath);
     const counterpartLine = activeBlockedSignal.counterpartLine ?? null;
     const isValidLine =
-      Number.isInteger(counterpartLine) && counterpartLine !== null && counterpartLine >= 1;
+      isSameFile &&
+      Number.isInteger(counterpartLine) &&
+      counterpartLine !== null &&
+      counterpartLine >= 1;
 
     return {
       line: isValidLine ? counterpartLine : null,
@@ -354,15 +469,30 @@ function EditorShell() {
         (activeBlockedSignal.counterpartConfidence ?? "likely") as ConcurrencyConfidence,
       source: "runtime",
     };
-  }, [activeBlockedSignal]);
+  }, [activeBlockedSignal, activeFilePath]);
 
   const resolveCounterpartFromActiveHint = useCallback(() => {
     if (activeHintLine === null || activeHint?.kind !== "channel") {
       return null;
     }
 
+    const isActiveHintTraced = isHintInDeepTraceScope(
+      {
+        line: activeHintLine,
+        column: activeHint.column,
+        symbol: activeHint.symbol ?? null,
+      },
+      deepTraceScope
+        ? {
+            line: deepTraceScope.line,
+            column: deepTraceScope.column,
+            symbol: deepTraceScope.symbol,
+          }
+        : null
+    );
+
     const runtimeResolution =
-      mode === "deep-trace" && deepTraceScope && activeHintLine === deepTraceScope.line
+      mode === "deep-trace" && deepTraceScope && isActiveHintTraced
         ? resolveRuntimeCounterpart()
         : null;
     const staticResolution = resolveStaticCounterpart(activeHintLine, activeHint.symbol);
@@ -372,7 +502,7 @@ function EditorShell() {
         return runtimeResolution;
       }
       if (staticResolution) {
-        return { ...staticResolution, confidence: runtimeResolution.confidence };
+        return staticResolution;
       }
       return runtimeResolution;
     }
@@ -392,11 +522,29 @@ function EditorShell() {
   }, [resolveCounterpartFromActiveHint]);
 
   const counterpartResolution = resolveCounterpartFromActiveHint();
+  const isActiveHintRuntimeConfirmed =
+    isBlockedConfirmedVisible &&
+    mode === "deep-trace" &&
+    deepTraceScope !== null &&
+    activeHint !== null &&
+    activeHintLine !== null &&
+    isHintInDeepTraceScope(
+      {
+        line: activeHintLine,
+        column: activeHint.column,
+        symbol: activeHint.symbol ?? null,
+      },
+      {
+        line: deepTraceScope.line,
+        column: deepTraceScope.column,
+        symbol: deepTraceScope.symbol,
+      }
+    );
   const effectiveHint =
-    isBlockedConfirmedVisible && activeHint
+    isActiveHintRuntimeConfirmed && activeHint
       ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
       : activeHint;
-  const traceBubbleConfidence = isBlockedConfirmedVisible
+  const traceBubbleConfidence = isActiveHintRuntimeConfirmed
     ? "confirmed" as const
     : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
@@ -495,6 +643,7 @@ function EditorShell() {
           filePath: requestFilePath,
           line,
           column,
+          symbol: activeHint.symbol ?? null,
           scopeKey: response.data.scopeKey ?? null,
           anchorTop: interactionAnchor?.top ?? 24,
           anchorLeft: interactionAnchor?.left ?? 12,
@@ -599,12 +748,10 @@ function EditorShell() {
                   runtimeSignalMatchesScope(signal, scopeSnapshot)
               )
             : [];
-        const prioritizedCandidate =
-          blockedCandidates.find(
-            (signal) =>
-              signal.counterpartLine !== null &&
-              signal.counterpartLine !== undefined
-          ) ?? blockedCandidates[0] ?? null;
+        const prioritizedCandidate = selectActiveBlockedSignal(
+          blockedCandidates,
+          scopeSnapshot.filePath
+        );
         setActiveBlockedSignal(prioritizedCandidate);
       } catch (_error) {
         if (
@@ -898,7 +1045,20 @@ function EditorShell() {
       }
 
       const runtimeResolution =
-        mode === "deep-trace" && deepTraceScope && line === deepTraceScope.line
+        mode === "deep-trace" &&
+        deepTraceScope &&
+        isHintInDeepTraceScope(
+          {
+            line,
+            column: activeHint.column,
+            symbol: activeHint.symbol ?? null,
+          },
+          {
+            line: deepTraceScope.line,
+            column: deepTraceScope.column,
+            symbol: deepTraceScope.symbol,
+          }
+        )
           ? resolveRuntimeCounterpart()
           : null;
       const targetLine =

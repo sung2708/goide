@@ -44,6 +44,7 @@ function pickNearestCounterpart(
   sourceLine: number,
   candidates: Array<{
     line: number;
+    column: number;
     scopeKey: string;
     confidence: ConcurrencyConfidence;
   }>
