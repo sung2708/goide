@@ -35,7 +35,8 @@ describe("BottomPanel", () => {
 
     expect(screen.getByText("line 1")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /clear/i }));
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
+    await user.click(screen.getAllByRole("button", { name: /^clear$/i })[1]);
 
     expect(screen.queryByText("line 1")).toBeNull();
     expect(screen.getByText(/Unit idle\. Standby for output\./i)).toBeInTheDocument();

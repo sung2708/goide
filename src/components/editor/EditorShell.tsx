@@ -402,7 +402,6 @@ function EditorShell() {
   const [activeBlockedSignal, setActiveBlockedSignal] = useState<RuntimeSignal | null>(
     null
   );
-  const [prefersReducedMotion, setPrefersReducedMotion] = useState(false);
 
   useEffect(() => {
     setJumpRequest(null);
@@ -424,22 +423,6 @@ function EditorShell() {
     };
   }, []);
 
-  useEffect(() => {
-    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
-      return;
-    }
-
-    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const updatePreference = () => {
-      setPrefersReducedMotion(mediaQuery.matches);
-    };
-
-    updatePreference();
-    mediaQuery.addEventListener("change", updatePreference);
-    return () => {
-      mediaQuery.removeEventListener("change", updatePreference);
-    };
-  }, []);
 
   // Clear the auto-dismiss timer on unmount to prevent setState on unmounted component
   useEffect(() => {
@@ -1296,29 +1279,6 @@ function EditorShell() {
     }
   }, [paletteReturnFocusEl]);
 
-  useEffect(() => {
-    const handleKeyDown = (event: KeyboardEvent) => {
-      const isCommandPaletteShortcut =
-        event.key.toLowerCase() === "k" &&
-        (event.ctrlKey || event.metaKey) &&
-        !event.shiftKey &&
-        !event.altKey;
-
-      if (isCommandPaletteShortcut) {
-        event.preventDefault();
-        openCommandPalette();
-      }
-
-      if (event.key === "Escape" && isCommandPaletteOpen) {
-        event.preventDefault();
-        closeCommandPalette();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closeCommandPalette, isCommandPaletteOpen, openCommandPalette]);
-
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
       return;
@@ -1470,9 +1430,7 @@ function EditorShell() {
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="flex flex-1 overflow-hidden">
-        <aside
-          className="utilitarian-noise animate-reveal-right flex min-w-[240px] basis-[20%] flex-col border-r border-[var(--surface0)] bg-[var(--mantle)]"
-        >
+        <aside className="utilitarian-noise flex min-w-[170px] w-[22%] max-w-[280px] flex-col border-r border-[rgba(113,125,144,0.25)] bg-[var(--mantle)]">
           <Explorer
             workspacePath={workspacePath}
             activeFilePath={activeFilePath}
@@ -1482,19 +1440,19 @@ function EditorShell() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="animate-reveal-up flex min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-2xl" style={{ animationDelay: '0.1s' }}>
+            <section className="flex min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
               <header
-                className="beveled-edge flex items-center justify-between border-b border-[var(--surface0)] bg-[var(--base)] px-4 py-2"
+                className="flex items-center justify-between border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-4 py-2"
               >
                 <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--overlay1)]">Editor</span>
-                  <span className="text-[#a6adc8] opacity-40">/</span>
-                  <span className="text-[12px] font-semibold tracking-tight text-[var(--text)]">{editorTitle}</span>
+                  <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>
+                  <span className="text-[var(--overlay0)] opacity-50">/</span>
+                  <span className="text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
                 </div>
                 
                 <div className="flex items-center gap-2">
                   <button
-                    className={`flex items-center gap-2 rounded bg-[var(--surface0)] px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-[var(--text)] transition-all hover:bg-[var(--surface1)] ${
+                    className={`flex cursor-pointer items-center gap-2 rounded border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.4)] px-3 py-1.5 text-[11px] font-semibold text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] ${
                       isOpening ? "cursor-not-allowed opacity-60" : ""
                     }`}
                     onClick={handleOpenWorkspace}
@@ -1509,10 +1467,10 @@ function EditorShell() {
 
                   {activeFilePath && (
                     <button
-                      className={`flex items-center gap-2 rounded px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-all ${
+                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
                         runStatus === "running"
-                          ? "bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "bg-[var(--green)] text-[var(--crust)] hover:opacity-90"
+                          ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.35)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[rgba(127,176,142,0.35)] bg-[rgba(127,176,142,0.14)] text-[var(--green)] hover:bg-[rgba(127,176,142,0.22)]"
                       }`}
                       onClick={handleRunFileStandard}
                       type="button"
@@ -1526,10 +1484,10 @@ function EditorShell() {
                   )}
                   {isGoFile(activeFilePath) && (
                     <button
-                      className={`flex items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-all ${
+                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
                         runStatus === "running" || runtimeAvailability === "unavailable"
-                          ? "border-[var(--surface1)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[var(--mauve)] text-[var(--mauve)] hover:bg-[var(--surface0)]"
+                          ? "border-[rgba(113,125,144,0.25)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[rgba(126,162,220,0.4)] text-[var(--blue)] hover:bg-[rgba(126,162,220,0.12)]"
                       }`}
                       onClick={handleRunFileWithRace}
                       type="button"
@@ -1544,22 +1502,22 @@ function EditorShell() {
                 </div>
               </header>
 
-              <div className="flex flex-1 flex-col p-6">
+              <div className="flex flex-1 flex-col p-5 md:p-6">
                 {!workspacePath && (
-                  <div className="flex flex-1 flex-col items-center justify-center animate-fade-in">
+                  <div className="flex flex-1 flex-col items-center justify-center">
                     <div className="max-w-md text-center">
                       <div className="mb-6 flex justify-center">
-                        <div className="rounded-full bg-[var(--surface0)] p-4 text-[var(--blue)]">
+                        <div className="rounded-full border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.5)] p-4 text-[var(--blue)]">
                           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
                         </div>
                       </div>
-                      <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-[var(--text)]">GoIDE</h2>
+                      <h2 className="text-sm font-semibold text-[var(--subtext1)] text-balance">GoIDE</h2>
                       <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
                         Open a workspace folder to begin concurrency-first development. 
                         Your code will stay responsive and fluid.
                       </p>
                       <button
-                        className="mt-8 rounded bg-[var(--blue)] px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--crust)] transition-opacity hover:opacity-90"
+                        className="mt-8 cursor-pointer rounded border border-[rgba(126,162,220,0.4)] bg-[rgba(126,162,220,0.16)] px-6 py-2.5 text-[11px] font-semibold text-[var(--flamingo)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.24)]"
                         onClick={handleOpenWorkspace}
                         type="button"
                         title="Choose a Go workspace folder."
@@ -1571,9 +1529,9 @@ function EditorShell() {
                   </div>
                 )}
                 {workspacePath && !activeFilePath && (
-                  <div className="flex flex-1 flex-col items-center justify-center animate-fade-in">
+                  <div className="flex flex-1 flex-col items-center justify-center">
                     <div className="max-w-md text-center">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-[var(--overlay1)]">Workspace Active</p>
+                      <p className="text-[11px] font-semibold text-[var(--overlay1)] text-balance">Workspace Active</p>
                       <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
                         Select a target file from the explorer to activate the concurrency lens.
                       </p>
@@ -1582,8 +1540,8 @@ function EditorShell() {
                 )}
                 {workspacePath && activeFilePath && (
                   <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
-                    <div className="flex items-center justify-between text-xs text-[#9399b2]">
-                      <span className="uppercase tracking-[0.16em]">Active File</span>
+                    <div className="flex items-center justify-between text-xs text-[var(--overlay2)]">
+                      <span>Active File</span>
                       {isReading && <span>Loading.</span>}
                     </div>
                     {fileError && (
@@ -1591,8 +1549,8 @@ function EditorShell() {
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[var(--surface0)] bg-[var(--crust)]">
-                      <div className="border-b border-[var(--surface0)] px-3 py-2 text-xs text-[var(--text)]">
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[rgba(113,125,144,0.25)] bg-[var(--crust)]">
+                      <div className="border-b border-[rgba(113,125,144,0.2)] px-3 py-2 text-xs text-[var(--subtext1)]">
                         {activeFilePath}
                       </div>
                       <div className="relative flex-1 min-h-0">
@@ -1609,7 +1567,6 @@ function EditorShell() {
                           }
                           label={activeRaceSignal ? "Data Race" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
-                          reducedMotion={prefersReducedMotion}
                           anchorTop={Math.max(
                             4,
                             (isBlockedConfirmedVisible

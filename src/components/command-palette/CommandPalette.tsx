@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import Dialog from "../primitives/Dialog";
 
 type CommandPaletteProps = {
   onClose: () => void;
@@ -17,31 +17,34 @@ function CommandPalette({
   onRun,
   onRunWithRace,
 }: CommandPaletteProps) {
-  const closeButtonRef = useRef<HTMLButtonElement>(null);
-
-  useEffect(() => {
-    // Basic focus trap: focus the default action on mount
-    closeButtonRef.current?.focus();
-  }, []);
-
   return (
-    <div
-      id="command-palette"
-      data-testid="command-palette"
+    <Dialog
+      open={true}
+      onOpenChange={(open) => {
+        if (!open) {
+          onClose();
+        }
+      }}
       role="dialog"
-      aria-modal="true"
-      aria-label="Command palette"
-      className="absolute inset-0 z-50 flex items-start justify-center backdrop-blur-md bg-[rgba(17,17,27,0.4)] px-4 pt-24 animate-fade-in"
+      id="command-palette"
+      dataTestId="command-palette"
+      ariaLabel="Command palette"
+      className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-start justify-center bg-[rgba(8,11,16,0.72)] px-4 pt-24"
+      style={{
+        paddingTop: "max(6rem, env(safe-area-inset-top))",
+        paddingBottom: "env(safe-area-inset-bottom)",
+      }}
+      panelClassName="utilitarian-noise w-full max-w-xl overflow-hidden rounded-lg border border-[rgba(113,125,144,0.25)] bg-[var(--mantle)] shadow-lg"
+      closeOnBackdrop={true}
     >
-      <section className="glass-morphism utilitarian-noise w-full max-w-xl rounded-lg border border-[var(--surface0)] shadow-2xl overflow-hidden" style={{ backgroundColor: 'rgba(30, 30, 46, 0.85)' }}>
-        <div className="flex items-center justify-between border-b border-[#313244] px-4 py-3">
-          <p className="text-[11px] uppercase tracking-[0.16em] text-[#a6adc8]">
+      <div>
+        <div className="flex items-center justify-between border-b border-[rgba(113,125,144,0.2)] px-4 py-3">
+          <p className="text-[11px] font-semibold uppercase text-[var(--subtext0)] text-balance">
             Command Palette
           </p>
           <button
-            ref={closeButtonRef}
             type="button"
-            className="rounded border border-[#313244] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
+            className="cursor-pointer rounded border border-[rgba(113,125,144,0.25)] px-2 py-1 text-[10px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.1)]"
             onMouseDown={(event) => event.preventDefault()}
             onClick={onClose}
             title="Close the command palette."
@@ -49,11 +52,11 @@ function CommandPalette({
             Close
           </button>
         </div>
-        <div className="px-4 py-4 text-xs text-[#9399b2]">
+        <div className="px-4 py-4 text-xs text-[var(--overlay2)]">
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              className="rounded border border-[#313244] px-3 py-2 text-left text-[11px] uppercase tracking-[0.12em] text-[#cdd6f4] transition hover:border-[#45475a] hover:bg-[rgba(49,50,68,0.35)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="cursor-pointer rounded border border-[rgba(113,125,144,0.28)] px-3 py-2 text-left text-[11px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canRun || isRunning}
               onClick={() => {
                 onRun();
@@ -65,7 +68,7 @@ function CommandPalette({
             </button>
             <button
               type="button"
-              className="rounded border border-[#313244] px-3 py-2 text-left text-[11px] uppercase tracking-[0.12em] text-[#cdd6f4] transition hover:border-[#45475a] hover:bg-[rgba(49,50,68,0.35)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="cursor-pointer rounded border border-[rgba(113,125,144,0.28)] px-3 py-2 text-left text-[11px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
               disabled={!canRunWithRace || isRunning}
               onClick={() => {
                 onRunWithRace();
@@ -77,8 +80,8 @@ function CommandPalette({
             </button>
           </div>
         </div>
-      </section>
-    </div>
+      </div>
+    </Dialog>
   );
 }
 

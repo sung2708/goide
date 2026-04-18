@@ -26,7 +26,7 @@
 #   - done: Retrospective has been completed
 
 generated: 2026-04-08T14:59:42.622104
-last_updated: 2026-04-18T18:02:01+07:00
+last_updated: 2026-04-18T19:12:00+07:00
 project: goide
 project_key: NOKEY
 tracking_system: file-system
@@ -67,3 +67,10 @@ development_status:
   4-5-runtime-failure-fallback: done
   4-6-run-with-race-detector: done
   epic-4-retrospective: optional
+  epic-5: backlog
+  5-1-completion-acceptance-ranking-consistency: backlog
+  5-2-package-member-intelligence-fmt-first: backlog
+  5-3-diagnostics-robustness-missing-dependency-ux: backlog
+  5-4-delimiter-pairing-smart-surround: backlog
+  5-5-snippet-pack-and-discovery: backlog
+  5-6-completion-performance-ux-polish: backlog

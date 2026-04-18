@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FsEntry } from "../../lib/ipc/types";
 import { listWorkspaceEntries } from "../../lib/ipc/client";
 import { FileIcon, FolderIconComponent } from "./FileIcon";
+import { cn } from "../../lib/utils/cn";
 
 const IGNORED_FOLDERS = new Set([
   ".git",
@@ -142,7 +143,7 @@ function Explorer({ workspacePath, activeFilePath, onOpenFile }: ExplorerProps) 
       const isExpanded = expanded.has(entry.path);
 
       return (
-        <div key={entry.path} className="animate-fade-in" style={{ animationDelay: `${depth * 0.05}s` }}>
+        <div key={entry.path}>
           <button
             type="button"
             onClick={() => {
@@ -153,14 +154,15 @@ function Explorer({ workspacePath, activeFilePath, onOpenFile }: ExplorerProps) 
               }
             }}
             title={entry.isDir ? `Expand or collapse ${entry.name}` : `Open ${entry.name}`}
-            className={`group animate-reveal-right flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-all duration-300 ${
+            className={cn(
+              "group flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-colors duration-150 ease-out",
               isActive 
-                ? "bg-[rgba(137,180,250,0.1)] text-[var(--blue)] shadow-[inset_2px_0_0_0_var(--blue)]" 
-                : "text-[var(--subtext0)] hover:bg-[var(--surface0)] hover:text-[var(--text)]"
-            }`}
-            style={{ paddingLeft: padding, animationDelay: `${depth * 0.05}s` }}
+                ? "bg-[rgba(126,162,220,0.14)] text-[var(--flamingo)] shadow-[inset_2px_0_0_0_var(--blue)]"
+                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.08)] hover:text-[var(--subtext1)]"
+            )}
+            style={{ paddingLeft: padding }}
           >
-            <span className="flex items-center justify-center w-4 h-4 opacity-80 group-hover:opacity-100">
+            <span className="flex size-4 items-center justify-center opacity-80 group-hover:opacity-100">
               {entry.isDir ? (
                 <FolderIconComponent isOpen={isExpanded} size={14} />
               ) : (
@@ -170,7 +172,7 @@ function Explorer({ workspacePath, activeFilePath, onOpenFile }: ExplorerProps) 
             <span className="truncate">{entry.name}</span>
           </button>
           {entry.isDir && isExpanded && (
-            <div className="border-l border-[var(--surface0)] ml-[23px] opacity-80 hover:opacity-100 transition-opacity">
+            <div className="ml-[23px] border-l border-[rgba(113,125,144,0.24)] opacity-80 transition-opacity hover:opacity-100">
               {state?.loading && (
                 <div className="px-6 py-1 text-[11px] text-[var(--overlay0)] italic">Loading…</div>
               )}
@@ -206,13 +208,13 @@ function Explorer({ workspacePath, activeFilePath, onOpenFile }: ExplorerProps) 
 
   return (
     <div className="flex h-full flex-col">
-      <div className="beveled-edge border-b border-[var(--surface0)] bg-[var(--base)] px-4 py-3">
-        <p className="text-[10px] font-bold uppercase tracking-[0.24em] text-[var(--overlay1)]">
+      <div className="border-b border-[rgba(113,125,144,0.28)] bg-[var(--mantle)] px-4 py-3">
+        <p className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">
           Explorer
         </p>
         <div className="flex items-center gap-2 mt-2">
-          <span className={`h-1.5 w-1.5 rounded-full ${workspacePath ? "bg-[var(--blue)] animate-pulse" : "bg-[var(--surface2)]"}`}></span>
-          <p className="text-[11px] font-semibold text-[var(--text)] tracking-tight">{headerMeta}</p>
+          <span className={`size-1.5 rounded-full ${workspacePath ? "bg-[var(--green)]" : "bg-[var(--surface2)]"}`}></span>
+          <p className="text-[11px] font-medium text-[var(--subtext1)]">{headerMeta}</p>
         </div>
       </div>
       {!workspacePath && (

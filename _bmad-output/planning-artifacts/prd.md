@@ -239,6 +239,27 @@ An incident responder reproduces a production fault locally. With minimal instal
 - The system shall expose runtime availability in status bar: available or not available.
 - The system shall support click-to-jump navigation from lightweight summary panel items to relevant code lines.
 
+### FR9: LSP Diagnostics Reliability
+- The system shall render diagnostics (errors/warnings/info) from `gopls` in-editor with clear severity markers.
+- The system shall preserve editing continuity when diagnostics fail, return empty, or toolchain is unavailable.
+- The system shall surface non-blocking dependency/tooling availability cues when diagnostics cannot be trusted.
+
+### FR10: Professional Go Completion
+- The system shall provide context-aware completion for Go identifiers, packages, members, and common snippets.
+- The system shall support package/member completion flows such as typing `fmt` and discovering valid `fmt.*` APIs.
+- The system shall support safe auto-import edits when completion requires missing imports.
+- The system shall include concise completion item summary/details to aid candidate choice.
+
+### FR11: Editing Ergonomics
+- The system shall support `Tab` as a first-class completion accept key while preserving snippet placeholder navigation.
+- The system shall support automatic delimiter pairing for quotes/brackets/braces/parentheses.
+- The system shall support smart closing-delimiter skip and selected-text surround behavior.
+
+### FR12: Completion and Diagnostics Responsiveness
+- The system shall ignore stale completion/diagnostics responses after file/workspace/cursor context changes.
+- The system shall keep completion interactions low-latency and non-blocking under normal local development conditions.
+- The system shall keep fallback behavior low-noise, avoiding modal or disruptive error surfaces in common failure paths.
+
 ## Acceptance Criteria Matrix
 
 ### AC-FR1: Editor & Context Navigation
@@ -273,6 +294,31 @@ An incident responder reproduces a production fault locally. With minimal instal
 ### AC-FR8: Status & Panel Navigation
 - Given mode switches between Quick Insight and Deep Trace, when state changes, then status bar updates within the same interaction frame.
 - Given right summary panel item click, when mapping exists, then editor jumps to linked code line.
+
+### AC-FR9: LSP Diagnostics Reliability
+- Given `gopls` is available, when a Go file is analyzed after save/edit trigger, then diagnostics are shown with severity-aware rendering.
+- Given `gopls` is unavailable or fails, when diagnostics are requested, then editor remains editable and a low-noise tooling status is shown.
+
+### AC-FR10: Professional Go Completion
+- Given cursor is in completion-eligible Go context, when user types or explicitly requests completion, then relevant candidates appear with short detail text.
+- Given user types a package identifier (for example `fmt`) and accepts a member completion, then member text is inserted and missing import edits are applied safely.
+- Given completion is open in `package` declaration context, then completion ranking does not replace package declaration intent with unrelated function snippets.
+
+### AC-FR11: Editing Ergonomics
+- Given completion popup is open, when user presses `Tab`, then highlighted completion is accepted.
+- Given snippet placeholders exist, when user presses `Tab`/`Shift-Tab`, then navigation moves between placeholders predictably.
+- Given user types paired delimiters or wraps selected text, then resulting text is syntactically balanced without duplicate closing-character noise.
+
+### AC-FR12: Responsiveness and Stale-Guarding
+- Given rapid typing or quick file switches, when delayed responses return, then stale completion/diagnostics responses are ignored.
+- Given normal local machine conditions, when completion is triggered during typing, then response feels immediate and does not stall key input flow.
+- Given runtime or LSP command errors, when user keeps typing, then the editor remains stable and interactive.
+
+## PM Addendum (2026-04-18)
+
+- Epics 1-4 delivered the Concurrency Lens baseline and runtime loop.
+- User feedback shows remaining adoption blockers are now editor intelligence quality, not core tracing capability.
+- Next planning cycle should prioritize Epic 5 (professional completion/diagnostics/typing experience) before Phase 2 expansion work.
 
 ## KPI Instrumentation Plan
 
