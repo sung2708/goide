@@ -178,4 +178,49 @@ describe("EditorShell completions", () => {
       expect(screen.getByTestId("completion-label")).toHaveTextContent("none");
     });
   });
+
+  it("ignores stale completion response after switching workspaces", async () => {
+    const user = userEvent.setup();
+    openMock
+      .mockResolvedValueOnce("C:/workspace-a")
+      .mockResolvedValueOnce("C:/workspace-b");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    const completionResolver: {
+      current: ((value: { ok: boolean; data: CompletionItem[] }) => void) | null;
+    } = { current: null };
+    fetchWorkspaceCompletionsMock.mockImplementation(
+      () =>
+        new Promise<{ ok: boolean; data: CompletionItem[] }>((resolve) => {
+          completionResolver.current = resolve;
+        })
+    );
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(await screen.findByRole("button", { name: /request completions/i }));
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+
+    completionResolver.current?.({
+      ok: true,
+      data: [
+        {
+          label: "stale-from-old-workspace",
+          detail: "func()",
+          kind: "func",
+          insertText: "stale-from-old-workspace",
+          range: null,
+        },
+      ],
+    });
+
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+
+    await waitFor(() => {
+      expect(screen.getByTestId("completion-label")).toHaveTextContent("none");
+    });
+  });
 });
