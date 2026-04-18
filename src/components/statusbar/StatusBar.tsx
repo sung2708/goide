@@ -79,7 +79,7 @@ function StatusBar({
                 ? "Hide commands palette"
                 : "Show commands palette"
             }
-            title="Open the command palette. Command execution is planned for a later story."
+            title="Open the command palette for quick run commands."
             className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isCommandPaletteOpen ? "bg-[var(--mauve)] text-[var(--crust)] shadow-[0_0_8px_var(--mauve)]" : "hover:bg-[var(--surface0)]"}`}
             onClick={onToggleCommandPalette}
           >

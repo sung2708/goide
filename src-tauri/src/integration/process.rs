@@ -9,6 +9,12 @@ use tokio::sync::Mutex;
 /// A running go process handle, shared across async tasks.
 pub type ProcessHandle = Arc<Mutex<Option<Child>>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunMode {
+    Standard,
+    Race,
+}
+
 /// The payload emitted to the frontend for each output line.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +52,15 @@ pub fn resolve_run_path(workspace_root: &str, relative_path: &str) -> Result<std
     Ok(target)
 }
 
+fn build_go_run_args(target: &Path, mode: RunMode) -> Vec<String> {
+    let mut args = vec!["run".to_string()];
+    if mode == RunMode::Race {
+        args.push("-race".to_string());
+    }
+    args.push(target.to_string_lossy().to_string());
+    args
+}
+
 /// Spawns `go run <file>` in the workspace directory.
 /// Emits each output line as a `run-output` event on the `app_handle`.
 /// Kills any previous process in `process_handle` before starting a new one.
@@ -54,6 +69,7 @@ pub async fn run_go_file<R: tauri::Runtime>(
     workspace_root: String,
     relative_path: String,
     run_id: String,
+    mode: RunMode,
     process_handle: ProcessHandle,
 ) -> Result<()> {
     use tauri::Emitter;
@@ -69,9 +85,10 @@ pub async fn run_go_file<R: tauri::Runtime>(
         *guard = None;
     }
 
-    // Spawn go run <file>
+    // Spawn go run <file> (optionally with -race)
+    let args = build_go_run_args(&target, mode);
     let mut child = Command::new("go")
-        .args(["run", target.to_str().unwrap_or("")])
+        .args(&args)
         .current_dir(&workspace_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -195,6 +212,27 @@ pub fn emit_run_failure<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_go_run_args_standard_omits_race_flag() {
+        let target = Path::new("main.go");
+        let args = build_go_run_args(target, RunMode::Standard);
+        assert_eq!(args, vec!["run".to_string(), "main.go".to_string()]);
+    }
+
+    #[test]
+    fn build_go_run_args_race_includes_race_flag() {
+        let target = Path::new("main.go");
+        let args = build_go_run_args(target, RunMode::Race);
+        assert_eq!(
+            args,
+            vec![
+                "run".to_string(),
+                "-race".to_string(),
+                "main.go".to_string()
+            ]
+        );
+    }
 
     #[test]
     fn rejects_empty_relative_path() {
