@@ -51,6 +51,7 @@ function BottomPanel({
               type="button"
               className="beveled-edge rounded bg-[var(--green)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--crust)] transition-opacity hover:opacity-90"
               onClick={onRun}
+              title="Run the active Go file again."
             >
               Run Again
             </button>
@@ -60,6 +61,7 @@ function BottomPanel({
               type="button"
               className="beveled-edge rounded border border-[var(--surface1)] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--subtext1)] transition hover:bg-[var(--surface0)]"
               onClick={onClear}
+              title="Clear terminal output."
             >
               Clear
             </button>
@@ -69,6 +71,7 @@ function BottomPanel({
               type="button"
               className="beveled-edge rounded border border-[var(--surface1)] px-3 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--subtext1)] transition hover:bg-[var(--surface0)]"
               onClick={onClose}
+              title="Hide the terminal panel."
             >
               Hide
             </button>

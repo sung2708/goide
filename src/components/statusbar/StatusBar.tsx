@@ -74,6 +74,21 @@ function StatusBar({
         <div className="flex items-center gap-2">
           <button
             type="button"
+            aria-label={
+              isCommandPaletteOpen
+                ? "Hide commands palette"
+                : "Show commands palette"
+            }
+            title="Open the command palette. Command execution is planned for a later story."
+            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isCommandPaletteOpen ? "bg-[var(--mauve)] text-[var(--crust)] shadow-[0_0_8px_var(--mauve)]" : "hover:bg-[var(--surface0)]"}`}
+            onClick={onToggleCommandPalette}
+          >
+            COMMANDS
+          </button>
+          <button
+            type="button"
+            aria-label={isSummaryOpen ? "Hide summary panel" : "Show summary panel"}
+            title="Show or hide the concurrency signal summary."
             className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isSummaryOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
             onClick={onToggleSummary}
           >
@@ -81,6 +96,10 @@ function StatusBar({
           </button>
           <button
             type="button"
+            aria-label={
+              isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"
+            }
+            title="Show or hide run output for the active Go file."
             className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isBottomPanelOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
             onClick={onToggleBottomPanel}
           >

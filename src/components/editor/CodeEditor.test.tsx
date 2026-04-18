@@ -43,13 +43,19 @@ const mockView = {
 
 const setDiagnosticsMock = vi.fn();
 const autocompletionMock = vi.fn();
+const closeBracketsMock = vi.fn(() => ({ extension: "mock-close-brackets" }));
 const startCompletionMock = vi.fn((_view: unknown) => undefined);
 const acceptCompletionMock = vi.fn((_view: unknown) => false);
-let latestAutocompleteOverride:
+const closeCompletionMock = vi.fn((_view: unknown) => false);
+const moveCompletionSelectionMock = vi.fn(
+  (_forward: boolean, _by?: "option" | "page") => (_view: unknown) => false
+);
+type TestCompletionSource =
   | ((context: {
       pos: number;
       explicit: boolean;
       matchBefore: (re: RegExp) => { from: number; to: number; text: string } | null;
+      aborted?: boolean;
       state: {
         sliceDoc: (from: number, to: number) => string;
         doc: {
@@ -62,7 +68,9 @@ let latestAutocompleteOverride:
       options: Array<{
         label: string;
         detail?: string;
+        info?: string;
         type?: string;
+        section?: unknown;
         apply: (
           view: { dispatch: (args: unknown) => void },
           completion: unknown,
@@ -70,8 +78,11 @@ let latestAutocompleteOverride:
           to: number
         ) => void;
       }>;
+      validFor?: RegExp;
     } | null>)
-  | null = null;
+  | null;
+let latestAutocompleteOverride: TestCompletionSource = null;
+let latestAutocompleteOverrides: TestCompletionSource[] = [];
 
 vi.mock("@codemirror/lint", () => ({
   linter: vi.fn(() => ({ extension: "mock-linter" })),
@@ -84,11 +95,28 @@ vi.mock("@codemirror/lint", () => ({
 
 vi.mock("@codemirror/autocomplete", () => ({
   autocompletion: (config: { override?: unknown[] }) => {
-    latestAutocompleteOverride =
-      (config.override?.[0] as typeof latestAutocompleteOverride) ?? null;
+    latestAutocompleteOverrides =
+      (config.override as TestCompletionSource[] | undefined) ?? [];
+    latestAutocompleteOverride = latestAutocompleteOverrides[1] ?? null;
     autocompletionMock(config);
     return { extension: "mock-autocompletion" };
   },
+  closeBrackets: () => closeBracketsMock(),
+  closeBracketsKeymap: [{ key: "mock-close-bracket" }],
+  closeCompletion: (view: unknown) => closeCompletionMock(view),
+  hasNextSnippetField: () => false,
+  hasPrevSnippetField: () => false,
+  moveCompletionSelection: (forward: boolean, by?: "option" | "page") =>
+    moveCompletionSelectionMock(forward, by),
+  nextSnippetField: () => true,
+  prevSnippetField: () => true,
+  snippetCompletion: (
+    template: string,
+    completion: Record<string, unknown>
+  ) => ({
+    ...completion,
+    apply: template,
+  }),
   startCompletion: (view: unknown) => startCompletionMock(view),
   acceptCompletion: (view: unknown) => acceptCompletionMock(view),
 }));
@@ -505,9 +533,11 @@ describe("CodeEditor", () => {
     );
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        changes: expect.objectContaining({
-          insert: "Println",
-        }),
+        changes: expect.arrayContaining([
+          expect.objectContaining({
+            insert: "Println",
+          }),
+        ]),
       })
     );
   });
@@ -542,6 +572,280 @@ describe("CodeEditor", () => {
       explicit: false,
       triggerCharacter: ".",
       fileContent: "package main\nfmt.\n",
+    });
+  });
+
+  it("requests completions when an identifier is typed without explicit trigger", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([]);
+
+    render(
+      <CodeEditor
+        value={"package main\nPrin\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    expect(latestAutocompleteOverride).toBeTruthy();
+    await latestAutocompleteOverride?.({
+      pos: 16,
+      explicit: false,
+      matchBefore: () => ({ from: 12, to: 16, text: "Prin" }),
+      state: {
+        sliceDoc: () => "n",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nPrin\n",
+        },
+      },
+    });
+
+    expect(requestCompletions).toHaveBeenCalledWith({
+      line: 2,
+      column: 5,
+      explicit: false,
+      triggerCharacter: null,
+      fileContent: "package main\nPrin\n",
+    });
+  });
+
+  it("serves local snippets while typing without calling gopls too early", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([]);
+
+    render(
+      <CodeEditor
+        value={"package main\nf\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const snippetResult = await latestAutocompleteOverrides[0]?.({
+      pos: 15,
+      explicit: false,
+      matchBefore: () => ({ from: 13, to: 14, text: "f" }),
+      state: {
+        sliceDoc: () => "f",
+        doc: {
+          lineAt: () => ({ number: 2, from: 13 }),
+          toString: () => "package main\nf\n",
+        },
+      },
+    });
+    const goplsResult = await latestAutocompleteOverride?.({
+      pos: 15,
+      explicit: false,
+      matchBefore: () => ({ from: 13, to: 14, text: "f" }),
+      state: {
+        sliceDoc: () => "f",
+        doc: {
+          lineAt: () => ({ number: 2, from: 13 }),
+          toString: () => "package main\nf\n",
+        },
+      },
+    });
+
+    expect(snippetResult?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "func" }),
+        expect.objectContaining({ label: "for" }),
+      ])
+    );
+    expect(goplsResult).toBeNull();
+    expect(requestCompletions).not.toHaveBeenCalled();
+  });
+
+  it("keeps package declarations separate from the func main snippet", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "main",
+        detail: "func main()",
+        kind: "function",
+        insertText: "func main() {\n\t\n}",
+        range: null,
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package ma"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const snippetResult = await latestAutocompleteOverrides[0]?.({
+      pos: 10,
+      explicit: false,
+      matchBefore: () => ({ from: 8, to: 10, text: "ma" }),
+      state: {
+        sliceDoc: (from: number, to: number) => "package ma".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 1, from: 0 }),
+          toString: () => "package ma",
+        },
+      },
+    });
+    const goplsResult = await latestAutocompleteOverride?.({
+      pos: 10,
+      explicit: false,
+      matchBefore: () => ({ from: 8, to: 10, text: "ma" }),
+      state: {
+        sliceDoc: (from: number, to: number) => "package ma".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 1, from: 0 }),
+          toString: () => "package ma",
+        },
+      },
+    });
+
+    expect(snippetResult?.options).toEqual([
+      expect.objectContaining({ label: "main", detail: "package name" }),
+    ]);
+    expect(snippetResult?.options).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "main", detail: "main function" }),
+      ])
+    );
+    expect(goplsResult).toBeNull();
+    expect(requestCompletions).not.toHaveBeenCalled();
+  });
+
+  it("uses imported package aliases to preview member completions before dot is typed", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "func(a ...any) (n int, err error)",
+        documentation: "Println formats using the default formats and writes to standard output.",
+        kind: "function",
+        insertText: "Println",
+        range: null,
+        additionalTextEdits: [],
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt\n}\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const result = await latestAutocompleteOverride?.({
+      pos: 46,
+      explicit: false,
+      matchBefore: () => ({ from: 43, to: 46, text: "fmt" }),
+      state: {
+        sliceDoc: (from: number, to: number) =>
+          "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt\n}\n".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 6, from: 42 }),
+          toString: () =>
+            "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt\n}\n",
+        },
+      },
+    });
+
+    expect(requestCompletions).toHaveBeenCalledWith({
+      line: 6,
+      column: 6,
+      explicit: false,
+      triggerCharacter: ".",
+      fileContent: "package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.\n}\n",
+    });
+    expect(result?.options[0]).toEqual(
+      expect.objectContaining({
+        label: "Println",
+        info: "Println formats using the default formats and writes to standard output.",
+      })
+    );
+
+    const dispatchMock = vi.fn();
+    result?.options[0].apply(
+      ({ dispatch: dispatchMock } as any),
+      {},
+      46,
+      46
+    );
+    expect(dispatchMock).toHaveBeenCalledWith({
+      changes: [
+        {
+          from: 43,
+          to: 46,
+          insert: "fmt.Println",
+        },
+      ],
+    });
+  });
+
+  it("previews common package members and inserts the missing import", async () => {
+    const source = "package main\n\nfunc main() {\n\tfmt\n}\n";
+    const virtualSource = "package main\nimport \"fmt\"\n\nfunc main() {\n\tfmt.\n}\n";
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "func(a ...any) (n int, err error)",
+        documentation: "Println formats using the default formats and writes to standard output.",
+        kind: "function",
+        insertText: "Println",
+        range: null,
+        additionalTextEdits: [],
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={source}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const result = await latestAutocompleteOverride?.({
+      pos: 32,
+      explicit: false,
+      matchBefore: () => ({ from: 29, to: 32, text: "fmt" }),
+      state: {
+        sliceDoc: (from: number, to: number) => source.slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 4, from: 28 }),
+          toString: () => source,
+        },
+      },
+    });
+
+    expect(requestCompletions).toHaveBeenCalledWith({
+      line: 5,
+      column: 6,
+      explicit: false,
+      triggerCharacter: ".",
+      fileContent: virtualSource,
+    });
+
+    const dispatchMock = vi.fn();
+    result?.options[0].apply(
+      ({
+        dispatch: dispatchMock,
+        state: {
+          doc: {
+            toString: () => source,
+          },
+        },
+      } as any),
+      {},
+      32,
+      32
+    );
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      changes: [
+        {
+          from: 12,
+          to: 12,
+          insert: "\nimport \"fmt\"",
+        },
+        {
+          from: 29,
+          to: 32,
+          insert: "fmt.Println",
+        },
+      ],
     });
   });
 
@@ -594,11 +898,13 @@ describe("CodeEditor", () => {
 
     expect(dispatchMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        changes: expect.objectContaining({
-          from: 12,
-          to: 16,
-          insert: "Println",
-        }),
+        changes: expect.arrayContaining([
+          expect.objectContaining({
+            from: 12,
+            to: 16,
+            insert: "Println",
+          }),
+        ]),
       })
     );
   });

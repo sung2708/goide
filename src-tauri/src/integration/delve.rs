@@ -28,6 +28,26 @@ pub enum LaunchMode {
     Test,
 }
 
+fn serialize_dap_path(path: &Path) -> String {
+    normalize_platform_path_for_dap(&path.to_string_lossy())
+}
+
+#[cfg(windows)]
+fn normalize_platform_path_for_dap(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("\\\\?\\UNC\\") {
+        return format!("\\\\{stripped}");
+    }
+    if let Some(stripped) = path.strip_prefix("\\\\?\\") {
+        return stripped.to_string();
+    }
+    path.to_string()
+}
+
+#[cfg(not(windows))]
+fn normalize_platform_path_for_dap(path: &str) -> String {
+    path.to_string()
+}
+
 #[derive(Debug)]
 pub struct DapProcess {
     pub child: Child,
@@ -169,8 +189,8 @@ impl DapClient {
                 "launch",
                 json!({
                     "mode": mode_text,
-                    "program": launch_program.to_string_lossy().to_string(),
-                    "cwd": canonical_root.to_string_lossy().to_string(),
+                    "program": serialize_dap_path(&launch_program),
+                    "cwd": serialize_dap_path(&canonical_root),
                     "stopOnEntry": false
                 }),
             )

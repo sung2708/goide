@@ -1,6 +1,20 @@
-import { EditorView, lineNumbers, drawSelection } from "@codemirror/view";
+import {
+  EditorView,
+  lineNumbers,
+  drawSelection,
+  dropCursor,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+} from "@codemirror/view";
 import { go } from "@codemirror/lang-go";
-import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
+import {
+  bracketMatching,
+  HighlightStyle,
+  indentOnInput,
+  indentUnit,
+  syntaxHighlighting,
+} from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 
 export const PREDICTED_HINT_UNDERLINE_CLASS = "goide-predicted-hint-underline";
@@ -102,7 +116,14 @@ const syntaxStyle = HighlightStyle.define([
 export const goideEditorExtensions = [
   lineNumbers(),
   drawSelection(),
+  dropCursor(),
+  highlightSpecialChars(),
+  highlightActiveLine(),
+  highlightActiveLineGutter(),
   go(),
+  bracketMatching(),
+  indentOnInput(),
+  indentUnit.of("\t"),
   syntaxHighlighting(syntaxStyle),
   editorTheme,
 ];

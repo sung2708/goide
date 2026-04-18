@@ -32,6 +32,7 @@ function CommandPalette({ onClose }: CommandPaletteProps) {
             className="rounded border border-[#313244] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[#cdd6f4] transition hover:border-[#45475a] hover:text-white"
             onMouseDown={(event) => event.preventDefault()}
             onClick={onClose}
+            title="Close the command palette."
           >
             Close
           </button>

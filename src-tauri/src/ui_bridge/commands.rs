@@ -8,9 +8,10 @@ use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
 use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
-    ConcurrencyConfidenceDto, ConcurrencyConstructDto, ConcurrencyConstructKindDto,
-    DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, EditorDiagnosticDto,
-    FsEntryDto, RuntimeAvailabilityResponseDto, RuntimeSignalDto,
+    CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
+    ConcurrencyConstructKindDto, DeepTraceConstructKindDto, DiagnosticRangeDto,
+    DiagnosticSeverityDto, EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto,
+    RuntimeSignalDto,
 };
 use std::path::{Component, Path};
 use std::process::Command;
@@ -321,6 +322,7 @@ pub async fn get_active_file_completions(
                 .map(|item| CompletionItemDto {
                     label: item.label,
                     detail: item.detail,
+                    documentation: item.documentation,
                     kind: item.kind,
                     insert_text: item.insert_text,
                     range: item.range.map(|range| CompletionRangeDto {
@@ -329,6 +331,19 @@ pub async fn get_active_file_completions(
                         end_line: range.end_line,
                         end_column: range.end_column,
                     }),
+                    additional_text_edits: item
+                        .additional_text_edits
+                        .into_iter()
+                        .map(|edit| CompletionTextEditDto {
+                            range: CompletionRangeDto {
+                                start_line: edit.range.start_line,
+                                start_column: edit.range.start_column,
+                                end_line: edit.range.end_line,
+                                end_column: edit.range.end_column,
+                            },
+                            new_text: edit.new_text,
+                        })
+                        .collect(),
                 })
                 .collect();
             ApiResponse::ok(mapped)
@@ -806,7 +821,10 @@ mod tests {
         }
 
         let response = get_runtime_signals().await;
-        assert!(!response.ok, "inactive session should reject runtime signal reads");
+        assert!(
+            !response.ok,
+            "inactive session should reject runtime signal reads"
+        );
 
         let error = response
             .error

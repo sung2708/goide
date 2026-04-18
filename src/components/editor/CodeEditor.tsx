@@ -1,22 +1,364 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Prec } from "@codemirror/state";
 import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
 import { EditorView, keymap } from "@codemirror/view";
-import { history, historyKeymap } from "@codemirror/commands";
+import {
+  defaultKeymap,
+  history,
+  historyKeymap,
+  indentLess,
+  indentWithTab,
+} from "@codemirror/commands";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import {
   acceptCompletion,
   autocompletion,
+  closeBrackets,
+  closeBracketsKeymap,
+  closeCompletion,
+  hasNextSnippetField,
+  hasPrevSnippetField,
+  nextSnippetField,
+  prevSnippetField,
+  moveCompletionSelection,
   startCompletion,
+  snippetCompletion,
+  type Completion,
   type CompletionContext,
   type CompletionResult,
+  type CompletionSource,
 } from "@codemirror/autocomplete";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
-import type { CompletionItem, EditorDiagnostic } from "../../lib/ipc/types";
+import type {
+  CompletionItem,
+  CompletionRange,
+  EditorDiagnostic,
+} from "../../lib/ipc/types";
+
+const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
+const GOPLS_AUTO_PREFIX_LENGTH = 3;
+
+const snippetSection = { name: "Snippets", rank: -1 };
+
+const COMMON_GO_PACKAGE_IMPORTS: Record<string, string> = {
+  bytes: "bytes",
+  cmp: "cmp",
+  context: "context",
+  csv: "encoding/csv",
+  errors: "errors",
+  filepath: "path/filepath",
+  flag: "flag",
+  fmt: "fmt",
+  http: "net/http",
+  io: "io",
+  json: "encoding/json",
+  log: "log",
+  maps: "maps",
+  math: "math",
+  os: "os",
+  rand: "math/rand",
+  regexp: "regexp",
+  slices: "slices",
+  sort: "sort",
+  strconv: "strconv",
+  strings: "strings",
+  sync: "sync",
+  testing: "testing",
+  time: "time",
+  url: "net/url",
+};
+
+const PACKAGE_NAME_COMPLETIONS: Completion[] = [
+  {
+    label: "main",
+    detail: "package name",
+    type: "keyword",
+    apply: "main",
+    section: snippetSection,
+    boost: 40,
+  },
+];
+
+const PACKAGE_SNIPPETS: Completion[] = [
+  snippetCompletion("package main\n\n${}", {
+    label: "package main",
+    detail: "package declaration",
+    type: "keyword",
+    section: snippetSection,
+    boost: 40,
+  }),
+];
+
+const GO_SNIPPETS: Completion[] = [
+  snippetCompletion("func ${name}(${params}) {\n\t${}\n}", {
+    label: "func",
+    detail: "function declaration",
+    type: "function",
+    section: snippetSection,
+    boost: 30,
+  }),
+  snippetCompletion("func main() {\n\t${}\n}", {
+    label: "main",
+    detail: "main function",
+    type: "function",
+    section: snippetSection,
+    boost: 30,
+  }),
+  snippetCompletion("if ${condition} {\n\t${}\n}", {
+    label: "if",
+    detail: "if block",
+    type: "keyword",
+    section: snippetSection,
+    boost: 25,
+  }),
+  snippetCompletion("if err != nil {\n\treturn ${}\n}", {
+    label: "iferr",
+    detail: "error guard",
+    type: "keyword",
+    section: snippetSection,
+    boost: 25,
+  }),
+  snippetCompletion("for ${condition} {\n\t${}\n}", {
+    label: "for",
+    detail: "for loop",
+    type: "keyword",
+    section: snippetSection,
+    boost: 20,
+  }),
+  snippetCompletion("for ${key}, ${value} := range ${collection} {\n\t${}\n}", {
+    label: "forr",
+    detail: "range loop",
+    type: "keyword",
+    section: snippetSection,
+    boost: 20,
+  }),
+  snippetCompletion("switch ${value} {\ncase ${caseValue}:\n\t${}\ndefault:\n\t${}\n}", {
+    label: "switch",
+    detail: "switch block",
+    type: "keyword",
+    section: snippetSection,
+  }),
+  snippetCompletion("select {\ncase ${value} := <-${channel}:\n\t${}\ndefault:\n\t${}\n}", {
+    label: "select",
+    detail: "select block",
+    type: "keyword",
+    section: snippetSection,
+  }),
+  snippetCompletion("go func() {\n\t${}\n}()", {
+    label: "gofn",
+    detail: "goroutine function",
+    type: "function",
+    section: snippetSection,
+  }),
+  snippetCompletion("defer ${call}()", {
+    label: "defer",
+    detail: "deferred call",
+    type: "keyword",
+    section: snippetSection,
+  }),
+  snippetCompletion("type ${Name} struct {\n\t${}\n}", {
+    label: "struct",
+    detail: "struct type",
+    type: "type",
+    section: snippetSection,
+  }),
+  snippetCompletion("type ${Name} interface {\n\t${}\n}", {
+    label: "interface",
+    detail: "interface type",
+    type: "interface",
+    section: snippetSection,
+  }),
+  snippetCompletion("func (${receiver} *${Type}) ${name}(${params}) {\n\t${}\n}", {
+    label: "method",
+    detail: "method declaration",
+    type: "method",
+    section: snippetSection,
+  }),
+  snippetCompletion("func Test${Name}(t *testing.T) {\n\t${}\n}", {
+    label: "test",
+    detail: "Go test",
+    type: "function",
+    section: snippetSection,
+  }),
+  snippetCompletion("func Benchmark${Name}(b *testing.B) {\n\tfor i := 0; i < b.N; i++ {\n\t\t${}\n\t}\n}", {
+    label: "bench",
+    detail: "Go benchmark",
+    type: "function",
+    section: snippetSection,
+  }),
+  snippetCompletion("${name} := make(chan ${type})", {
+    label: "makechan",
+    detail: "channel allocation",
+    type: "variable",
+    section: snippetSection,
+  }),
+  snippetCompletion("var wg sync.WaitGroup\n${}", {
+    label: "wg",
+    detail: "wait group",
+    type: "variable",
+    section: snippetSection,
+  }),
+  snippetCompletion("var mu sync.Mutex\n${}", {
+    label: "mutex",
+    detail: "mutex",
+    type: "variable",
+    section: snippetSection,
+  }),
+];
+
+function isPackageNameContext(linePrefix: string) {
+  return /^\s*package\s+[A-Za-z_][A-Za-z0-9_]*$/.test(linePrefix);
+}
+
+function isPackageLineContext(linePrefix: string) {
+  return /^\s*package(?:\s+[A-Za-z_][A-Za-z0-9_]*)?$/.test(linePrefix);
+}
+
+function importedPackageAliases(source: string) {
+  const aliases = new Map<string, string>();
+  const addImportAlias = (rawAlias: string | undefined, importPath: string) => {
+    if (rawAlias === "." || rawAlias === "_") {
+      return;
+    }
+    const alias =
+      rawAlias ??
+      importPath
+        .split("/")
+        .pop()
+        ?.replace(/[^A-Za-z0-9_]/g, "_");
+    if (alias && GO_IDENTIFIER_PATTERN.test(alias)) {
+      aliases.set(alias, importPath);
+    }
+  };
+
+  const singleImportPattern = /^\s*import\s+(?:(\w+|[._])\s+)?"([^"]+)"\s*$/gm;
+  for (const match of source.matchAll(singleImportPattern)) {
+    addImportAlias(match[1], match[2]);
+  }
+
+  const blockImportPattern = /^\s*import\s*\(([\s\S]*?)^\s*\)/gm;
+  for (const block of source.matchAll(blockImportPattern)) {
+    const importLinePattern = /^\s*(?:(\w+|[._])\s+)?"([^"]+)"/gm;
+    for (const match of block[1].matchAll(importLinePattern)) {
+      addImportAlias(match[1], match[2]);
+    }
+  }
+
+  return aliases;
+}
+
+function insertTextAt(source: string, position: number, text: string) {
+  return `${source.slice(0, position)}${text}${source.slice(position)}`;
+}
+
+function sourceHasImport(source: string, importPath: string) {
+  const escaped = importPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`^\\s*(?:\\w+|[._])?\\s*"${escaped}"\\s*$`, "m").test(
+    source
+  );
+}
+
+function buildImportInsertionChange(source: string, importPath: string) {
+  if (sourceHasImport(source, importPath)) {
+    return null;
+  }
+
+  const packageMatch = /^\s*package\s+[A-Za-z_][A-Za-z0-9_]*.*$/m.exec(source);
+  if (!packageMatch) {
+    return null;
+  }
+
+  const insertAt = packageMatch.index + packageMatch[0].length;
+  const insertText = source.slice(insertAt).startsWith("\n\n")
+    ? `\nimport "${importPath}"`
+    : `\nimport "${importPath}"\n`;
+
+  return {
+    from: insertAt,
+    to: insertAt,
+    insert: insertText,
+  };
+}
+
+function applyTextChange(
+  source: string,
+  change: { from: number; to: number; insert: string }
+) {
+  return `${source.slice(0, change.from)}${change.insert}${source.slice(
+    change.to
+  )}`;
+}
+
+function positionToLineColumn(source: string, position: number) {
+  let line = 1;
+  let lineStart = 0;
+  for (let index = 0; index < position; index += 1) {
+    if (source[index] === "\n") {
+      line += 1;
+      lineStart = index + 1;
+    }
+  }
+
+  return {
+    line,
+    column: position - lineStart + 1,
+  };
+}
+
+function resolvePackageQualifier(source: string, alias: string) {
+  const importedAliases = importedPackageAliases(source);
+  const importedPath = importedAliases.get(alias);
+  if (importedPath) {
+    return {
+      alias,
+      importPath: importedPath,
+      shouldInsertImport: false,
+    };
+  }
+
+  const commonImportPath = COMMON_GO_PACKAGE_IMPORTS[alias];
+  if (!commonImportPath) {
+    return null;
+  }
+
+  return {
+    alias,
+    importPath: commonImportPath,
+    shouldInsertImport: !sourceHasImport(source, commonImportPath),
+  };
+}
+
+function buildPackageMemberCompletionDocument(
+  source: string,
+  cursorPosition: number,
+  qualifier: { importPath: string; shouldInsertImport: boolean }
+) {
+  let nextSource = source;
+  let nextCursorPosition = cursorPosition;
+  const importChange = qualifier.shouldInsertImport
+    ? buildImportInsertionChange(source, qualifier.importPath)
+    : null;
+
+  if (importChange) {
+    nextSource = applyTextChange(nextSource, importChange);
+    if (importChange.from <= nextCursorPosition) {
+      nextCursorPosition += importChange.insert.length;
+    }
+  }
+
+  nextSource = insertTextAt(nextSource, nextCursorPosition, ".");
+  nextCursorPosition += 1;
+
+  return {
+    fileContent: nextSource,
+    cursor: positionToLineColumn(nextSource, nextCursorPosition),
+  };
+}
 
 type InteractionAnchor = {
   top: number;
@@ -114,7 +456,78 @@ function CodeEditor({
     };
   };
 
-  const completionSource = useCallback(
+  const resolveCompletionTextEditRange = (
+    view: EditorView,
+    range: CompletionRange
+  ) => {
+    const maxLine = view.state.doc.lines;
+    const startLine = Math.min(maxLine, Math.max(1, range.startLine));
+    const endLine = Math.min(maxLine, Math.max(startLine, range.endLine));
+    const startLineInfo = view.state.doc.line(startLine);
+    const endLineInfo = view.state.doc.line(endLine);
+    const startOffset = Math.min(
+      startLineInfo.to - startLineInfo.from,
+      Math.max(0, range.startColumn - 1)
+    );
+    const endOffset = Math.min(
+      endLineInfo.to - endLineInfo.from,
+      Math.max(0, range.endColumn - 1)
+    );
+
+    return {
+      from: startLineInfo.from + startOffset,
+      to: endLineInfo.from + endOffset,
+    };
+  };
+
+  const dispatchCompletionChanges = (
+    view: EditorView,
+    mainChange: { from: number; to: number; insert: string },
+    additionalTextEdits: CompletionItem["additionalTextEdits"] = []
+  ) => {
+    const changes = [
+      ...additionalTextEdits.map((edit) => {
+        const range = resolveCompletionTextEditRange(view, edit.range);
+        return {
+          from: range.from,
+          to: range.to,
+          insert: edit.newText,
+        };
+      }),
+      mainChange,
+    ].sort((a, b) => a.from - b.from || a.to - b.to);
+
+    view.dispatch({ changes });
+  };
+
+  const localSnippetSource = useCallback<CompletionSource>((context) => {
+    const prefixMatch = context.matchBefore(GO_IDENTIFIER_BEFORE_CURSOR);
+    if (!context.explicit && !prefixMatch) {
+      return null;
+    }
+
+    const lineInfo = context.state.doc.lineAt(context.pos);
+    const linePrefix = context.state.sliceDoc(lineInfo.from, context.pos);
+    if (isPackageNameContext(linePrefix)) {
+      return {
+        from: prefixMatch ? prefixMatch.from : context.pos,
+        validFor: GO_IDENTIFIER_PATTERN,
+        options: PACKAGE_NAME_COMPLETIONS,
+      };
+    }
+
+    const precedingText = context.state.sliceDoc(0, lineInfo.from).trim();
+    const options =
+      precedingText.length === 0 ? [...PACKAGE_SNIPPETS, ...GO_SNIPPETS] : GO_SNIPPETS;
+
+    return {
+      from: prefixMatch ? prefixMatch.from : context.pos,
+      validFor: GO_IDENTIFIER_PATTERN,
+      options,
+    };
+  }, []);
+
+  const goplsCompletionSource = useCallback(
     async (context: CompletionContext): Promise<CompletionResult | null> => {
       if (!onRequestCompletions) {
         return null;
@@ -123,35 +536,101 @@ function CodeEditor({
       const triggerCharacter = context.pos > 0
         ? context.state.sliceDoc(context.pos - 1, context.pos)
         : "";
+      const documentText = context.state.doc.toString();
       const shouldTriggerByDot = triggerCharacter === ".";
-      if (!context.explicit && !shouldTriggerByDot) {
+      const prefixMatch = context.matchBefore(GO_IDENTIFIER_BEFORE_CURSOR);
+      const virtualPackageQualifier = (() => {
+        if (
+          context.explicit ||
+          shouldTriggerByDot ||
+          prefixMatch === null ||
+          prefixMatch.text.length < 2
+        ) {
+          return null;
+        }
+
+        return resolvePackageQualifier(documentText, prefixMatch.text);
+      })();
+      const shouldTriggerByWord =
+        prefixMatch !== null && prefixMatch.text.length >= GOPLS_AUTO_PREFIX_LENGTH;
+      if (
+        !context.explicit &&
+        !shouldTriggerByDot &&
+        !shouldTriggerByWord &&
+        virtualPackageQualifier === null
+      ) {
         return null;
       }
 
       const lineInfo = context.state.doc.lineAt(context.pos);
-      const request: EditorCompletionRequest = {
+      const linePrefix = context.state.sliceDoc(lineInfo.from, context.pos);
+      if (isPackageLineContext(linePrefix)) {
+        return null;
+      }
+      const virtualCompletionDocument =
+        virtualPackageQualifier === null
+          ? null
+          : buildPackageMemberCompletionDocument(
+              documentText,
+              context.pos,
+              virtualPackageQualifier
+            );
+      const requestPosition = virtualCompletionDocument?.cursor ?? {
         line: lineInfo.number,
         column: Math.max(1, context.pos - lineInfo.from + 1),
+      };
+
+      const request: EditorCompletionRequest = {
+        line: requestPosition.line,
+        column: requestPosition.column,
         explicit: context.explicit,
-        triggerCharacter: shouldTriggerByDot ? "." : null,
-        fileContent: context.state.doc.toString(),
+        triggerCharacter:
+          shouldTriggerByDot || virtualPackageQualifier !== null ? "." : null,
+        fileContent: virtualCompletionDocument?.fileContent ?? documentText,
       };
 
       const items = await onRequestCompletions(request);
+      if (context.aborted) {
+        return null;
+      }
       if (items.length === 0) {
         return null;
       }
 
-      const prefixMatch = context.matchBefore(/[A-Za-z_][A-Za-z0-9_]*/);
       const completionFrom = prefixMatch ? prefixMatch.from : context.pos;
 
       return {
         from: completionFrom,
+        validFor: GO_IDENTIFIER_PATTERN,
         options: items.map((item) => ({
           label: item.label,
           detail: item.detail ?? undefined,
+          info: item.documentation ?? undefined,
           type: item.kind ?? undefined,
           apply: (view, _completion, from, to) => {
+            if (virtualPackageQualifier !== null && prefixMatch !== null) {
+              const importChange = virtualPackageQualifier.shouldInsertImport
+                ? buildImportInsertionChange(
+                    view.state.doc.toString(),
+                    virtualPackageQualifier.importPath
+                  )
+                : null;
+              const mainChange = {
+                from: prefixMatch.from,
+                to: context.pos,
+                insert: `${virtualPackageQualifier.alias}.${
+                  item.insertText || item.label
+                }`,
+              };
+              const changes = importChange
+                ? [importChange, mainChange].sort(
+                    (a, b) => a.from - b.from || a.to - b.to
+                  )
+                : [mainChange];
+              view.dispatch({ changes });
+              return;
+            }
+
             const range = resolveCompletionRange(
               view,
               from,
@@ -159,13 +638,15 @@ function CodeEditor({
               item,
               request.line
             );
-            view.dispatch({
-              changes: {
+            dispatchCompletionChanges(
+              view,
+              {
                 from: range.from,
                 to: Math.max(range.to, to),
                 insert: item.insertText || item.label,
               },
-            });
+              item.additionalTextEdits
+            );
           },
         })),
       };
@@ -212,17 +693,57 @@ function CodeEditor({
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
     EditorState.readOnly.of(!editable),
+    EditorState.tabSize.of(4),
     EditorView.editable.of(editable),
     history(),
     lintGutter(),
     linter(() => []),
+    closeBrackets(),
     autocompletion({
-      override: [completionSource],
+      override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
       defaultKeymap: false,
+      updateSyncTime: 80,
     }),
-    keymap.of([
-      ...historyKeymap,
+    Prec.highest(keymap.of([
+      {
+        key: "Tab",
+        run: (view) => {
+          if (hasNextSnippetField(view.state)) {
+            return nextSnippetField(view);
+          }
+          return acceptCompletion(view) || (indentWithTab.run?.(view) ?? false);
+        },
+      },
+      {
+        key: "Shift-Tab",
+        run: (view) => {
+          if (hasPrevSnippetField(view.state)) {
+            return prevSnippetField(view);
+          }
+          return indentLess(view);
+        },
+      },
+      {
+        key: "ArrowDown",
+        run: moveCompletionSelection(true),
+      },
+      {
+        key: "ArrowUp",
+        run: moveCompletionSelection(false),
+      },
+      {
+        key: "PageDown",
+        run: moveCompletionSelection(true, "page"),
+      },
+      {
+        key: "PageUp",
+        run: moveCompletionSelection(false, "page"),
+      },
+      {
+        key: "Escape",
+        run: (view) => closeCompletion(view),
+      },
       {
         key: "Ctrl-Space",
         run: (view) => {
@@ -231,17 +752,16 @@ function CodeEditor({
         },
       },
       {
-        key: "Enter",
-        run: (view) => acceptCompletion(view),
-      },
-      {
         key: "Mod-s",
         run: (view) => {
           onSave?.(view.state.doc.toString());
           return true;
         },
       },
-    ]),
+      ...closeBracketsKeymap,
+      ...historyKeymap,
+      ...defaultKeymap,
+    ])),
     EditorView.updateListener.of((update) => {
       if (update.geometryChanged || update.viewportChanged) {
         // Schedule anchor sync on the next microtask to avoid read-during-render layout thrashing
@@ -285,9 +805,10 @@ function CodeEditor({
       }
     })
   ], [
-    completionSource,
     counterpartLine,
     editable,
+    goplsCompletionSource,
+    localSnippetSource,
     onCounterpartAnchorChange,
     onInteractionAnchorChange,
     onSave,

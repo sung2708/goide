@@ -36,6 +36,8 @@ function InlineActions({
     >
       <button
         type="button"
+        aria-label="Jump to counterpart line"
+        title="Jump to the paired send/receive or related concurrency line."
         className="rounded border border-[#313244] px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canJump}
         onClick={() => onJump?.()}
@@ -44,6 +46,8 @@ function InlineActions({
       </button>
       <button
         type="button"
+        aria-label="Deep Trace selected line"
+        title="Run deeper runtime tracing for the selected concurrency signal."
         className="rounded border border-[#313244] px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canDeepTrace}
         onClick={() => onDeepTrace?.()}

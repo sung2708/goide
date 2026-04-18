@@ -152,6 +152,7 @@ function Explorer({ workspacePath, activeFilePath, onOpenFile }: ExplorerProps) 
                 onOpenFile(entry.path);
               }
             }}
+            title={entry.isDir ? `Expand or collapse ${entry.name}` : `Open ${entry.name}`}
             className={`group animate-reveal-right flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] transition-all duration-300 ${
               isActive 
                 ? "bg-[rgba(137,180,250,0.1)] text-[var(--blue)] shadow-[inset_2px_0_0_0_var(--blue)]" 

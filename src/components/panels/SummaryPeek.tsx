@@ -37,6 +37,7 @@ function SummaryPeek({ items = [], onJumpToLine, onClose }: SummaryPeekProps) {
             className="rounded border border-[var(--surface1)] px-2 py-1 text-[10px] uppercase tracking-[0.16em] text-[var(--subtext1)] transition hover:bg-[var(--surface0)]"
             onMouseDown={(event) => event.preventDefault()}
             onClick={onClose}
+            title="Hide the summary panel."
           >
             Hide
           </button>
@@ -60,6 +61,7 @@ function SummaryPeek({ items = [], onJumpToLine, onClose }: SummaryPeekProps) {
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => onJumpToLine?.(item.line)}
                   aria-label={`Line ${item.line} ${item.label} ${item.confidence}`}
+                  title={`Jump to line ${item.line}.`}
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-[10px] font-bold text-[var(--overlay1)] uppercase tracking-widest">L{item.line}</span>

@@ -11,6 +11,7 @@ type UseLensSignalsArgs = {
   workspacePath: string | null;
   activeFilePath: string | null;
   workspacePathRef: MutableRefObject<string | null>;
+  analysisRevision?: number;
 };
 
 type UseLensSignalsResult = {
@@ -28,6 +29,7 @@ export function useLensSignals({
   workspacePath,
   activeFilePath,
   workspacePathRef,
+  analysisRevision = 0,
 }: UseLensSignalsArgs): UseLensSignalsResult {
   const [detectedConstructs, setDetectedConstructs] = useState<LensConstruct[]>(
     []
@@ -85,7 +87,7 @@ export function useLensSignals({
     return () => {
       canceled = true;
     };
-  }, [activeFilePath, workspacePath, workspacePathRef]);
+  }, [activeFilePath, analysisRevision, workspacePath, workspacePathRef]);
 
   const counterpartMappings = useMemo(
     () => buildCounterpartMappings(detectedConstructs),

@@ -131,6 +131,44 @@ describe("EditorShell diagnostics", () => {
     );
   });
 
+  it("fetches diagnostics when a Go file is opened", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: [
+        {
+          severity: "warning",
+          message: "unused variable",
+          source: "gopls",
+          code: "unused",
+          range: {
+            startLine: 1,
+            startColumn: 1,
+            endLine: 1,
+            endColumn: 2,
+          },
+        },
+      ],
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+
+    await waitFor(() =>
+      expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
+        "C:/workspace",
+        "main.go"
+      )
+    );
+    expect(screen.getByTestId("diagnostic-message")).toHaveTextContent(
+      "unused variable"
+    );
+  });
+
   it("ignores stale diagnostics completion after switching files", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
@@ -144,12 +182,15 @@ describe("EditorShell diagnostics", () => {
     const diagnosticsResolver: {
       current: ((value: { ok: boolean; data: EditorDiagnostic[] }) => void) | null;
     } = { current: null };
-    fetchWorkspaceDiagnosticsMock.mockImplementation(
-      () =>
+    fetchWorkspaceDiagnosticsMock
+      .mockResolvedValueOnce({ ok: true, data: [] })
+      .mockImplementationOnce(
+        () =>
         new Promise<{ ok: boolean; data: EditorDiagnostic[] }>((resolve) => {
           diagnosticsResolver.current = resolve;
         })
-    );
+      )
+      .mockResolvedValue({ ok: true, data: [] });
 
     render(<EditorShell />);
 
