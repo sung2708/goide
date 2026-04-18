@@ -170,12 +170,21 @@ pub struct CompletionRangeDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CompletionTextEditDto {
+    pub range: CompletionRangeDto,
+    pub new_text: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct CompletionItemDto {
     pub label: String,
     pub detail: Option<String>,
+    pub documentation: Option<String>,
     pub kind: Option<String>,
     pub insert_text: String,
     pub range: Option<CompletionRangeDto>,
+    pub additional_text_edits: Vec<CompletionTextEditDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
