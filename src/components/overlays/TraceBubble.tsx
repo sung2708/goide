@@ -7,7 +7,6 @@ type TraceBubbleProps = {
   anchorTop?: number | null;
   anchorLeft?: number | null;
   blocked?: boolean;
-  reducedMotion?: boolean;
 };
 
 const CONFIDENCE_CONFIG: Record<
@@ -38,7 +37,6 @@ function TraceBubble({
   anchorTop = null,
   anchorLeft = null,
   blocked = false,
-  reducedMotion = false,
 }: TraceBubbleProps) {
   if (!visible) {
     return null;
@@ -57,7 +55,7 @@ function TraceBubble({
       }}
     >
       <div
-        className="glass-morphism flex items-center gap-2 rounded-full border px-3 py-1 text-[9px] font-bold shadow-2xl transition-all animate-reveal-up"
+        className="glass-morphism flex items-center gap-2 rounded-full border px-3 py-1 text-[9px] font-bold shadow-md"
         style={{
           borderColor: config.color,
           backgroundColor: `rgba(30, 30, 46, 0.45)`,
@@ -65,14 +63,14 @@ function TraceBubble({
         }}
       >
         {/* Operation type label */}
-        <span className="uppercase tracking-[0.16em] opacity-80">{label}</span>
+        <span className="uppercase opacity-80">{label}</span>
 
         {/* Separator */}
         <span className="opacity-20">|</span>
 
         {/* Confidence chip */}
         <span
-          className="uppercase tracking-[0.2em]"
+          className="uppercase"
           style={{ color: config.color }}
         >
           {config.chip}
@@ -80,12 +78,10 @@ function TraceBubble({
         {blocked ? (
           <>
             <span className="opacity-20">|</span>
-            <span className="inline-flex items-center gap-1.5 uppercase tracking-[0.16em] text-[9px] text-[var(--signal-blocked)]">
+            <span className="inline-flex items-center gap-1.5 text-[9px] uppercase text-[var(--signal-blocked)]">
               <span
                 data-testid="trace-bubble-blocked-indicator"
-                className={`inline-block h-2 w-2 rounded-full bg-[var(--signal-blocked)] ${
-                  reducedMotion ? "" : "animate-pulse"
-                }`}
+                className="inline-block h-2 w-2 rounded-full bg-[var(--signal-blocked)]"
               />
               Blocked
             </span>

@@ -49,31 +49,31 @@ describe("EditorShell panels", () => {
     expect(screen.getByText(/Runtime: Static/i)).toBeInTheDocument();
   });
 
-  it("opens command palette from Cmd/Ctrl+K", async () => {
+  it("opens command palette from the status bar control", async () => {
     render(<EditorShell />);
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
 
     expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
   });
 
-  it("opens command palette from Cmd/Ctrl+K even when a contenteditable surface is focused", async () => {
+  it("opens command palette from the status bar control even when a contenteditable surface is focused", async () => {
     render(<EditorShell />);
     const fauxEditor = document.createElement("div");
     fauxEditor.contentEditable = "true";
     document.body.appendChild(fauxEditor);
     fauxEditor.focus();
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
 
     expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
 
     document.body.removeChild(fauxEditor);
   });
 
-  it("restores original focus even if the shortcut is re-fired while the palette is open", async () => {
+  it("restores original focus when the palette is closed", async () => {
     const rafSpy = vi
       .spyOn(window, "requestAnimationFrame")
       .mockImplementation((cb: FrameRequestCallback) => {
@@ -86,11 +86,10 @@ describe("EditorShell panels", () => {
       const summaryTrigger = screen.getByRole("button", { name: /summary/i });
       summaryTrigger.focus();
 
-      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+      fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
       expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
 
-      fireEvent.keyDown(window, { key: "k", ctrlKey: true });
-      fireEvent.keyDown(window, { key: "Escape" });
+      fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
 
       await waitFor(() => expect(summaryTrigger).toHaveFocus());
     } finally {

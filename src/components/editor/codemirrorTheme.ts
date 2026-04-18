@@ -33,14 +33,14 @@ const editorTheme = EditorView.theme(
     ".cm-scroller": {
       fontFamily:
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
-      fontSize: "13.5px",
-      lineHeight: "1.65",
+      fontSize: "13px",
+      lineHeight: "1.62",
     },
     ".cm-content": {
-      padding: "10px 0",
+      padding: "8px 0",
     },
     ".cm-line": {
-      padding: "0 12px",
+      padding: "0 10px",
     },
     [`.cm-line.${PREDICTED_HINT_UNDERLINE_CLASS}`]: {
       textDecorationLine: "underline",
@@ -70,24 +70,24 @@ const editorTheme = EditorView.theme(
     ".cm-gutters": {
       backgroundColor: "var(--crust) !important",
       color: "var(--overlay0)",
-      borderRight: "1px solid var(--surface0)",
+      borderRight: "1px solid rgba(113, 125, 144, 0.25)",
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
       fontSize: "11px",
     },
     ".cm-activeLine": {
-      backgroundColor: "var(--surface0)",
+      backgroundColor: "rgba(126, 162, 220, 0.09)",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: "var(--surface0)",
-      color: "var(--text)",
+      backgroundColor: "rgba(126, 162, 220, 0.12)",
+      color: "var(--subtext1)",
     },
     ".cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "var(--surface1) !important",
+      backgroundColor: "rgba(126, 162, 220, 0.24) !important",
     },
     ".cm-cursor, .cm-dropCursor": {
-      borderLeft: "2.5px solid var(--rosewater)",
+      borderLeft: "2px solid var(--blue)",
       animation: "cm-blink 1s steps(1) infinite",
     },
     "@keyframes cm-blink": {
@@ -101,15 +101,15 @@ const editorTheme = EditorView.theme(
 
 const syntaxStyle = HighlightStyle.define([
   { tag: tags.comment, color: "var(--overlay0)", fontStyle: "italic" },
-  { tag: tags.keyword, color: "var(--mauve)", fontWeight: "700" },
+  { tag: tags.keyword, color: "var(--mauve)", fontWeight: "600" },
   { tag: tags.string, color: "var(--green)" },
   { tag: [tags.number, tags.bool, tags.null], color: "var(--peach)" },
-  { tag: tags.typeName, color: "var(--yellow)" },
-  { tag: tags.className, color: "var(--yellow)" },
+  { tag: tags.typeName, color: "var(--lavender)" },
+  { tag: tags.className, color: "var(--lavender)" },
   { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "500" },
-  { tag: tags.operator, color: "var(--sky)" },
+  { tag: tags.operator, color: "var(--sapphire)" },
   { tag: tags.variableName, color: "var(--text)" },
-  { tag: tags.propertyName, color: "var(--blue)" },
+  { tag: tags.propertyName, color: "var(--sky)" },
   { tag: tags.atom, color: "var(--maroon)" },
 ]);
 

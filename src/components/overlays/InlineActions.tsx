@@ -26,7 +26,7 @@ function InlineActions({
 
   return (
     <div
-      className="absolute z-10 flex items-center gap-1 rounded border border-[#313244] bg-[#11111b] px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-[#cdd6f4]"
+      className="absolute z-10 flex items-center gap-1 rounded border border-[#313244] bg-[#11111b] px-2 py-1 text-[10px] uppercase text-[#cdd6f4]"
       data-testid="inline-actions"
       aria-label="Inline quick actions"
       style={{
@@ -38,7 +38,7 @@ function InlineActions({
         type="button"
         aria-label="Jump to counterpart line"
         title="Jump to the paired send/receive or related concurrency line."
-        className="rounded border border-[#313244] px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded border border-[#313244] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canJump}
         onClick={() => onJump?.()}
       >
@@ -48,7 +48,7 @@ function InlineActions({
         type="button"
         aria-label="Deep Trace selected line"
         title="Run deeper runtime tracing for the selected concurrency signal."
-        className="rounded border border-[#313244] px-2 py-1 transition disabled:cursor-not-allowed disabled:opacity-60"
+        className="rounded border border-[#313244] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canDeepTrace}
         onClick={() => onDeepTrace?.()}
       >
