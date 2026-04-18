@@ -216,7 +216,14 @@ function isPackageNameContext(linePrefix: string) {
 }
 
 function isPackageLineContext(linePrefix: string) {
-  return /^\s*package(?:\s+[A-Za-z_][A-Za-z0-9_]*)?$/.test(linePrefix);
+  return /^\s*package(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$/.test(linePrefix);
+}
+
+function isPackageContextAtSelection(view: EditorView) {
+  const cursor = view.state.selection.main.head;
+  const lineInfo = view.state.doc.lineAt(cursor);
+  const linePrefix = view.state.sliceDoc(lineInfo.from, cursor);
+  return isPackageLineContext(linePrefix);
 }
 
 function importedPackageAliases(source: string) {
@@ -722,6 +729,15 @@ function CodeEditor({
             return prevSnippetField(view);
           }
           return indentLess(view);
+        },
+      },
+      {
+        key: "Enter",
+        run: (view) => {
+          if (isPackageContextAtSelection(view)) {
+            return false;
+          }
+          return acceptCompletion(view);
         },
       },
       {
