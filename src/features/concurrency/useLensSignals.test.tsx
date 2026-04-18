@@ -232,4 +232,62 @@ describe("useLensSignals", () => {
       ]);
     });
   });
+
+  it("reruns analysis when the caller bumps the analysis revision", async () => {
+    const analyzeMock = vi.mocked(analyzeActiveFileConcurrency);
+    analyzeMock.mockReset();
+    analyzeMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            kind: "channel",
+            line: 3,
+            column: 1,
+            symbol: "jobs",
+            confidence: ConcurrencyConfidence.Predicted,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            kind: "select",
+            line: 8,
+            column: 2,
+            symbol: null,
+            confidence: ConcurrencyConfidence.Predicted,
+          },
+        ],
+      });
+
+    const { result, rerender } = renderHook(
+      ({ analysisRevision }) => {
+        const workspacePathRef = useWorkspaceRef("C:/repo");
+        return useLensSignals({
+          workspacePath: "C:/repo",
+          activeFilePath: "main.go",
+          workspacePathRef,
+          analysisRevision,
+        });
+      },
+      {
+        initialProps: {
+          analysisRevision: 0,
+        },
+      }
+    );
+
+    await waitFor(() => {
+      expect(result.current.detectedConstructs[0]?.kind).toBe("channel");
+    });
+
+    rerender({ analysisRevision: 1 });
+
+    await waitFor(() => {
+      expect(analyzeMock).toHaveBeenCalledTimes(2);
+      expect(result.current.detectedConstructs[0]?.kind).toBe("select");
+    });
+  });
 });

@@ -40,10 +40,6 @@ import CodeEditor, {
   type JumpRequest,
 } from "./CodeEditor";
 
-const EDITOR_BG = "bg-[#1e1e2e]";
-const PANEL_BG = "bg-[#181825]";
-const BORDER = "border-[#313244]";
-const TEXT_MUTED = "text-[#a6adc8]";
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
   select: "Select Stmt",
@@ -294,6 +290,7 @@ function EditorShell() {
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [isDirty, setIsDirty] = useState(false);
+  const [analysisRevision, setAnalysisRevision] = useState(0);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
@@ -389,6 +386,7 @@ function EditorShell() {
     workspacePath,
     activeFilePath,
     workspacePathRef,
+    analysisRevision,
   });
   const { hoveredLine, activeHint, activeHintLine, setHoveredLine } = useHoverHint({
     workspacePath,
@@ -543,6 +541,47 @@ function EditorShell() {
     resolveRuntimeCounterpart,
     resolveStaticCounterpart,
   ]);
+
+  const refreshDiagnosticsForFile = useCallback(
+    async (diagnosticWorkspacePath: string, diagnosticFilePath: string) => {
+      if (!isGoFile(diagnosticFilePath)) {
+        setDiagnostics([]);
+        return;
+      }
+      const requestId = diagnosticsRequestIdRef.current + 1;
+      diagnosticsRequestIdRef.current = requestId;
+
+      try {
+        const diagnosticsResponse = await fetchWorkspaceDiagnostics(
+          diagnosticWorkspacePath,
+          diagnosticFilePath
+        );
+
+        if (
+          requestId !== diagnosticsRequestIdRef.current ||
+          workspacePathRef.current !== diagnosticWorkspacePath ||
+          activeFilePathRef.current !== diagnosticFilePath
+        ) {
+          return;
+        }
+
+        if (diagnosticsResponse.ok && diagnosticsResponse.data) {
+          setDiagnostics(diagnosticsResponse.data);
+        } else {
+          setDiagnostics([]);
+        }
+      } catch (_error) {
+        if (
+          requestId === diagnosticsRequestIdRef.current &&
+          workspacePathRef.current === diagnosticWorkspacePath &&
+          activeFilePathRef.current === diagnosticFilePath
+        ) {
+          setDiagnostics([]);
+        }
+      }
+    },
+    []
+  );
 
   const hasCounterpart = useMemo(() => {
     const resolution = resolveCounterpartFromActiveHint();
@@ -846,43 +885,6 @@ function EditorShell() {
 
       const saveWorkspacePath = workspacePath;
       const saveFilePath = currentPath;
-      const refreshDiagnostics = async () => {
-        if (!isGoFile(saveFilePath)) {
-          setDiagnostics([]);
-          return;
-        }
-        const requestId = diagnosticsRequestIdRef.current + 1;
-        diagnosticsRequestIdRef.current = requestId;
-
-        try {
-          const diagnosticsResponse = await fetchWorkspaceDiagnostics(
-            saveWorkspacePath,
-            saveFilePath
-          );
-
-          if (
-            requestId !== diagnosticsRequestIdRef.current ||
-            workspacePathRef.current !== saveWorkspacePath ||
-            activeFilePathRef.current !== saveFilePath
-          ) {
-            return;
-          }
-
-          if (diagnosticsResponse.ok && diagnosticsResponse.data) {
-            setDiagnostics(diagnosticsResponse.data);
-          } else {
-            setDiagnostics([]);
-          }
-        } catch (_error) {
-          if (
-            requestId === diagnosticsRequestIdRef.current &&
-            workspacePathRef.current === saveWorkspacePath &&
-            activeFilePathRef.current === saveFilePath
-          ) {
-            setDiagnostics([]);
-          }
-        }
-      };
 
       setSaveStatus("saving");
       try {
@@ -896,6 +898,9 @@ function EditorShell() {
         if (response.ok) {
           savedContentRef.current = content;
           const hasNewerEdits = latestEditorContentRef.current !== content;
+          if (!hasNewerEdits) {
+            setActiveFileContent(content);
+          }
           setIsDirty(hasNewerEdits);
           if (hasNewerEdits) {
             setSaveStatus("idle");
@@ -903,7 +908,8 @@ function EditorShell() {
             setSaveStatus("saved");
             saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
           }
-          await refreshDiagnostics();
+          await refreshDiagnosticsForFile(saveWorkspacePath, saveFilePath);
+          setAnalysisRevision((current) => current + 1);
           return true;
         } else {
           setSaveStatus("error");
@@ -925,7 +931,7 @@ function EditorShell() {
         isSavingRef.current = false;
       }
     },
-    [workspacePath, activeFilePath]
+    [workspacePath, activeFilePath, refreshDiagnosticsForFile]
   );
 
   const handleSaveFile = useCallback(
@@ -1077,6 +1083,7 @@ function EditorShell() {
 
   const handleEditorChange = useCallback((value: string) => {
     latestEditorContentRef.current = value;
+    setActiveFileContent(value);
     setIsDirty(value !== savedContentRef.current);
     // Reset transient statuses when the user starts editing again
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
@@ -1246,6 +1253,7 @@ function EditorShell() {
         setMode("quick-insight");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
+        void refreshDiagnosticsForFile(startingPath, relativePath);
         if (isGoFile(relativePath)) {
           runtimeCheckRequestIdRef.current += 1;
           const requestId = runtimeCheckRequestIdRef.current;
@@ -1295,7 +1303,7 @@ function EditorShell() {
         setIsReading(false);
       }
     },
-    [isReading, workspacePath]
+    [isReading, refreshDiagnosticsForFile, workspacePath]
   );
 
   const editorTitle = useMemo(() => {
@@ -1342,6 +1350,8 @@ function EditorShell() {
                     }`}
                     onClick={handleOpenWorkspace}
                     type="button"
+                    aria-label="Open workspace folder"
+                    title="Choose a Go workspace folder."
                     disabled={isOpening}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
@@ -1357,6 +1367,8 @@ function EditorShell() {
                       }`}
                       onClick={handleRunFile}
                       type="button"
+                      aria-label="Run active Go file"
+                      title="Run the active Go file and show output in the terminal panel."
                       disabled={runStatus === "running"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -1384,6 +1396,7 @@ function EditorShell() {
                         className="mt-8 rounded bg-[var(--blue)] px-6 py-2.5 text-[11px] font-bold uppercase tracking-[0.2em] text-[var(--crust)] transition-opacity hover:opacity-90"
                         onClick={handleOpenWorkspace}
                         type="button"
+                        title="Choose a Go workspace folder."
                         disabled={isOpening}
                       >
                         Open Workspace

@@ -60,12 +60,19 @@ export type CompletionRange = {
   endColumn: number;
 };
 
+export type CompletionTextEdit = {
+  range: CompletionRange;
+  newText: string;
+};
+
 export type CompletionItem = {
   label: string;
   detail?: string | null;
+  documentation?: string | null;
   kind?: string | null;
   insertText: string;
   range?: CompletionRange | null;
+  additionalTextEdits?: CompletionTextEdit[];
 };
 
 export type RunOutputPayload = {

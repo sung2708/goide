@@ -251,7 +251,16 @@ fn replace_existing_file(temp_path: &Path, target: &Path) -> std::io::Result<()>
             lpExclude: *mut core::ffi::c_void,
             lpReserved: *mut core::ffi::c_void,
         ) -> i32;
+
+        fn MoveFileExW(
+            lpExistingFileName: *const u16,
+            lpNewFileName: *const u16,
+            dwFlags: u32,
+        ) -> i32;
     }
+
+    const MOVEFILE_REPLACE_EXISTING: u32 = 0x1;
+    const MOVEFILE_WRITE_THROUGH: u32 = 0x8;
 
     let target_wide: Vec<u16> = target
         .as_os_str()
@@ -275,11 +284,32 @@ fn replace_existing_file(temp_path: &Path, target: &Path) -> std::io::Result<()>
         )
     };
 
-    if success == 0 {
-        return Err(std::io::Error::last_os_error());
+    if success != 0 {
+        return Ok(());
     }
 
-    Ok(())
+    let replace_error = std::io::Error::last_os_error();
+
+    // Some Windows environments deny ReplaceFileW for files under extended-length
+    // canonical paths. MoveFileExW with replace semantics gives the same
+    // workspace-scoped replacement behavior for normal files and keeps saves usable.
+    let move_success = unsafe {
+        MoveFileExW(
+            temp_wide.as_ptr(),
+            target_wide.as_ptr(),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    };
+
+    if move_success != 0 {
+        return Ok(());
+    }
+
+    let move_error = std::io::Error::last_os_error();
+    Err(std::io::Error::new(
+        move_error.kind(),
+        format!("ReplaceFileW failed: {replace_error}; MoveFileExW failed: {move_error}"),
+    ))
 }
 
 #[cfg(not(windows))]

@@ -11,6 +11,7 @@ This template should help get you started developing with Tauri, React and Types
 On Windows, the `vswhom-sys` build step can fail if `zig` is picked up as the C/C++ compiler. If you see errors about the MSVC target being unknown, rerun with MSVC explicitly:
 
 ```powershell
+cmd /c ""C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && powershell"
 $env:CC="cl"
 $env:CXX="cl"
 cargo test

@@ -1,9 +1,14 @@
-use anyhow::{Context, Result};
-use std::io::{self, Write};
-use std::path::Path;
-use std::process::{Command, Output, Stdio};
+use anyhow::{anyhow, Context, Result};
+use serde_json::{json, Value};
+use std::io::{self, BufRead, BufReader, Write};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Output, Stdio};
+use std::sync::mpsc;
+use std::time::Duration;
 
 use crate::integration::fs;
+
+const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstructKind {
@@ -70,12 +75,20 @@ pub struct CompletionRange {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompletionTextEdit {
+    pub range: CompletionRange,
+    pub new_text: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionItem {
     pub label: String,
     pub detail: Option<String>,
+    pub documentation: Option<String>,
     pub kind: Option<String>,
     pub insert_text: String,
     pub range: Option<CompletionRange>,
+    pub additional_text_edits: Vec<CompletionTextEdit>,
 }
 
 fn is_mutex_name(text: &str) -> bool {
@@ -777,6 +790,48 @@ pub fn get_file_completions(
     _trigger_character: Option<&str>,
     file_content: Option<&str>,
 ) -> Result<Vec<CompletionItem>> {
+    let workspace_path = normalize_platform_pathbuf(
+        Path::new(workspace_root)
+            .canonicalize()
+            .with_context(|| format!("workspace root does not exist: {workspace_root}"))?,
+    );
+    let target_path = normalize_platform_pathbuf(
+        workspace_path
+            .join(relative_path)
+            .canonicalize()
+            .with_context(|| format!("completion target does not exist: {relative_path}"))?,
+    );
+    if !target_path.starts_with(&workspace_path) {
+        return Err(anyhow!("completion target escapes workspace root"));
+    }
+    let content;
+    let effective_content = match file_content {
+        Some(value) => value,
+        None => {
+            content = fs::read_file(workspace_root, relative_path)?;
+            &content
+        }
+    };
+
+    match get_file_completions_via_lsp(
+        &workspace_path,
+        &target_path,
+        line,
+        column,
+        effective_content,
+    ) {
+        Ok(items) => return Ok(items),
+        Err(error) => {
+            if error
+                .downcast_ref::<io::Error>()
+                .map(|err| err.kind() == io::ErrorKind::NotFound)
+                .unwrap_or(false)
+            {
+                return Ok(Vec::new());
+            }
+        }
+    }
+
     let location = format!("{relative_path}:{line}:{column}");
     let output = match run_gopls_completion(workspace_root, &location, file_content) {
         Ok(out) => out,
@@ -803,6 +858,471 @@ pub fn get_file_completions(
     };
 
     Ok(parse_gopls_completion_output(output_bytes))
+}
+
+struct ChildGuard {
+    child: Child,
+}
+
+impl Drop for ChildGuard {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+fn get_file_completions_via_lsp(
+    workspace_root: &Path,
+    target_path: &Path,
+    line: usize,
+    column: usize,
+    file_content: &str,
+) -> Result<Vec<CompletionItem>> {
+    let mut child = Command::new("gopls")
+        .arg("serve")
+        .current_dir(workspace_root)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("failed to start gopls language server")?;
+
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| anyhow!("gopls stdin unavailable"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| anyhow!("gopls stdout unavailable"))?;
+    let mut child_guard = ChildGuard { child };
+    let (tx, rx) = mpsc::channel::<Value>();
+
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(stdout);
+        while let Ok(message) = read_lsp_message(&mut reader) {
+            if tx.send(message).is_err() {
+                break;
+            }
+        }
+    });
+
+    let root_uri = path_to_file_uri(workspace_root);
+    let target_uri = path_to_file_uri(target_path);
+
+    write_lsp_request(
+        &mut stdin,
+        1,
+        "initialize",
+        json!({
+            "processId": null,
+            "rootPath": workspace_root.to_string_lossy().to_string(),
+            "rootUri": root_uri,
+            "workspaceFolders": [
+                {
+                    "uri": root_uri,
+                    "name": workspace_root
+                        .file_name()
+                        .and_then(|name| name.to_str())
+                        .unwrap_or("workspace")
+                }
+            ],
+            "capabilities": {
+                "workspace": {
+                    "workspaceFolders": true
+                },
+                "textDocument": {
+                    "completion": {
+                        "completionItem": {
+                            "documentationFormat": ["markdown", "plaintext"],
+                            "labelDetailsSupport": true,
+                            "snippetSupport": false
+                        }
+                    }
+                }
+            }
+        }),
+    )?;
+    ensure_lsp_response_success(wait_lsp_response(&rx, 1)?)?;
+
+    write_lsp_notification(&mut stdin, "initialized", json!({}))?;
+    write_lsp_notification(
+        &mut stdin,
+        "workspace/didChangeConfiguration",
+        json!({
+            "settings": {
+                "gopls": {
+                    "completeFunctionCalls": true,
+                    "hoverKind": "SynopsisDocumentation",
+                    "matcher": "Fuzzy",
+                    "symbolScope": "all",
+                    "usePlaceholders": true
+                }
+            }
+        }),
+    )?;
+    write_lsp_notification(
+        &mut stdin,
+        "textDocument/didOpen",
+        json!({
+            "textDocument": {
+                "uri": target_uri,
+                "languageId": "go",
+                "version": 1,
+                "text": file_content
+            }
+        }),
+    )?;
+    let mut completion_response: Option<Value> = None;
+    for attempt in 0..20 {
+        let request_id = 2 + attempt;
+        write_lsp_request(
+            &mut stdin,
+            request_id,
+            "textDocument/completion",
+            json!({
+                "textDocument": {
+                    "uri": target_uri
+                },
+                "position": {
+                    "line": line.saturating_sub(1),
+                    "character": column.saturating_sub(1)
+                }
+            }),
+        )?;
+
+        let response = wait_lsp_response(&rx, request_id)?;
+        if lsp_error_message(&response) == Some("no views") {
+            std::thread::sleep(Duration::from_millis(500));
+            continue;
+        }
+        completion_response = Some(response);
+        break;
+    }
+
+    let completion_response =
+        completion_response.ok_or_else(|| anyhow!("gopls did not create a workspace view"))?;
+    ensure_lsp_response_success(completion_response.clone())?;
+    let items = parse_lsp_completion_response(&completion_response);
+
+    let shutdown_request_id = 10_000;
+    let _ = write_lsp_request(&mut stdin, shutdown_request_id, "shutdown", json!(null));
+    let _ = wait_lsp_response(&rx, shutdown_request_id);
+    let _ = write_lsp_notification(&mut stdin, "exit", json!(null));
+    let _ = child_guard.child.kill();
+
+    Ok(items)
+}
+
+fn wait_lsp_response(rx: &mpsc::Receiver<Value>, id: i64) -> Result<Value> {
+    loop {
+        let message = rx
+            .recv_timeout(LSP_REQUEST_TIMEOUT)
+            .context("timed out waiting for gopls response")?;
+        if message.get("id").and_then(Value::as_i64) == Some(id) {
+            return Ok(message);
+        }
+    }
+}
+
+fn ensure_lsp_response_success(response: Value) -> Result<()> {
+    if let Some(message) = lsp_error_message(&response) {
+        return Err(anyhow!(message.to_string()));
+    }
+    Ok(())
+}
+
+fn lsp_error_message(response: &Value) -> Option<&str> {
+    response
+        .get("error")?
+        .get("message")
+        .and_then(Value::as_str)
+        .or(Some("unknown gopls LSP error"))
+}
+
+fn write_lsp_request<W: Write>(
+    writer: &mut W,
+    id: i64,
+    method: &str,
+    params: Value,
+) -> io::Result<()> {
+    write_lsp_message(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": method,
+            "params": params
+        }),
+    )
+}
+
+fn write_lsp_notification<W: Write>(writer: &mut W, method: &str, params: Value) -> io::Result<()> {
+    write_lsp_message(
+        writer,
+        &json!({
+            "jsonrpc": "2.0",
+            "method": method,
+            "params": params
+        }),
+    )
+}
+
+fn write_lsp_message<W: Write>(writer: &mut W, value: &Value) -> io::Result<()> {
+    let body = serde_json::to_vec(value)?;
+    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
+    writer.write_all(&body)?;
+    writer.flush()
+}
+
+fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Value> {
+    let mut content_length: Option<usize> = None;
+
+    loop {
+        let mut line = String::new();
+        let read = reader.read_line(&mut line)?;
+        if read == 0 {
+            return Err(anyhow!("gopls LSP stream closed"));
+        }
+        let trimmed = line.trim_end_matches(['\r', '\n']);
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.eq_ignore_ascii_case("content-length") {
+                content_length = Some(value.trim().parse::<usize>()?);
+            }
+        }
+    }
+
+    let length = content_length.ok_or_else(|| anyhow!("LSP message missing Content-Length"))?;
+    let mut body = vec![0u8; length];
+    reader.read_exact(&mut body)?;
+    Ok(serde_json::from_slice(&body)?)
+}
+
+fn path_to_file_uri(path: &Path) -> String {
+    let normalized = normalize_path_for_file_uri(&path.to_string_lossy())
+        .replace('\\', "/")
+        .replace(' ', "%20");
+    if normalized.starts_with("//") {
+        format!("file:{normalized}")
+    } else {
+        format!("file:///{normalized}")
+    }
+}
+
+#[cfg(windows)]
+fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
+    PathBuf::from(normalize_path_for_file_uri(&path.to_string_lossy()))
+}
+
+#[cfg(not(windows))]
+fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
+    path
+}
+
+#[cfg(windows)]
+fn normalize_path_for_file_uri(path: &str) -> String {
+    if let Some(stripped) = path.strip_prefix("\\\\?\\UNC\\") {
+        return format!("\\\\{stripped}");
+    }
+    if let Some(stripped) = path.strip_prefix("\\\\?\\") {
+        return stripped.to_string();
+    }
+    path.to_string()
+}
+
+#[cfg(not(windows))]
+fn normalize_path_for_file_uri(path: &str) -> String {
+    path.to_string()
+}
+
+fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionItem> {
+    let Some(result) = response.get("result") else {
+        return Vec::new();
+    };
+    if result.is_null() {
+        return Vec::new();
+    }
+
+    let item_values: Vec<&Value> = if let Some(items) = result.as_array() {
+        items.iter().collect()
+    } else {
+        result
+            .get("items")
+            .and_then(Value::as_array)
+            .map(|items| items.iter().collect())
+            .unwrap_or_default()
+    };
+
+    let mut items = Vec::new();
+    for value in item_values {
+        let Some(label) = value.get("label").and_then(Value::as_str) else {
+            continue;
+        };
+        let detail = value
+            .get("detail")
+            .and_then(Value::as_str)
+            .or_else(|| {
+                value
+                    .get("labelDetails")
+                    .and_then(|label| label.get("description"))
+                    .and_then(Value::as_str)
+            })
+            .map(str::to_string);
+        let documentation = extract_lsp_documentation(value);
+        let kind = value
+            .get("kind")
+            .and_then(Value::as_i64)
+            .and_then(completion_kind_label)
+            .map(str::to_string);
+        let insert_text = extract_lsp_insert_text(value, label);
+        let range = extract_lsp_completion_range(value);
+        let additional_text_edits = extract_lsp_additional_text_edits(value);
+
+        items.push(CompletionItem {
+            label: label.to_string(),
+            detail,
+            documentation,
+            kind,
+            insert_text,
+            range,
+            additional_text_edits,
+        });
+    }
+    items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
+    items
+}
+
+fn extract_lsp_documentation(item: &Value) -> Option<String> {
+    let raw = item
+        .get("documentation")
+        .and_then(|documentation| {
+            documentation
+                .as_str()
+                .or_else(|| documentation.get("value").and_then(Value::as_str))
+        })?
+        .trim();
+    if raw.is_empty() {
+        return None;
+    }
+
+    Some(summarize_completion_documentation(raw))
+}
+
+fn summarize_completion_documentation(raw: &str) -> String {
+    let mut text = raw
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .take_while(|line| !line.starts_with("```"))
+        .collect::<Vec<_>>()
+        .join(" ");
+    text = text.replace('`', "");
+    text = text.replace('[', "").replace(']', "");
+    const MAX_SUMMARY_LEN: usize = 180;
+    if text.chars().count() > MAX_SUMMARY_LEN {
+        let mut truncated: String = text.chars().take(MAX_SUMMARY_LEN).collect();
+        truncated.push_str("...");
+        truncated
+    } else {
+        text
+    }
+}
+
+fn extract_lsp_insert_text(item: &Value, label: &str) -> String {
+    let raw = item
+        .get("textEdit")
+        .and_then(|edit| edit.get("newText"))
+        .and_then(Value::as_str)
+        .or_else(|| item.get("insertText").and_then(Value::as_str))
+        .unwrap_or(label);
+    if item.get("insertTextFormat").and_then(Value::as_i64) == Some(2) {
+        return strip_lsp_snippet_placeholders(raw);
+    }
+    raw.to_string()
+}
+
+fn strip_lsp_snippet_placeholders(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let chars: Vec<char> = value.chars().collect();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if chars[index] == '$' && chars.get(index + 1) == Some(&'{') {
+            index += 2;
+            while index < chars.len() && chars[index].is_ascii_digit() {
+                index += 1;
+            }
+            if chars.get(index) == Some(&':') {
+                index += 1;
+            }
+            while index < chars.len() && chars[index] != '}' {
+                output.push(chars[index]);
+                index += 1;
+            }
+            if chars.get(index) == Some(&'}') {
+                index += 1;
+            }
+            continue;
+        }
+        if chars[index] == '$' && chars.get(index + 1).is_some_and(|ch| ch.is_ascii_digit()) {
+            index += 2;
+            continue;
+        }
+        output.push(chars[index]);
+        index += 1;
+    }
+    output
+}
+
+fn extract_lsp_completion_range(item: &Value) -> Option<CompletionRange> {
+    let range = item
+        .get("textEdit")
+        .and_then(|edit| edit.get("range"))
+        .or_else(|| item.get("range"))?;
+    lsp_range_to_completion_range(range)
+}
+
+fn extract_lsp_additional_text_edits(item: &Value) -> Vec<CompletionTextEdit> {
+    item.get("additionalTextEdits")
+        .and_then(Value::as_array)
+        .map(|edits| {
+            edits
+                .iter()
+                .filter_map(|edit| {
+                    let range = lsp_range_to_completion_range(edit.get("range")?)?;
+                    let new_text = edit.get("newText")?.as_str()?.to_string();
+                    Some(CompletionTextEdit { range, new_text })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn lsp_range_to_completion_range(range: &Value) -> Option<CompletionRange> {
+    let start = range.get("start")?;
+    let end = range.get("end")?;
+    Some(CompletionRange {
+        start_line: start.get("line")?.as_u64()? as usize + 1,
+        start_column: start.get("character")?.as_u64()? as usize + 1,
+        end_line: end.get("line")?.as_u64()? as usize + 1,
+        end_column: end.get("character")?.as_u64()? as usize + 1,
+    })
+}
+
+fn completion_kind_label(kind: i64) -> Option<&'static str> {
+    match kind {
+        2 => Some("method"),
+        3 => Some("function"),
+        5 | 10 => Some("property"),
+        6 => Some("variable"),
+        9 => Some("module"),
+        14 => Some("keyword"),
+        21 => Some("constant"),
+        22 => Some("type"),
+        _ => None,
+    }
 }
 
 fn run_gopls_completion(
@@ -961,9 +1481,11 @@ fn parse_gopls_completion_output(output_bytes: &[u8]) -> Vec<CompletionItem> {
         items.push(CompletionItem {
             label: label.to_string(),
             detail,
+            documentation: None,
             kind,
             insert_text,
             range: None,
+            additional_text_edits: Vec::new(),
         });
     }
 
@@ -1758,5 +2280,129 @@ completion candidates:
         let items = parse_gopls_completion_output(output.as_bytes());
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].label, "Println");
+    }
+
+    #[test]
+    fn parses_lsp_completion_list_response() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "Println",
+                        "kind": 3,
+                        "detail": "func(a ...any) (n int, err error)",
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": "Println formats using the default formats and writes to standard output.\n\nMore details."
+                        },
+                        "textEdit": {
+                            "range": {
+                                "start": { "line": 3, "character": 4 },
+                                "end": { "line": 3, "character": 8 }
+                            },
+                            "newText": "Println"
+                        },
+                        "additionalTextEdits": [
+                            {
+                                "range": {
+                                    "start": { "line": 1, "character": 0 },
+                                    "end": { "line": 1, "character": 0 }
+                                },
+                                "newText": "import \"fmt\"\n"
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+
+        let items = parse_lsp_completion_response(&response);
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Println");
+        assert_eq!(items[0].kind.as_deref(), Some("function"));
+        assert_eq!(items[0].insert_text, "Println");
+        assert_eq!(
+            items[0].documentation.as_deref(),
+            Some("Println formats using the default formats and writes to standard output. More details.")
+        );
+        assert_eq!(
+            items[0].range,
+            Some(CompletionRange {
+                start_line: 4,
+                start_column: 5,
+                end_line: 4,
+                end_column: 9,
+            })
+        );
+        assert_eq!(
+            items[0].additional_text_edits,
+            vec![CompletionTextEdit {
+                range: CompletionRange {
+                    start_line: 2,
+                    start_column: 1,
+                    end_line: 2,
+                    end_column: 1,
+                },
+                new_text: "import \"fmt\"\n".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn strips_lsp_snippet_placeholders() {
+        assert_eq!(
+            strip_lsp_snippet_placeholders("Printf(${1:format}, ${2:a})$0"),
+            "Printf(format, a)"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires unsandboxed gopls workspace access"]
+    fn gets_completions_from_gopls_lsp_when_available() {
+        if Command::new("gopls").arg("version").output().is_err() {
+            return;
+        }
+
+        let temp_dir = std::env::current_dir()
+            .expect("current test directory")
+            .join("target")
+            .join("goide_gopls_lsp_completion");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(&temp_dir).expect("create temp workspace");
+        fs::write(
+            temp_dir.join("go.mod"),
+            "module example.com/goide-test\n\ngo 1.21\n",
+        )
+        .expect("write go.mod");
+        let source = r#"package main
+
+import "fmt"
+
+func main() {
+    fmt.
+}
+"#;
+        fs::write(temp_dir.join("main.go"), source).expect("write go file");
+
+        let items = get_file_completions(
+            &temp_dir.to_string_lossy(),
+            "main.go",
+            6,
+            9,
+            None,
+            Some(source),
+        )
+        .expect("completion request");
+
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == "Println" || item.label == "Printf"),
+            "expected fmt.Print* completion from gopls, got: {items:?}"
+        );
     }
 }
