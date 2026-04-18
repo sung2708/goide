@@ -181,7 +181,7 @@ describe("EditorShell race run", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
   });
 
@@ -221,7 +221,7 @@ describe("EditorShell race run", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
   });
 
@@ -262,7 +262,7 @@ describe("EditorShell race run", () => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
     });
 
-    await user.click(screen.getByRole("button", { name: /run active go file/i }));
+    await user.click(screen.getByRole("button", { name: /^run active go file$/i }));
     await waitFor(() => {
       expect(runWorkspaceFileMock).toHaveBeenCalledTimes(1);
     });
@@ -318,7 +318,7 @@ describe("EditorShell race run", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
   });
 
@@ -360,8 +360,56 @@ describe("EditorShell race run", () => {
 
     await waitFor(() => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getByText("Confirmed")).toBeInTheDocument();
+      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
     });
+  });
+
+  it("clears captured race findings when switching workspace", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(
+      await screen.findByRole("button", { name: /run with race detector/i })
+    );
+    await waitFor(() => {
+      expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
+    });
+    const raceRunId = runWorkspaceFileWithRaceMock.mock.calls[0]?.[2] as string;
+
+    runOutputListener?.({
+      payload: { runId: raceRunId, line: "WARNING: DATA RACE", stream: "stderr" },
+    });
+    runOutputListener?.({
+      payload: {
+        runId: raceRunId,
+        line: "C:/workspace/main.go:1 +0x123",
+        stream: "stderr",
+      },
+    });
+    runOutputListener?.({
+      payload: {
+        runId: raceRunId,
+        line: "Process exited with code 66.",
+        stream: "exit",
+        exitCode: 66,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Data Race")).toBeInTheDocument();
+    });
+
+    openMock.mockResolvedValueOnce("C:/workspace-2");
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    expect(screen.queryByText("Data Race")).toBeNull();
   });
 
   it("does not render header Run Race button for non-go active files", async () => {

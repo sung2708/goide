@@ -1,5 +1,5 @@
 import { fireEvent, render } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
@@ -47,9 +47,14 @@ const closeBracketsMock = vi.fn(() => ({ extension: "mock-close-brackets" }));
 const startCompletionMock = vi.fn((_view: unknown) => undefined);
 const acceptCompletionMock = vi.fn((_view: unknown) => false);
 const closeCompletionMock = vi.fn((_view: unknown) => false);
+const hasNextSnippetFieldMock = vi.fn(() => false);
+const hasPrevSnippetFieldMock = vi.fn(() => false);
+const nextSnippetFieldMock = vi.fn(() => true);
+const prevSnippetFieldMock = vi.fn(() => true);
 const moveCompletionSelectionMock = vi.fn(
   (_forward: boolean, _by?: "option" | "page") => (_view: unknown) => false
 );
+let latestKeyBindings: Array<{ key?: string; run?: (view: unknown) => boolean }> = [];
 type TestCompletionSource =
   | ((context: {
       pos: number;
@@ -104,12 +109,12 @@ vi.mock("@codemirror/autocomplete", () => ({
   closeBrackets: () => closeBracketsMock(),
   closeBracketsKeymap: [{ key: "mock-close-bracket" }],
   closeCompletion: (view: unknown) => closeCompletionMock(view),
-  hasNextSnippetField: () => false,
-  hasPrevSnippetField: () => false,
+  hasNextSnippetField: () => hasNextSnippetFieldMock(),
+  hasPrevSnippetField: () => hasPrevSnippetFieldMock(),
   moveCompletionSelection: (forward: boolean, by?: "option" | "page") =>
     moveCompletionSelectionMock(forward, by),
-  nextSnippetField: () => true,
-  prevSnippetField: () => true,
+  nextSnippetField: () => nextSnippetFieldMock(),
+  prevSnippetField: () => prevSnippetFieldMock(),
   snippetCompletion: (
     template: string,
     completion: Record<string, unknown>
@@ -121,6 +126,20 @@ vi.mock("@codemirror/autocomplete", () => ({
   acceptCompletion: (view: unknown) => acceptCompletionMock(view),
 }));
 
+vi.mock("@codemirror/view", async () => {
+  const actual = await vi.importActual<typeof import("@codemirror/view")>("@codemirror/view");
+  return {
+    ...actual,
+    keymap: {
+      ...actual.keymap,
+      of: (bindings: Array<{ key?: string; run?: (view: unknown) => boolean }>) => {
+        latestKeyBindings = bindings;
+        return { extension: "mock-keymap" };
+      },
+    },
+  };
+});
+
 vi.mock("@uiw/react-codemirror", () => ({
   default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
     onCreateEditor?.(mockView);
@@ -129,6 +148,107 @@ vi.mock("@uiw/react-codemirror", () => ({
 }));
 
 describe("CodeEditor", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hasNextSnippetFieldMock.mockReturnValue(false);
+    hasPrevSnippetFieldMock.mockReturnValue(false);
+    nextSnippetFieldMock.mockReturnValue(true);
+    prevSnippetFieldMock.mockReturnValue(true);
+    acceptCompletionMock.mockReturnValue(false);
+    latestKeyBindings = [];
+  });
+
+  it("uses Tab to move snippet placeholders before completion acceptance", () => {
+    hasNextSnippetFieldMock.mockReturnValue(true);
+    nextSnippetFieldMock.mockReturnValue(true);
+    acceptCompletionMock.mockReturnValue(false);
+
+    render(<CodeEditor value={"package main\nf\n"} />);
+    const tabBinding = latestKeyBindings.find((binding) => binding.key === "Tab");
+    expect(tabBinding?.run).toBeDefined();
+
+    const handled = tabBinding?.run?.({} as any);
+    expect(handled).toBe(true);
+    expect(nextSnippetFieldMock).toHaveBeenCalled();
+    expect(acceptCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("uses Tab to accept completion before indentation fallback", () => {
+    hasNextSnippetFieldMock.mockReturnValue(false);
+    acceptCompletionMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"package main\nfmt.\n"} />);
+    const tabBinding = latestKeyBindings.find((binding) => binding.key === "Tab");
+    expect(tabBinding?.run).toBeDefined();
+
+    const handled = tabBinding?.run?.({} as any);
+    expect(handled).toBe(true);
+    expect(acceptCompletionMock).toHaveBeenCalled();
+  });
+
+  it("does not accept completion on Enter while editing package declaration context", () => {
+    acceptCompletionMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"package ma"} />);
+    const enterBinding = latestKeyBindings.find((binding) => binding.key === "Enter");
+    expect(enterBinding?.run).toBeDefined();
+
+    const handled = enterBinding?.run?.({
+      state: {
+        selection: { main: { head: 10 } },
+        doc: {
+          lineAt: () => ({ from: 0 }),
+        },
+        sliceDoc: () => "package ma",
+      },
+    } as any);
+
+    expect(handled).toBe(false);
+    expect(acceptCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("does not accept completion on Enter when cursor is after package keyword whitespace", () => {
+    acceptCompletionMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"package "} />);
+    const enterBinding = latestKeyBindings.find((binding) => binding.key === "Enter");
+    expect(enterBinding?.run).toBeDefined();
+
+    const handled = enterBinding?.run?.({
+      state: {
+        selection: { main: { head: 8 } },
+        doc: {
+          lineAt: () => ({ from: 0 }),
+        },
+        sliceDoc: () => "package ",
+      },
+    } as any);
+
+    expect(handled).toBe(false);
+    expect(acceptCompletionMock).not.toHaveBeenCalled();
+  });
+
+  it("accepts completion on Enter outside package declaration context", () => {
+    acceptCompletionMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"fmt.\n"} />);
+    const enterBinding = latestKeyBindings.find((binding) => binding.key === "Enter");
+    expect(enterBinding?.run).toBeDefined();
+
+    const handled = enterBinding?.run?.({
+      state: {
+        selection: { main: { head: 4 } },
+        doc: {
+          lineAt: () => ({ from: 0 }),
+        },
+        sliceDoc: () => "fmt.",
+      },
+    } as any);
+
+    expect(handled).toBe(true);
+    expect(acceptCompletionMock).toHaveBeenCalled();
+  });
+
   it("applies diagnostics to the editor view when diagnostics prop changes", () => {
     const diagnostics: EditorDiagnostic[] = [
       {
@@ -704,6 +824,41 @@ describe("CodeEditor", () => {
         expect.objectContaining({ label: "main", detail: "main function" }),
       ])
     );
+    expect(goplsResult).toBeNull();
+    expect(requestCompletions).not.toHaveBeenCalled();
+  });
+
+  it("suppresses gopls completion requests in package keyword whitespace context", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "main",
+        detail: "func main()",
+        kind: "function",
+        insertText: "func main() {\n\t\n}",
+        range: null,
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package "}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const goplsResult = await latestAutocompleteOverride?.({
+      pos: 8,
+      explicit: false,
+      matchBefore: () => null,
+      state: {
+        sliceDoc: (from: number, to: number) => "package ".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 1, from: 0 }),
+          toString: () => "package ",
+        },
+      },
+    });
+
     expect(goplsResult).toBeNull();
     expect(requestCompletions).not.toHaveBeenCalled();
   });

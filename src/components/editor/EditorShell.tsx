@@ -16,10 +16,10 @@ import {
   fetchWorkspaceCompletions,
   fetchWorkspaceDiagnostics,
 } from "../../lib/ipc/client";
+import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type {
   ApiResponse,
   CompletionItem,
-  ConcurrencyConfidence,
   DeepTraceConstructKind,
   EditorDiagnostic,
   RuntimeSignal,
@@ -639,15 +639,21 @@ function EditorShell() {
 
   const counterpartResolution = resolveCounterpartFromActiveHint();
   const activeRaceSignal = useMemo(() => {
-    if (!activeFilePath || interactionLine === null) {
+    if (!activeFilePath) {
       return null;
     }
+    const activeFileRaceSignals = raceSignals.filter((signal) =>
+      pathsReferToSameFile(signal.relativePath, activeFilePath)
+    );
+    if (activeFileRaceSignals.length === 0) {
+      return null;
+    }
+    if (interactionLine === null) {
+      return activeFileRaceSignals[0] ?? null;
+    }
     return (
-      raceSignals.find(
-        (signal) =>
-          signal.line === interactionLine &&
-          pathsReferToSameFile(signal.relativePath, activeFilePath)
-      ) ?? null
+      activeFileRaceSignals.find((signal) => signal.line === interactionLine) ??
+      null
     );
   }, [activeFilePath, interactionLine, raceSignals]);
   const isActiveHintRuntimeConfirmed =
@@ -1361,7 +1367,6 @@ function EditorShell() {
         setMode("quick-insight");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
-        setRaceSignals([]);
         void refreshDiagnosticsForFile(startingPath, relativePath);
         if (isGoFile(relativePath)) {
           runtimeCheckRequestIdRef.current += 1;
