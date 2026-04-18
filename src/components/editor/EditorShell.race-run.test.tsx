@@ -182,7 +182,46 @@ describe("EditorShell race run", () => {
     await waitFor(() => {
       expect(screen.getByText("Data Race")).toBeInTheDocument();
       expect(screen.getByText("Confirmed")).toBeInTheDocument();
-      expect(screen.getByTestId("trace-bubble-blocked-indicator")).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces confirmed race signal on selected line without a predicted hint", async () => {
+    const user = userEvent.setup();
+    mockConstructs = [];
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+
+    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(
+      await screen.findByRole("button", { name: /run with race detector/i })
+    );
+
+    await waitFor(() => {
+      expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
+    });
+    const runId = runWorkspaceFileWithRaceMock.mock.calls[0]?.[2] as string;
+
+    runOutputListener?.({
+      payload: { runId, line: "WARNING: DATA RACE", stream: "stderr" },
+    });
+    runOutputListener?.({
+      payload: { runId, line: "main.go:1 +0x123", stream: "stderr" },
+    });
+    runOutputListener?.({
+      payload: {
+        runId,
+        line: "Process exited with code 66.",
+        stream: "exit",
+        exitCode: 66,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Data Race")).toBeInTheDocument();
+      expect(screen.getByText("Confirmed")).toBeInTheDocument();
     });
   });
 

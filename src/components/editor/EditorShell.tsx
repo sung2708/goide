@@ -468,6 +468,7 @@ function EditorShell() {
   const isInlineActionsVisible =
     activeHint !== null &&
     (hoveredLine !== null || selectedLine === activeHintLine);
+  const interactionLine = hoveredLine ?? selectedLine;
 
   const traceBubbleLabel = activeHint?.kind
     ? (KIND_LABELS[activeHint.kind] ?? activeHint.kind)
@@ -655,17 +656,17 @@ function EditorShell() {
 
   const counterpartResolution = resolveCounterpartFromActiveHint();
   const activeRaceSignal = useMemo(() => {
-    if (!activeFilePath || !activeHintLine) {
+    if (!activeFilePath || interactionLine === null) {
       return null;
     }
     return (
       raceSignals.find(
         (signal) =>
-          signal.line === activeHintLine &&
+          signal.line === interactionLine &&
           pathsReferToSameFile(signal.relativePath, activeFilePath)
       ) ?? null
     );
-  }, [activeFilePath, activeHintLine, raceSignals]);
+  }, [activeFilePath, interactionLine, raceSignals]);
   const isActiveHintRuntimeConfirmed =
     activeRaceSignal !== null ||
     (mode === "deep-trace" &&
@@ -685,8 +686,10 @@ function EditorShell() {
         }
       ));
   const isBlockedConfirmedVisible =
-    (mode === "deep-trace" && activeBlockedSignal !== null) || activeRaceSignal !== null;
-  const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
+    mode === "deep-trace" && activeBlockedSignal !== null;
+  const isRaceConfirmedVisible = activeRaceSignal !== null;
+  const isTraceBubbleVisible =
+    isInlineActionsVisible || isBlockedConfirmedVisible || isRaceConfirmedVisible;
   const effectiveHint =
     isActiveHintRuntimeConfirmed && activeHint
       ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
