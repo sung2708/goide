@@ -7,6 +7,8 @@ type BottomPanelProps = {
   isRunning?: boolean;
   onClear?: () => void;
   onRun?: () => void;
+  onRunWithRace?: () => void;
+  canRunWithRace?: boolean;
 };
 
 function BottomPanel({
@@ -15,6 +17,8 @@ function BottomPanel({
   isRunning = false,
   onClear,
   onRun,
+  onRunWithRace,
+  canRunWithRace = false,
 }: BottomPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -54,6 +58,17 @@ function BottomPanel({
               title="Run the active Go file again."
             >
               Run Again
+            </button>
+          )}
+          {onRunWithRace && !isRunning && (
+            <button
+              type="button"
+              className="beveled-edge rounded border border-[var(--mauve)] px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[var(--mauve)] transition hover:bg-[var(--surface0)] disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onRunWithRace}
+              disabled={!canRunWithRace}
+              title="Run the active Go file with race detection."
+            >
+              Run Race
             </button>
           )}
           {onClear && (

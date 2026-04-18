@@ -4,7 +4,7 @@ use crate::core::analysis::causal::{
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::gopls;
-use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle};
+use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
 use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
@@ -192,6 +192,38 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
             workspace_root,
             relative_path,
             run_id.clone(),
+            RunMode::Standard,
+            handle,
+        )
+        .await
+        {
+            emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            eprintln!("[goide] run_go_file error: {e:#}");
+        }
+    });
+    // Returns immediately — output streams via events
+    ApiResponse::ok(())
+}
+
+#[tauri::command]
+pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_root: String,
+    relative_path: String,
+    run_id: String,
+) -> ApiResponse<()> {
+    if run_id.trim().is_empty() {
+        return ApiResponse::err("run_invalid_input", "run id is required");
+    }
+
+    let handle = get_process_handle();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_go_file(
+            app.clone(),
+            workspace_root,
+            relative_path,
+            run_id.clone(),
+            RunMode::Race,
             handle,
         )
         .await
