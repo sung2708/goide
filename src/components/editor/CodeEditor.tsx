@@ -301,6 +301,11 @@ function applyTextChange(
   )}`;
 }
 
+function normalizeCompletionMetaText(value?: string | null) {
+  const normalized = value?.trim();
+  return normalized ? normalized : undefined;
+}
+
 function positionToLineColumn(source: string, position: number) {
   let line = 1;
   let lineStart = 0;
@@ -611,8 +616,8 @@ function CodeEditor({
         validFor: GO_IDENTIFIER_PATTERN,
         options: items.map((item) => ({
           label: item.label,
-          detail: item.detail ?? undefined,
-          info: item.documentation ?? undefined,
+          detail: normalizeCompletionMetaText(item.detail),
+          info: normalizeCompletionMetaText(item.documentation),
           type: item.kind ?? undefined,
           apply: (view, _completion, from, to) => {
             if (virtualPackageQualifier !== null && prefixMatch !== null) {

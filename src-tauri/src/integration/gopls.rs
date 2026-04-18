@@ -2353,6 +2353,44 @@ completion candidates:
     }
 
     #[test]
+    fn parses_lsp_completion_label_details_and_ignores_empty_docs() {
+        let response = serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 2,
+            "result": {
+                "isIncomplete": false,
+                "items": [
+                    {
+                        "label": "fmt",
+                        "kind": 9,
+                        "labelDetails": {
+                            "description": "package"
+                        },
+                        "documentation": {
+                            "kind": "markdown",
+                            "value": "   "
+                        }
+                    }
+                ]
+            }
+        });
+
+        let items = parse_lsp_completion_response(&response);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "fmt");
+        assert_eq!(items[0].detail.as_deref(), Some("package"));
+        assert_eq!(items[0].documentation, None);
+    }
+
+    #[test]
+    fn summarizes_completion_documentation_without_code_blocks() {
+        let summary = summarize_completion_documentation(
+            "Println writes to standard output.\n\n```go\nfmt.Println(\"x\")\n```\nTrailing",
+        );
+        assert_eq!(summary, "Println writes to standard output.");
+    }
+
+    #[test]
     fn strips_lsp_snippet_placeholders() {
         assert_eq!(
             strip_lsp_snippet_placeholders("Printf(${1:format}, ${2:a})$0"),
