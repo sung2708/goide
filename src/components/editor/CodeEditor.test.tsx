@@ -1004,6 +1004,124 @@ describe("CodeEditor", () => {
     });
   });
 
+  it("normalizes empty completion detail and documentation for popup rendering", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "   ",
+        documentation: "   ",
+        kind: "function",
+        insertText: "Println",
+        range: null,
+        additionalTextEdits: [],
+      },
+    ]);
+
+    render(
+      <CodeEditor
+        value={"package main\nfmt.\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const result = await latestAutocompleteOverride?.({
+      pos: 13,
+      explicit: false,
+      matchBefore: () => null,
+      state: {
+        sliceDoc: () => ".",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nfmt.\n",
+        },
+      },
+    });
+
+    expect(result?.options[0]).toEqual(
+      expect.objectContaining({
+        label: "Println",
+        detail: undefined,
+        info: undefined,
+      })
+    );
+  });
+
+  it("applies additional text edits ahead of the main completion edit", async () => {
+    const requestCompletions = vi.fn().mockResolvedValue([
+      {
+        label: "Println",
+        detail: "func(a ...any)",
+        kind: "function",
+        insertText: "Println",
+        range: {
+          startLine: 1,
+          startColumn: 1,
+          endLine: 1,
+          endColumn: 5,
+        },
+        additionalTextEdits: [
+          {
+            range: {
+              startLine: 1,
+              startColumn: 1,
+              endLine: 1,
+              endColumn: 1,
+            },
+            newText: "import \"fmt\"\n",
+          },
+        ],
+      },
+    ]);
+
+    const source = "fmt.\nPrin\n";
+
+    render(
+      <CodeEditor
+        value={source}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    const result = await latestAutocompleteOverride?.({
+      pos: 4,
+      explicit: true,
+      matchBefore: () => ({ from: 0, to: 4, text: "fmt." }),
+      state: {
+        sliceDoc: () => "",
+        doc: {
+          lineAt: () => ({ number: 1, from: 0 }),
+          toString: () => source,
+        },
+      },
+    });
+
+    const dispatchMock = vi.fn();
+    result?.options[0].apply(
+      ({
+        dispatch: dispatchMock,
+        state: {
+          doc: {
+            lines: 2,
+            lineAt: () => ({ from: 0, to: 4 }),
+            line: (lineNumber: number) =>
+              lineNumber === 1 ? { from: 0, to: 4 } : { from: 5, to: 9 },
+          },
+          sliceDoc: () => "fmt.",
+        },
+      } as any),
+      {},
+      4,
+      4
+    );
+
+    expect(dispatchMock).toHaveBeenCalledWith({
+      changes: [
+        { from: 0, to: 0, insert: "import \"fmt\"\n" },
+        { from: 0, to: 4, insert: "Println" },
+      ],
+    });
+  });
+
   it("replaces typed identifier prefix when completion range is absent", async () => {
     const requestCompletions = vi.fn().mockResolvedValue([
       {
