@@ -12,6 +12,7 @@ import {
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
+  runWorkspaceFileWithRace,
   fetchWorkspaceCompletions,
   fetchWorkspaceDiagnostics,
 } from "../../lib/ipc/client";
@@ -56,6 +57,7 @@ const BLOCKED_WAIT_REASONS = [
 ];
 const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
 const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
+type RunMode = "standard" | "race";
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -98,6 +100,26 @@ function pathsReferToSameFile(pathA: string, pathB: string): boolean {
     }
   }
   return true;
+}
+
+function pathsReferToSameRunTarget(pathFromOutput: string, runTargetPath: string): boolean {
+  if (pathsReferToSameFile(pathFromOutput, runTargetPath)) {
+    return true;
+  }
+
+  // Race detector often reports absolute paths, while run targets may be a
+  // root-level relative path (e.g. "main.go"). Allow basename fallback only
+  // for that root-level run-target case.
+  const normalizedTarget = normalizeRelativePath(runTargetPath).toLowerCase();
+  const targetSegments = normalizedTarget.split("/").filter(Boolean);
+  if (targetSegments.length !== 1) {
+    return false;
+  }
+
+  const normalizedOutput = normalizeRelativePath(pathFromOutput).toLowerCase();
+  const outputSegments = normalizedOutput.split("/").filter(Boolean);
+  const outputBasename = outputSegments[outputSegments.length - 1] ?? "";
+  return outputBasename === targetSegments[0];
 }
 
 type CounterpartResolution = {
@@ -267,6 +289,39 @@ function isGoFile(path: string | null): path is string {
   return typeof path === "string" && path.toLowerCase().endsWith(".go");
 }
 
+function extractGoFileLineReferences(text: string): Array<{
+  path: string;
+  line: number;
+}> {
+  const matches = text.matchAll(/((?:[A-Za-z]:)?[^:\r\n]+?\.go):(\d+)/g);
+  const refs: Array<{ path: string; line: number }> = [];
+  for (const match of matches) {
+    const filePath = match[1] ?? "";
+    const line = Number(match[2]);
+    if (!filePath || !Number.isInteger(line) || line < 1) {
+      continue;
+    }
+    refs.push({ path: filePath, line });
+  }
+  return refs;
+}
+
+function toRaceRuntimeSignals(relativePath: string, lines: number[]): RuntimeSignal[] {
+  return lines.map((line, index) => ({
+    threadId: index + 1,
+    status: "data race",
+    waitReason: "data race",
+    confidence: ConcurrencyConfidence.Confirmed,
+    scopeKey: `race:${relativePath}:${line}`,
+    scopeRelativePath: relativePath,
+    scopeLine: line,
+    scopeColumn: 1,
+    relativePath,
+    line,
+    column: 1,
+  }));
+}
+
 function EditorShell() {
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -288,6 +343,8 @@ function EditorShell() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
+  const [runMode, setRunMode] = useState<RunMode>("standard");
+  const [raceSignals, setRaceSignals] = useState<RuntimeSignal[]>([]);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [isDirty, setIsDirty] = useState(false);
   const [analysisRevision, setAnalysisRevision] = useState(0);
@@ -310,6 +367,17 @@ function EditorShell() {
   } | null>(null);
   const jumpRequestIdRef = useRef(0);
   const activeRunIdRef = useRef<string | null>(null);
+  const activeRunModeRef = useRef<RunMode>("standard");
+  const activeRunTargetFilePathRef = useRef<string | null>(null);
+  const raceRunCaptureRef = useRef<{
+    isRaceRun: boolean;
+    sawWarning: boolean;
+    matchedLines: Set<number>;
+  }>({
+    isRaceRun: false,
+    sawWarning: false,
+    matchedLines: new Set<number>(),
+  });
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
@@ -400,13 +468,11 @@ function EditorShell() {
   const isInlineActionsVisible =
     activeHint !== null &&
     (hoveredLine !== null || selectedLine === activeHintLine);
+  const interactionLine = hoveredLine ?? selectedLine;
 
   const traceBubbleLabel = activeHint?.kind
     ? (KIND_LABELS[activeHint.kind] ?? activeHint.kind)
     : "";
-  const isBlockedConfirmedVisible = mode === "deep-trace" && activeBlockedSignal !== null;
-  const isTraceBubbleVisible = isInlineActionsVisible || isBlockedConfirmedVisible;
-
   const markRuntimeDegraded = useCallback(() => {
     setRuntimeAvailability((current) =>
       current === "degraded" ? current : "degraded"
@@ -589,24 +655,41 @@ function EditorShell() {
   }, [resolveCounterpartFromActiveHint]);
 
   const counterpartResolution = resolveCounterpartFromActiveHint();
-  const isActiveHintRuntimeConfirmed =
-    isBlockedConfirmedVisible &&
-    mode === "deep-trace" &&
-    deepTraceScope !== null &&
-    activeHint !== null &&
-    activeHintLine !== null &&
-    isHintInDeepTraceScope(
-      {
-        line: activeHintLine,
-        column: activeHint.column,
-        symbol: activeHint.symbol ?? null,
-      },
-      {
-        line: deepTraceScope.line,
-        column: deepTraceScope.column,
-        symbol: deepTraceScope.symbol,
-      }
+  const activeRaceSignal = useMemo(() => {
+    if (!activeFilePath || interactionLine === null) {
+      return null;
+    }
+    return (
+      raceSignals.find(
+        (signal) =>
+          signal.line === interactionLine &&
+          pathsReferToSameFile(signal.relativePath, activeFilePath)
+      ) ?? null
     );
+  }, [activeFilePath, interactionLine, raceSignals]);
+  const isActiveHintRuntimeConfirmed =
+    activeRaceSignal !== null ||
+    (mode === "deep-trace" &&
+      deepTraceScope !== null &&
+      activeHint !== null &&
+      activeHintLine !== null &&
+      isHintInDeepTraceScope(
+        {
+          line: activeHintLine,
+          column: activeHint.column,
+          symbol: activeHint.symbol ?? null,
+        },
+        {
+          line: deepTraceScope.line,
+          column: deepTraceScope.column,
+          symbol: deepTraceScope.symbol,
+        }
+      ));
+  const isBlockedConfirmedVisible =
+    mode === "deep-trace" && activeBlockedSignal !== null;
+  const isRaceConfirmedVisible = activeRaceSignal !== null;
+  const isTraceBubbleVisible =
+    isInlineActionsVisible || isBlockedConfirmedVisible || isRaceConfirmedVisible;
   const effectiveHint =
     isActiveHintRuntimeConfirmed && activeHint
       ? { ...activeHint, confidence: "confirmed" as ConcurrencyConfidence }
@@ -992,12 +1075,15 @@ function EditorShell() {
     [activeFileContent]
   );
   
-  const handleRunFile = useCallback(async () => {
+  const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
     if (!workspacePath || !activeFilePath) return;
+    const isRaceRun = modeToRun === "race";
     const runId =
       globalThis.crypto?.randomUUID?.() ??
       `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     activeRunIdRef.current = runId;
+    activeRunModeRef.current = modeToRun;
+    activeRunTargetFilePathRef.current = activeFilePath;
 
     const contentToRun = latestEditorContentRef.current ?? activeFileContent;
     if (isDirty && typeof contentToRun === "string") {
@@ -1007,6 +1093,13 @@ function EditorShell() {
           return;
         }
         setRunStatus("error");
+        setRunMode(modeToRun);
+        raceRunCaptureRef.current = {
+          isRaceRun,
+          sawWarning: false,
+          matchedLines: new Set<number>(),
+        };
+        setRaceSignals([]);
         setIsBottomPanelOpen(true);
         setRunOutput([
           {
@@ -1021,10 +1114,20 @@ function EditorShell() {
 
     setRunOutput([]);
     setRunStatus("running");
+    setRunMode(modeToRun);
     setIsBottomPanelOpen(true);
+    raceRunCaptureRef.current = {
+      isRaceRun,
+      sawWarning: false,
+      matchedLines: new Set<number>(),
+    };
+    setRaceSignals([]);
 
     try {
-      const resp = await runWorkspaceFile(workspacePath, activeFilePath, runId);
+      const resp =
+        modeToRun === "race"
+          ? await runWorkspaceFileWithRace(workspacePath, activeFilePath, runId)
+          : await runWorkspaceFile(workspacePath, activeFilePath, runId);
       if (!resp.ok) {
         if (activeRunIdRef.current !== runId) {
           return;
@@ -1049,6 +1152,17 @@ function EditorShell() {
     }
   }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent]);
 
+  const handleRunFileStandard = useCallback(() => {
+    void handleRunFile("standard");
+  }, [handleRunFile]);
+
+  const handleRunFileWithRace = useCallback(() => {
+    if (runtimeAvailability === "unavailable") {
+      return;
+    }
+    void handleRunFile("race");
+  }, [handleRunFile, runtimeAvailability]);
+
   const handleClearOutput = useCallback(() => {
     setRunOutput([]);
   }, []);
@@ -1062,6 +1176,39 @@ function EditorShell() {
         if (event.payload.runId !== activeRunIdRef.current) {
           return;
         }
+        const runTargetPath = activeRunTargetFilePathRef.current;
+        if (activeRunModeRef.current === "race" && runTargetPath) {
+          if (
+            event.payload.stream === "stderr" &&
+            event.payload.line.includes("WARNING: DATA RACE")
+          ) {
+            raceRunCaptureRef.current.sawWarning = true;
+          }
+
+          if (event.payload.stream === "stderr") {
+            const refs = extractGoFileLineReferences(event.payload.line);
+            for (const ref of refs) {
+              if (pathsReferToSameRunTarget(ref.path, runTargetPath)) {
+                raceRunCaptureRef.current.matchedLines.add(ref.line);
+              }
+            }
+          }
+
+          if (event.payload.stream === "exit") {
+            if (
+              raceRunCaptureRef.current.sawWarning &&
+              raceRunCaptureRef.current.matchedLines.size > 0
+            ) {
+              const lines = Array.from(raceRunCaptureRef.current.matchedLines).sort(
+                (left, right) => left - right
+              );
+              setRaceSignals(toRaceRuntimeSignals(runTargetPath, lines));
+            } else {
+              setRaceSignals([]);
+            }
+          }
+        }
+
         setRunOutput((prev) => [...prev, event.payload]);
         if (event.payload.stream === "exit") {
           setRunStatus(event.payload.exitCode === 0 ? "done" : "error");
@@ -1195,6 +1342,7 @@ function EditorShell() {
         setRuntimeAvailability("unavailable");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
+        setRaceSignals([]);
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
@@ -1253,6 +1401,7 @@ function EditorShell() {
         setMode("quick-insight");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
+        setRaceSignals([]);
         void refreshDiagnosticsForFile(startingPath, relativePath);
         if (isGoFile(relativePath)) {
           runtimeCheckRequestIdRef.current += 1;
@@ -1365,7 +1514,7 @@ function EditorShell() {
                           ? "bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
                           : "bg-[var(--green)] text-[var(--crust)] hover:opacity-90"
                       }`}
-                      onClick={handleRunFile}
+                      onClick={handleRunFileStandard}
                       type="button"
                       aria-label="Run active Go file"
                       title="Run the active Go file and show output in the terminal panel."
@@ -1373,6 +1522,23 @@ function EditorShell() {
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                       {runStatus === "running" ? "Running..." : "Run"}
+                    </button>
+                  )}
+                  {isGoFile(activeFilePath) && (
+                    <button
+                      className={`flex items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold uppercase tracking-[0.12em] transition-all ${
+                        runStatus === "running" || runtimeAvailability === "unavailable"
+                          ? "border-[var(--surface1)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--mauve)] text-[var(--mauve)] hover:bg-[var(--surface0)]"
+                      }`}
+                      onClick={handleRunFileWithRace}
+                      type="button"
+                      aria-label="Run active Go file with race detector"
+                      title="Run the active Go file with the Go race detector and surface confirmed race findings."
+                      disabled={runStatus === "running" || runtimeAvailability === "unavailable"}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+                      {runStatus === "running" && runMode === "race" ? "Race..." : "Run Race"}
                     </button>
                   )}
                 </div>
@@ -1441,7 +1607,7 @@ function EditorShell() {
                           confidence={
                             isBlockedConfirmedVisible ? "confirmed" : traceBubbleConfidence
                           }
-                          label={isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
+                          label={activeRaceSignal ? "Data Race" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
                           reducedMotion={prefersReducedMotion}
                           anchorTop={Math.max(
@@ -1514,7 +1680,9 @@ function EditorShell() {
               output={runOutput}
               isRunning={runStatus === "running"}
               onClear={handleClearOutput}
-              onRun={handleRunFile}
+              onRun={handleRunFileStandard}
+              onRunWithRace={handleRunFileWithRace}
+              canRunWithRace={runtimeAvailability !== "unavailable"}
             />
           )}
         </div>
@@ -1537,7 +1705,19 @@ function EditorShell() {
         onToggleBottomPanel={() => setIsBottomPanelOpen((prev) => !prev)}
       />
 
-      {isCommandPaletteOpen && <CommandPalette onClose={closeCommandPalette} />}
+      {isCommandPaletteOpen && (
+        <CommandPalette
+          onClose={closeCommandPalette}
+          canRun={Boolean(workspacePath && isGoFile(activeFilePath))}
+          canRunWithRace={
+            Boolean(workspacePath && isGoFile(activeFilePath)) &&
+            runtimeAvailability !== "unavailable"
+          }
+          isRunning={runStatus === "running"}
+          onRun={handleRunFileStandard}
+          onRunWithRace={handleRunFileWithRace}
+        />
+      )}
     </div>
   );
 }

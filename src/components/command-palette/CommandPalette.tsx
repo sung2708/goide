@@ -2,9 +2,21 @@ import { useEffect, useRef } from "react";
 
 type CommandPaletteProps = {
   onClose: () => void;
+  canRun: boolean;
+  canRunWithRace: boolean;
+  isRunning: boolean;
+  onRun: () => void;
+  onRunWithRace: () => void;
 };
 
-function CommandPalette({ onClose }: CommandPaletteProps) {
+function CommandPalette({
+  onClose,
+  canRun,
+  canRunWithRace,
+  isRunning,
+  onRun,
+  onRunWithRace,
+}: CommandPaletteProps) {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -38,7 +50,32 @@ function CommandPalette({ onClose }: CommandPaletteProps) {
           </button>
         </div>
         <div className="px-4 py-4 text-xs text-[#9399b2]">
-          Command entry will be wired in a later story.
+          <div className="flex flex-col gap-2">
+            <button
+              type="button"
+              className="rounded border border-[#313244] px-3 py-2 text-left text-[11px] uppercase tracking-[0.12em] text-[#cdd6f4] transition hover:border-[#45475a] hover:bg-[rgba(49,50,68,0.35)] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!canRun || isRunning}
+              onClick={() => {
+                onRun();
+                onClose();
+              }}
+              title="Run the active Go file."
+            >
+              Run File
+            </button>
+            <button
+              type="button"
+              className="rounded border border-[#313244] px-3 py-2 text-left text-[11px] uppercase tracking-[0.12em] text-[#cdd6f4] transition hover:border-[#45475a] hover:bg-[rgba(49,50,68,0.35)] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={!canRunWithRace || isRunning}
+              onClick={() => {
+                onRunWithRace();
+                onClose();
+              }}
+              title="Run the active Go file with the Go race detector."
+            >
+              Run With Race Detector
+            </button>
+          </div>
         </div>
       </section>
     </div>

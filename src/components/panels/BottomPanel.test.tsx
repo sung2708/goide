@@ -52,6 +52,24 @@ describe("BottomPanel", () => {
     expect(onRun).toHaveBeenCalledTimes(1);
   });
 
+  it("invokes onRunWithRace when run-race is clicked", async () => {
+    const user = userEvent.setup();
+    const onRunWithRace = vi.fn();
+
+    render(
+      <BottomPanel
+        output={[]}
+        isRunning={false}
+        onRunWithRace={onRunWithRace}
+        canRunWithRace
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /run race/i }));
+
+    expect(onRunWithRace).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the panel height bounded for long output", () => {
     render(<BottomPanel output={[]} />);
 

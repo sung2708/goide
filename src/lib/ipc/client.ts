@@ -68,6 +68,18 @@ export async function runWorkspaceFile(
   });
 }
 
+export async function runWorkspaceFileWithRace(
+  workspaceRoot: string,
+  relativePath: string,
+  runId: string
+): Promise<ApiResponse<void>> {
+  return invoke<ApiResponse<void>>("run_workspace_file_with_race", {
+    workspaceRoot,
+    relativePath,
+    runId,
+  });
+}
+
 export async function fetchWorkspaceDiagnostics(
   workspaceRoot: string,
   relativePath: string
