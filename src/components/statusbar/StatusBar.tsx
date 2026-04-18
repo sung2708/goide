@@ -1,3 +1,5 @@
+import { cn } from "../../lib/utils/cn";
+
 type StatusBarProps = {
   workspacePath: string | null;
   activeFilePath: string | null;
@@ -36,33 +38,38 @@ function StatusBar({
         : "Static";
 
   return (
-    <footer className="beveled-edge glass-morphism flex h-7 items-center justify-between border-t border-[var(--surface0)] bg-[rgba(17,17,27,0.7)] px-3 text-[10px] uppercase tracking-[0.08em] font-medium text-[var(--overlay1)] relative z-50">
+    <footer className="glass-morphism relative z-50 flex h-8 items-center justify-between border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.86)] px-3 text-[10px] font-medium text-[var(--overlay1)]">
       <div className="flex items-center gap-4 overflow-hidden">
         <div className="flex items-center gap-2">
-          <span className="flex h-1.5 w-1.5 rounded-full bg-[var(--green)] shadow-[0_0_4px_var(--green)]"></span>
-          <span className="truncate max-w-[120px] font-bold text-[var(--subtext1)] tracking-widest">{workspacePath ? workspacePath.split(/[\\/]/).pop() : "OFFLINE"}</span>
+          <span className="flex size-1.5 rounded-full bg-[var(--green)]"></span>
+          <span className="max-w-[120px] truncate font-semibold text-[var(--subtext1)] tabular-nums">
+            {workspacePath ? workspacePath.split(/[\\/]/).pop() : "OFFLINE"}
+          </span>
         </div>
-        <div className="flex items-center gap-2 opacity-60">
+        <div className="flex items-center gap-2 opacity-75">
           <span className="text-[var(--surface2)]">/</span>
-          <span className="truncate max-w-[180px]">{activeFilePath ?? "IDLE"}</span>
+          <span className="max-w-[180px] truncate">{activeFilePath ?? "IDLE"}</span>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-sm bg-[var(--surface0)] text-[var(--subtext0)] font-bold">
-            <span className={`h-1.5 w-1.5 rounded-full ${mode === "deep-trace" ? "bg-[var(--mauve)] animate-pulse" : "bg-[var(--overlay2)]"}`}></span>
+          <span className="flex items-center gap-1.5 rounded-sm border border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.6)] px-2 py-0.5 font-semibold text-[var(--subtext0)]">
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${mode === "deep-trace" ? "bg-[var(--blue)]" : "bg-[var(--overlay2)]"}`}
+            ></span>
             {modeLabel}
             <span className="sr-only">Mode: {modeLabel}</span>
           </span>
           <span
-            className={`px-2 py-0.5 rounded-sm font-bold ${
+            className={cn(
+              "rounded-sm border px-2 py-0.5 font-semibold",
               runtimeAvailability === "available"
-                ? "text-[var(--green)] bg-[var(--signal-confirmed-bg)] phosphor-text"
+                ? "border-[rgba(127,176,142,0.35)] bg-[var(--signal-confirmed-bg)] text-[var(--green)]"
                 : runtimeAvailability === "degraded"
-                  ? "text-[var(--peach)] bg-[var(--signal-blocked-bg)]"
-                  : "text-[var(--overlay1)] bg-[var(--surface0)]"
-            }`}
+                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
+                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
+            )}
           >
             {runtimeLabel}
             <span className="sr-only">Runtime: {runtimeLabel}</span>
@@ -80,7 +87,12 @@ function StatusBar({
                 : "Show commands palette"
             }
             title="Open the command palette for quick run commands."
-            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isCommandPaletteOpen ? "bg-[var(--mauve)] text-[var(--crust)] shadow-[0_0_8px_var(--mauve)]" : "hover:bg-[var(--surface0)]"}`}
+            className={cn(
+              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              isCommandPaletteOpen
+                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
+                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+            )}
             onClick={onToggleCommandPalette}
           >
             COMMANDS
@@ -89,7 +101,12 @@ function StatusBar({
             type="button"
             aria-label={isSummaryOpen ? "Hide summary panel" : "Show summary panel"}
             title="Show or hide the concurrency signal summary."
-            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isSummaryOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
+            className={cn(
+              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              isSummaryOpen
+                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
+                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+            )}
             onClick={onToggleSummary}
           >
             SUMMARY
@@ -100,7 +117,12 @@ function StatusBar({
               isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"
             }
             title="Show or hide run output for the active Go file."
-            className={`px-2 py-0.5 rounded-sm transition-all font-bold tracking-[0.12em] ${isBottomPanelOpen ? "bg-[var(--blue)] text-[var(--crust)] shadow-[0_0_8px_var(--blue)]" : "hover:bg-[var(--surface0)]"}`}
+            className={cn(
+              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              isBottomPanelOpen
+                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
+                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+            )}
             onClick={onToggleBottomPanel}
           >
             TERMINAL
@@ -109,9 +131,17 @@ function StatusBar({
 
         <div className="h-3 w-[1px] bg-[var(--surface0)] opacity-50"></div>
 
-        <div className="flex items-center gap-3 min-w-[80px] justify-end">
-          <span className="font-bold text-[var(--mauve)]">{saveStatus === "saving" ? "SYNCING..." : saveStatus === "saved" ? "READY" : saveStatus === "error" ? "FAULT" : ""}</span>
-          <span className={`font-bold ${runStatus === "running" ? "text-[var(--green)] animate-phosphor" : ""}`}>
+        <div className="flex min-w-[80px] items-center justify-end gap-3 tabular-nums">
+          <span className="font-semibold text-[var(--overlay2)]">
+            {saveStatus === "saving"
+              ? "SYNCING..."
+              : saveStatus === "saved"
+                ? "READY"
+                : saveStatus === "error"
+                  ? "FAULT"
+                  : ""}
+          </span>
+          <span className={cn("font-semibold", runStatus === "running" && "text-[var(--green)]")}>
             {runStatus === "running" ? "LIVE" : ""}
           </span>
         </div>

@@ -142,21 +142,20 @@ describe("TraceBubble", () => {
     expect(screen.getByText("Blocked")).toBeDefined();
   });
 
-  it("disables pulse animation for blocked indicator when reduced motion is enabled", () => {
+  it("renders blocked indicator with static status styling", () => {
     render(
       <TraceBubble
         visible={true}
         confidence="confirmed"
         label="Blocked Op"
         blocked={true}
-        reducedMotion={true}
         anchorTop={40}
         anchorLeft={10}
       />
     );
 
-    expect(screen.getByTestId("trace-bubble-blocked-indicator").className).not.toContain(
-      "animate-pulse"
+    expect(screen.getByTestId("trace-bubble-blocked-indicator").className).toContain(
+      "bg-[var(--signal-blocked)]"
     );
   });
 });

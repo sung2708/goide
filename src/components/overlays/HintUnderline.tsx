@@ -39,7 +39,7 @@ function HintUnderline({ hint }: HintUnderlineProps) {
   return (
     <>
       <div
-        className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium uppercase tracking-[0.12em]"
+        className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] font-medium uppercase"
         data-testid="hint-confidence-label"
         style={{
           color,

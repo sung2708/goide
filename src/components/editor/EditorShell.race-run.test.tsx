@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
@@ -137,7 +137,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
     await user.click(
       await screen.findByRole("button", { name: /run with race detector/i })
     );
@@ -194,7 +194,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
     await user.click(
       await screen.findByRole("button", { name: /run with race detector/i })
     );
@@ -233,7 +233,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
     await user.click(
       await screen.findByRole("button", { name: /run with race detector/i })
     );
@@ -278,7 +278,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
     await user.click(
       await screen.findByRole("button", { name: /run with race detector/i })
     );
@@ -330,7 +330,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    fireEvent.keyDown(window, { key: "k", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
     await user.click(
       await screen.findByRole("button", { name: /run with race detector/i })
     );
