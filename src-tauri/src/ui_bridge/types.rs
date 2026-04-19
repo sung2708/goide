@@ -213,3 +213,17 @@ pub struct EditorDiagnosticDto {
     pub code: Option<String>,
     pub range: DiagnosticRangeDto,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DiagnosticsToolingAvailabilityDto {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiagnosticsResponseDto {
+    pub diagnostics: Vec<EditorDiagnosticDto>,
+    pub tooling_availability: DiagnosticsToolingAvailabilityDto,
+}

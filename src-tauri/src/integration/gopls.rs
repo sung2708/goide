@@ -66,6 +66,18 @@ pub struct FileDiagnostic {
     pub range: DiagnosticRange,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiagnosticsToolingAvailability {
+    Available,
+    Unavailable,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileDiagnosticsResult {
+    pub diagnostics: Vec<FileDiagnostic>,
+    pub tooling_availability: DiagnosticsToolingAvailability,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CompletionRange {
     pub start_line: usize,
@@ -744,7 +756,7 @@ fn advance_pair(i: &mut usize, line: &mut usize, column: &mut usize, first: char
 pub fn analyze_file_diagnostics(
     workspace_root: &str,
     relative_path: &str,
-) -> Result<Vec<FileDiagnostic>> {
+) -> Result<FileDiagnosticsResult> {
     let output = Command::new("gopls")
         .arg("check")
         .arg(relative_path)
@@ -755,27 +767,48 @@ pub fn analyze_file_diagnostics(
         Ok(out) => out,
         Err(err) => {
             if err.kind() == io::ErrorKind::NotFound {
-                return Ok(Vec::new());
+                return Ok(FileDiagnosticsResult {
+                    diagnostics: Vec::new(),
+                    tooling_availability: DiagnosticsToolingAvailability::Unavailable,
+                });
             }
             return Err(err).context("failed to execute gopls check command");
         }
     };
 
+    let diagnostics = collect_gopls_diagnostics_from_streams(
+        workspace_root,
+        relative_path,
+        &output.stdout,
+        &output.stderr,
+    )?;
+    Ok(FileDiagnosticsResult {
+        diagnostics,
+        tooling_availability: DiagnosticsToolingAvailability::Available,
+    })
+}
+
+fn collect_gopls_diagnostics_from_streams(
+    workspace_root: &str,
+    relative_path: &str,
+    stdout: &[u8],
+    stderr: &[u8],
+) -> Result<Vec<FileDiagnostic>> {
     let mut results = Vec::new();
 
-    // Parse both streams to avoid missing diagnostics in mixed-output environments
-    if !output.stdout.is_empty() {
+    // Parse both streams to avoid missing diagnostics in mixed-output environments.
+    if !stdout.is_empty() {
         results.extend(parse_gopls_diagnostics_output(
             workspace_root,
             relative_path,
-            &output.stdout,
+            stdout,
         )?);
     }
-    if !output.stderr.is_empty() {
+    if !stderr.is_empty() {
         results.extend(parse_gopls_diagnostics_output(
             workspace_root,
             relative_path,
-            &output.stderr,
+            stderr,
         )?);
     }
 
@@ -2235,6 +2268,34 @@ subdir/main.go:3:1: error in subdir
 
         assert_eq!(diagnostics.len(), 1);
         assert_eq!(diagnostics[0].message, "error in root");
+    }
+
+    #[test]
+    fn collects_diagnostics_from_mixed_stdout_and_stderr_streams() {
+        let stdout = b"main.go:4:2: undeclared name: foo\n";
+        let stderr = b"main.go:9:1: warning: unreachable code\n";
+
+        let diagnostics = collect_gopls_diagnostics_from_streams(".", "main.go", stdout, stderr)
+            .expect("collect mixed diagnostics");
+
+        assert_eq!(diagnostics.len(), 2);
+        assert_eq!(diagnostics[0].message, "undeclared name: foo");
+        assert_eq!(diagnostics[1].message, "unreachable code");
+        assert_eq!(diagnostics[1].severity, DiagnosticSeverity::Warning);
+    }
+
+    #[test]
+    fn diagnostics_result_explicitly_represents_missing_tooling() {
+        let result = FileDiagnosticsResult {
+            diagnostics: Vec::new(),
+            tooling_availability: DiagnosticsToolingAvailability::Unavailable,
+        };
+
+        assert_eq!(
+            result.tooling_availability,
+            DiagnosticsToolingAvailability::Unavailable
+        );
+        assert!(result.diagnostics.is_empty());
     }
 
     #[test]
