@@ -173,6 +173,21 @@ describe("CodeEditor", () => {
     expect(acceptCompletionMock).not.toHaveBeenCalled();
   });
 
+  it("uses Shift-Tab to move snippet placeholders backward before indentation fallback", () => {
+    hasPrevSnippetFieldMock.mockReturnValue(true);
+    prevSnippetFieldMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"package main\nfunc main() {\n\t${}\n}\n"} />);
+    const shiftTabBinding = latestKeyBindings.find(
+      (binding) => binding.key === "Shift-Tab"
+    );
+    expect(shiftTabBinding?.run).toBeDefined();
+
+    const handled = shiftTabBinding?.run?.({} as any);
+    expect(handled).toBe(true);
+    expect(prevSnippetFieldMock).toHaveBeenCalled();
+  });
+
   it("enables closeBrackets integration and keeps close-bracket key bindings active", () => {
     render(<CodeEditor value={"package main\n"} />);
 
@@ -883,6 +898,33 @@ describe("CodeEditor", () => {
 
     expect(goplsResult).toBeNull();
     expect(requestCompletions).not.toHaveBeenCalled();
+  });
+
+  it("keeps package keyword context free from non-package snippets", async () => {
+    render(<CodeEditor value={"package "} onRequestCompletions={vi.fn()} />);
+
+    const snippetResult = await latestAutocompleteOverrides[0]?.({
+      pos: 8,
+      explicit: true,
+      matchBefore: () => null,
+      state: {
+        sliceDoc: (from: number, to: number) => "package ".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 1, from: 0 }),
+          toString: () => "package ",
+        },
+      },
+    });
+
+    expect(snippetResult?.options).toEqual([
+      expect.objectContaining({ label: "main", detail: "package name" }),
+    ]);
+    expect(snippetResult?.options).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ label: "func", detail: "function declaration" }),
+        expect.objectContaining({ label: "main", detail: "main function" }),
+      ])
+    );
   });
 
   it("uses imported package aliases to preview member completions before dot is typed", async () => {
