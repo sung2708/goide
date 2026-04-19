@@ -1,51 +1,95 @@
-# Tauri + React + Typescript
+# GoIDE
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+GoIDE is a desktop IDE for Go focused on concurrency-aware development. It combines a familiar editor, workspace explorer, inline diagnostics, completions, terminal output, and Go-specific concurrency signals in one installable Tauri app.
 
-## Recommended IDE Setup
+## Download
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+Download the latest Windows installer from the GitHub Releases page.
 
-## Windows Build Note
+For v1.0.0, use one of these artifacts:
 
-On Windows, the `vswhom-sys` build step can fail if `zig` is picked up as the C/C++ compiler. If you see errors about the MSVC target being unknown, rerun with MSVC explicitly:
+- `goide_1.0.0_x64_en-US.msi`
+- `goide_1.0.0_x64-setup.exe`
 
-```powershell
-cmd /c ""C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && powershell"
-$env:CC="cl"
-$env:CXX="cl"
-cargo test
-```
+Install GoIDE, open the app, then choose a Go workspace folder.
 
-## Runtime Signal Timeout
+## Features
 
-Deep Trace runtime polling timeout can be configured with:
+- Open and browse Go workspaces.
+- Edit Go files with syntax highlighting and editor snippets.
+- Save files directly from the editor.
+- Run the active Go file.
+- Run the active Go file with the Go race detector.
+- View run output in the built-in terminal panel.
+- Receive diagnostics and completions through `gopls`.
+- See concurrency signals for goroutines, channels, mutexes, wait groups, blocking operations, and related counterpart lines.
+- Use Deep Trace runtime sampling through Delve when available.
+- See startup toolchain status for `go`, `gopls`, and `dlv`.
 
-- `VITE_RUNTIME_SIGNAL_TIMEOUT_MS`
+## Requirements
 
-Behavior:
+GoIDE works best when these commands are available on `PATH`:
 
-- Default: `450` ms
-- Accepted range: `100` to `5000` ms
-- Out-of-range or non-numeric values fall back to the default
-
-## Analysis Engine Status
-
-Current implementation uses:
-
-- CodeMirror Lezer for frontend Go syntax highlighting.
-- A lightweight Rust tokenizer for static concurrency markers.
-- `gopls` for symbol enrichment, diagnostics, and completions.
-- Delve (`dlv`) for runtime Deep Trace sampling.
-
-Tree-sitter is not currently integrated. If Tree-sitter becomes a hard product requirement, add `tree-sitter` and `tree-sitter-go` to the Rust backend and replace or augment the tokenizer path in `src-tauri/src/integration/gopls.rs`.
-
-## Required Local Tooling
-
-For the full IDE experience, users need these commands available on `PATH`:
-
-- `go` for running active Go files.
+- `go` for running Go files.
 - `gopls` for diagnostics, completions, and symbol enrichment.
 - `dlv` for Deep Trace runtime sampling.
 
-The app runs a startup preflight and surfaces missing tools in the status bar.
+Install the Go tools with:
+
+```powershell
+go install golang.org/x/tools/gopls@latest
+go install github.com/go-delve/delve/cmd/dlv@latest
+```
+
+The app runs a startup preflight check and surfaces missing tools in the status bar.
+
+## Current Analysis Engine
+
+GoIDE v1.0.0 currently uses:
+
+- CodeMirror Lezer for frontend Go syntax highlighting.
+- A lightweight Rust tokenizer for static concurrency markers.
+- `gopls` for diagnostics, completions, and symbol enrichment.
+- Delve (`dlv`) for runtime Deep Trace sampling.
+
+Tree-sitter is not integrated in v1.0.0.
+
+## Build From Source
+
+Install dependencies:
+
+```powershell
+npm install
+```
+
+Run tests:
+
+```powershell
+npm test
+cargo test --manifest-path src-tauri/Cargo.toml
+```
+
+Build the desktop app:
+
+```powershell
+npm run tauri -- build
+```
+
+Release artifacts are generated under:
+
+```text
+src-tauri/target/release/bundle/
+```
+
+On Windows, if the Rust build picks the wrong C/C++ compiler, open a Visual Studio Developer PowerShell or run:
+
+```powershell
+cmd /c """C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"" -arch=x64 && powershell"
+$env:CC="cl"
+$env:CXX="cl"
+npm run tauri -- build
+```
+
+## License
+
+MIT
