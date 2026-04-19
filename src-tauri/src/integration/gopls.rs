@@ -757,6 +757,13 @@ pub fn analyze_file_diagnostics(
     workspace_root: &str,
     relative_path: &str,
 ) -> Result<FileDiagnosticsResult> {
+    let workspace_path = Path::new(workspace_root);
+    if !workspace_path.is_dir() {
+        return Err(anyhow!(
+            "workspace root does not exist or is not a directory: {workspace_root}"
+        ));
+    }
+
     let output = Command::new("gopls")
         .arg("check")
         .arg(relative_path)
@@ -2296,6 +2303,19 @@ subdir/main.go:3:1: error in subdir
             DiagnosticsToolingAvailability::Unavailable
         );
         assert!(result.diagnostics.is_empty());
+    }
+
+    #[test]
+    fn diagnostics_returns_error_for_missing_workspace_directory() {
+        let missing_workspace = "./this-path-should-not-exist-for-diagnostics-test";
+        let result = analyze_file_diagnostics(missing_workspace, "main.go");
+
+        assert!(result.is_err());
+        let error_text = result
+            .err()
+            .expect("missing workspace should return an error")
+            .to_string();
+        assert!(error_text.contains("workspace root does not exist"));
     }
 
     #[test]
