@@ -43,7 +43,7 @@ const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
 const GOPLS_AUTO_PREFIX_LENGTH = 3;
 
-const snippetSection = { name: "Snippets", rank: -1 };
+const snippetSection = { name: "Go snippets", rank: -1 };
 
 const COMMON_GO_PACKAGE_IMPORTS: Record<string, string> = {
   bytes: "bytes",
@@ -210,10 +210,6 @@ const GO_SNIPPETS: Completion[] = [
     section: snippetSection,
   }),
 ];
-
-function isPackageNameContext(linePrefix: string) {
-  return /^\s*package\s+[A-Za-z_][A-Za-z0-9_]*$/.test(linePrefix);
-}
 
 function isPackageLineContext(linePrefix: string) {
   return /^\s*package(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$/.test(linePrefix);
@@ -520,7 +516,7 @@ function CodeEditor({
 
     const lineInfo = context.state.doc.lineAt(context.pos);
     const linePrefix = context.state.sliceDoc(lineInfo.from, context.pos);
-    if (isPackageNameContext(linePrefix)) {
+    if (isPackageLineContext(linePrefix)) {
       return {
         from: prefixMatch ? prefixMatch.from : context.pos,
         validFor: GO_IDENTIFIER_PATTERN,
