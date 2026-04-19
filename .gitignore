@@ -29,3 +29,14 @@ _uv-cache
 _bmad-output/code-review.diff
 .codex
 .gemini/
+
+# Internal AI/planning artifacts live only on development branches.
+.agent/
+.agents/
+.claude/
+.cortex/
+_bmad/
+_bmad-output/
+skills-lock.json
+full_diff.patch
+.tools/
