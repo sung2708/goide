@@ -6,6 +6,7 @@ type StatusBarProps = {
   mode: "quick-insight" | "deep-trace";
   runtimeAvailability: "available" | "unavailable" | "degraded";
   diagnosticsAvailability: "available" | "unavailable" | "idle";
+  completionAvailability: "available" | "degraded" | "idle";
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
   isSummaryOpen: boolean;
@@ -22,6 +23,7 @@ function StatusBar({
   mode,
   runtimeAvailability,
   diagnosticsAvailability,
+  completionAvailability,
   saveStatus = "idle",
   runStatus = "idle",
   isSummaryOpen,
@@ -44,6 +46,12 @@ function StatusBar({
       : diagnosticsAvailability === "unavailable"
         ? "Diag Setup"
         : "Diag --";
+  const completionLabel =
+    completionAvailability === "available"
+      ? "Comp OK"
+      : completionAvailability === "degraded"
+        ? "Comp Retry"
+        : "Comp --";
 
   return (
     <footer className="glass-morphism relative z-50 flex h-8 items-center justify-between border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.86)] px-3 text-[10px] font-medium text-[var(--overlay1)]">
@@ -81,6 +89,26 @@ function StatusBar({
           >
             {runtimeLabel}
             <span className="sr-only">Runtime: {runtimeLabel}</span>
+          </span>
+          <span
+            title={
+              completionAvailability === "available"
+                ? "Completion requests are healthy."
+                : completionAvailability === "degraded"
+                  ? "Completion backend is unavailable. Retry after a moment."
+                  : "Completion has not been checked for the current context yet."
+            }
+            className={cn(
+              "rounded-sm border px-2 py-0.5 font-semibold",
+              completionAvailability === "available"
+                ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
+                : completionAvailability === "degraded"
+                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
+                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
+            )}
+          >
+            {completionLabel}
+            <span className="sr-only">Completion: {completionLabel}</span>
           </span>
           <span
             title={
