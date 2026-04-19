@@ -9,6 +9,7 @@ import {
   deactivateDeepTrace,
   getRuntimeAvailability,
   getRuntimeSignals,
+  getToolchainStatus,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
@@ -24,6 +25,7 @@ import type {
   EditorDiagnostic,
   RuntimeSignal,
   RunOutputPayload,
+  ToolchainStatus,
 } from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
@@ -341,6 +343,7 @@ function EditorShell() {
   const [runtimeAvailability, setRuntimeAvailability] = useState<
     "available" | "unavailable" | "degraded"
   >("unavailable");
+  const [toolchainStatus, setToolchainStatus] = useState<ToolchainStatus | null>(null);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
@@ -429,6 +432,21 @@ function EditorShell() {
     };
   }, []);
 
+  useEffect(() => {
+    let canceled = false;
+    const runPreflight = async () => {
+      const response = await getToolchainStatus();
+      if (!canceled && response.ok && response.data) {
+        setToolchainStatus(response.data);
+      }
+    };
+
+    void runPreflight();
+
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   // Clear the auto-dismiss timer on unmount to prevent setState on unmounted component
   useEffect(() => {
@@ -1680,6 +1698,7 @@ function EditorShell() {
         runtimeAvailability={runtimeAvailability}
         diagnosticsAvailability={diagnosticsAvailability}
         completionAvailability={completionAvailability}
+        toolchainStatus={toolchainStatus}
         saveStatus={saveStatus}
         runStatus={runStatus}
         isSummaryOpen={isSummaryOpen}

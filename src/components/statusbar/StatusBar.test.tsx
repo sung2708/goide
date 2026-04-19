@@ -4,7 +4,12 @@ import StatusBar from "./StatusBar";
 
 function renderStatusBar(
   diagnosticsAvailability: "available" | "unavailable" | "idle" = "available",
-  completionAvailability: "available" | "degraded" | "idle" = "idle"
+  completionAvailability: "available" | "degraded" | "idle" = "idle",
+  toolchainStatus = {
+    go: { available: true },
+    gopls: { available: true },
+    delve: { available: true },
+  }
 ) {
   return render(
     <StatusBar
@@ -14,6 +19,7 @@ function renderStatusBar(
       runtimeAvailability="available"
       diagnosticsAvailability={diagnosticsAvailability}
       completionAvailability={completionAvailability}
+      toolchainStatus={toolchainStatus}
       saveStatus="idle"
       runStatus="idle"
       isSummaryOpen={false}
@@ -50,6 +56,26 @@ describe("StatusBar diagnostics availability", () => {
     expect(
       screen.getByTitle(/diagnostics have not been checked/i)
     ).toBeInTheDocument();
+  });
+});
+
+describe("StatusBar toolchain preflight", () => {
+  it("shows healthy toolchain label when Go tooling is available", () => {
+    renderStatusBar();
+
+    expect(screen.getByText("Tools OK")).toBeInTheDocument();
+    expect(screen.getByTitle(/go, gopls, and delve are available/i)).toBeInTheDocument();
+  });
+
+  it("shows setup label with missing tools in tooltip", () => {
+    renderStatusBar("available", "idle", {
+      go: { available: true },
+      gopls: { available: false },
+      delve: { available: false },
+    });
+
+    expect(screen.getByText("Tools Setup")).toBeInTheDocument();
+    expect(screen.getByTitle(/missing gopls, dlv/i)).toBeInTheDocument();
   });
 });
 

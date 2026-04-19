@@ -20,6 +20,18 @@ completedAt: '2026-04-08T14:39:39.5924851+07:00'
 # Architecture Decision Document
 
 _This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
+
+## Current Parser Architecture
+
+The current implementation does not include Tree-sitter. Go source handling is split across:
+
+- CodeMirror Lezer in the frontend for editor syntax highlighting.
+- A lightweight Rust tokenizer for static concurrency markers.
+- `gopls` for symbol enrichment, diagnostics, and completion data.
+- Delve (`dlv`) for runtime Deep Trace sampling.
+
+If Tree-sitter becomes required for deploy, integrate `tree-sitter` and `tree-sitter-go` in the Rust backend and use it to replace or augment the tokenizer path before marking that requirement complete.
+
 ## Project Context Analysis
 
 ### Requirements Overview

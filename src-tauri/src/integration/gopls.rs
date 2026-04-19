@@ -1259,8 +1259,7 @@ fn summarize_completion_documentation(raw: &str) -> String {
         .take_while(|line| !line.starts_with("```"))
         .collect::<Vec<_>>()
         .join(" ");
-    text = text.replace('`', "");
-    text = text.replace('[', "").replace(']', "");
+    text = text.replace(['`', '[', ']'], "");
     const MAX_SUMMARY_LEN: usize = 180;
     if text.chars().count() > MAX_SUMMARY_LEN {
         let mut truncated: String = text.chars().take(MAX_SUMMARY_LEN).collect();
@@ -1515,7 +1514,7 @@ fn parse_gopls_completion_output(output_bytes: &[u8]) -> Vec<CompletionItem> {
             continue;
         }
 
-        let insert_text = normalize_insert_text(&label);
+        let insert_text = normalize_insert_text(label);
         let kind = infer_completion_kind(detail.as_deref());
 
         items.push(CompletionItem {
@@ -1610,11 +1609,7 @@ fn extract_completion_label(head: &str) -> &str {
 }
 
 fn normalize_insert_text(label: &str) -> String {
-    let token = label
-        .split(|ch: char| ch == '(' || ch == ' ' || ch == '\t')
-        .next()
-        .unwrap_or(label)
-        .trim();
+    let token = label.split(['(', ' ', '\t']).next().unwrap_or(label).trim();
     if token.is_empty() {
         label.to_string()
     } else {
@@ -2312,8 +2307,7 @@ subdir/main.go:3:1: error in subdir
 
         assert!(result.is_err());
         let error_text = result
-            .err()
-            .expect("missing workspace should return an error")
+            .expect_err("missing workspace should return an error")
             .to_string();
         assert!(error_text.contains("workspace root does not exist"));
     }

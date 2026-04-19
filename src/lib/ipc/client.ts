@@ -11,6 +11,7 @@ import type {
   FsEntry,
   RuntimeAvailabilityResponse,
   RuntimeSignal,
+  ToolchainStatus,
 } from "./types";
 
 export async function listWorkspaceEntries(
@@ -124,6 +125,22 @@ export async function getRuntimeAvailability(): Promise<
   return invoke<ApiResponse<RuntimeAvailabilityResponse>>(
     "get_runtime_availability"
   );
+}
+
+export async function getToolchainStatus(): Promise<ApiResponse<ToolchainStatus>> {
+  const tauriInternals = (globalThis as { __TAURI_INTERNALS__?: unknown })
+    .__TAURI_INTERNALS__;
+  if (!tauriInternals) {
+    return {
+      ok: true,
+      data: {
+        go: { available: false },
+        gopls: { available: false },
+        delve: { available: false },
+      },
+    };
+  }
+  return invoke<ApiResponse<ToolchainStatus>>("get_toolchain_status");
 }
 
 export async function getRuntimeSignals(): Promise<ApiResponse<RuntimeSignal[]>> {

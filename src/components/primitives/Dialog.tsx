@@ -1,4 +1,5 @@
 import { useEffect, useRef, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 
 type DialogRole = "dialog" | "alertdialog";
 
@@ -31,49 +32,30 @@ function Dialog({
   closeOnBackdrop = true,
   children,
 }: DialogProps) {
-  const dialogRef = useRef<HTMLDialogElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
+    if (!open) {
       return;
     }
 
-    if (open && !dialog.open) {
-      if (typeof dialog.showModal === "function") {
-        dialog.showModal();
-      } else {
-        dialog.setAttribute("open", "true");
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onOpenChange(false);
       }
-      return;
-    }
-
-    if (!open && dialog.open) {
-      if (typeof dialog.close === "function") {
-        dialog.close();
-      } else {
-        dialog.removeAttribute("open");
-      }
-    }
-  }, [open]);
-
-  useEffect(() => {
-    const dialog = dialogRef.current;
-    if (!dialog) {
-      return;
-    }
-
-    const handleCancel = (event: Event) => {
-      event.preventDefault();
-      onOpenChange(false);
     };
 
-    dialog.addEventListener("cancel", handleCancel);
-    return () => dialog.removeEventListener("cancel", handleCancel);
-  }, [onOpenChange]);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onOpenChange, open]);
 
-  return (
-    <dialog
+  if (!open) {
+    return null;
+  }
+
+  return createPortal(
+    <div
       ref={dialogRef}
       id={id}
       data-testid={dataTestId}
@@ -83,6 +65,7 @@ function Dialog({
       aria-labelledby={ariaLabelledBy}
       style={style}
       className={className}
+      tabIndex={-1}
       onClick={(event) => {
         if (!closeOnBackdrop) {
           return;
@@ -93,7 +76,8 @@ function Dialog({
       }}
     >
       <div className={panelClassName}>{children}</div>
-    </dialog>
+    </div>,
+    document.body
   );
 }
 

@@ -28,3 +28,24 @@ Behavior:
 - Default: `450` ms
 - Accepted range: `100` to `5000` ms
 - Out-of-range or non-numeric values fall back to the default
+
+## Analysis Engine Status
+
+Current implementation uses:
+
+- CodeMirror Lezer for frontend Go syntax highlighting.
+- A lightweight Rust tokenizer for static concurrency markers.
+- `gopls` for symbol enrichment, diagnostics, and completions.
+- Delve (`dlv`) for runtime Deep Trace sampling.
+
+Tree-sitter is not currently integrated. If Tree-sitter becomes a hard product requirement, add `tree-sitter` and `tree-sitter-go` to the Rust backend and replace or augment the tokenizer path in `src-tauri/src/integration/gopls.rs`.
+
+## Required Local Tooling
+
+For the full IDE experience, users need these commands available on `PATH`:
+
+- `go` for running active Go files.
+- `gopls` for diagnostics, completions, and symbol enrichment.
+- `dlv` for Deep Trace runtime sampling.
+
+The app runs a startup preflight and surfaces missing tools in the status bar.

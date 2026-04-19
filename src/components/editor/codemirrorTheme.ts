@@ -86,6 +86,61 @@ const editorTheme = EditorView.theme(
     ".cm-selectionBackground, .cm-content ::selection": {
       backgroundColor: "rgba(126, 162, 220, 0.24) !important",
     },
+    ".cm-tooltip": {
+      backgroundColor: "var(--mantle)",
+      border: "1px solid rgba(126, 162, 220, 0.26)",
+      borderRadius: "10px",
+      boxShadow: "0 18px 48px rgba(0, 0, 0, 0.42)",
+      color: "var(--text)",
+      overflow: "hidden",
+    },
+    ".cm-tooltip-autocomplete": {
+      "& > ul": {
+        maxHeight: "360px",
+        minWidth: "520px",
+        padding: "6px",
+        fontFamily:
+          '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
+      },
+      "& ul li": {
+        alignItems: "center",
+        borderRadius: "7px",
+        display: "flex",
+        gap: "8px",
+        minHeight: "26px",
+        padding: "3px 10px",
+      },
+      "& ul li[aria-selected]": {
+        backgroundColor: "rgba(126, 162, 220, 0.18)",
+        color: "var(--text)",
+      },
+      "& .cm-completionLabel": {
+        color: "var(--blue)",
+        fontWeight: "600",
+      },
+      "& .cm-completionMatchedText": {
+        color: "var(--yellow)",
+        textDecoration: "none",
+      },
+      "& .cm-completionDetail": {
+        color: "var(--overlay1)",
+        flex: "1",
+        marginLeft: "18px",
+        textAlign: "right",
+      },
+      "& .cm-completionIcon": {
+        color: "var(--red)",
+        opacity: "0.9",
+      },
+      "& .cm-completionInfo": {
+        backgroundColor: "var(--mantle)",
+        border: "1px solid rgba(126, 162, 220, 0.24)",
+        borderRadius: "9px",
+        color: "var(--subtext1)",
+        maxWidth: "420px",
+        padding: "10px 12px",
+      },
+    },
     ".cm-cursor, .cm-dropCursor": {
       borderLeft: "2px solid var(--blue)",
       animation: "cm-blink 1s steps(1) infinite",
@@ -100,17 +155,30 @@ const editorTheme = EditorView.theme(
 );
 
 const syntaxStyle = HighlightStyle.define([
+  { tag: tags.docComment, color: "var(--overlay1)", fontStyle: "italic" },
   { tag: tags.comment, color: "var(--overlay0)", fontStyle: "italic" },
+  { tag: tags.moduleKeyword, color: "var(--teal)", fontWeight: "700" },
+  { tag: tags.controlKeyword, color: "var(--mauve)", fontWeight: "700" },
+  { tag: tags.definitionKeyword, color: "var(--pink)", fontWeight: "700" },
+  { tag: tags.operatorKeyword, color: "var(--sapphire)", fontWeight: "600" },
   { tag: tags.keyword, color: "var(--mauve)", fontWeight: "600" },
-  { tag: tags.string, color: "var(--green)" },
+  { tag: [tags.string, tags.character], color: "var(--green)" },
+  { tag: tags.escape, color: "var(--pink)", fontWeight: "600" },
+  { tag: tags.regexp, color: "var(--teal)" },
   { tag: [tags.number, tags.bool, tags.null], color: "var(--peach)" },
-  { tag: tags.typeName, color: "var(--lavender)" },
-  { tag: tags.className, color: "var(--lavender)" },
-  { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "500" },
+  { tag: [tags.typeName, tags.className], color: "var(--lavender)", fontWeight: "600" },
+  { tag: tags.namespace, color: "var(--teal)" },
+  { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "600" },
+  { tag: tags.definition(tags.variableName), color: "var(--text)", fontWeight: "600" },
+  { tag: tags.standard(tags.variableName), color: "var(--sky)" },
   { tag: tags.operator, color: "var(--sapphire)" },
+  { tag: [tags.punctuation, tags.separator], color: "var(--overlay1)" },
+  { tag: tags.bracket, color: "var(--subtext0)" },
   { tag: tags.variableName, color: "var(--text)" },
-  { tag: tags.propertyName, color: "var(--sky)" },
+  { tag: tags.propertyName, color: "var(--sky)", fontWeight: "500" },
+  { tag: tags.labelName, color: "var(--yellow)" },
   { tag: tags.atom, color: "var(--maroon)" },
+  { tag: tags.invalid, color: "var(--red)", textDecoration: "underline wavy var(--red)" },
 ]);
 
 export const goideEditorExtensions = [

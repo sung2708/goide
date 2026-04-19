@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import BottomPanel from "./BottomPanel";
@@ -40,6 +40,50 @@ describe("BottomPanel", () => {
 
     expect(screen.queryByText("line 1")).toBeNull();
     expect(screen.getByText(/Unit idle\. Standby for output\./i)).toBeInTheDocument();
+  });
+
+  it("closes the clear confirmation without clearing output", async () => {
+    const user = userEvent.setup();
+    const onClear = vi.fn();
+
+    render(
+      <BottomPanel
+        output={[{ runId: "r1", line: "line 1", stream: "stdout" }]}
+        onClear={onClear}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
+    expect(screen.getByRole("alertdialog", { name: /clear output\?/i })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    expect(screen.queryByRole("alertdialog", { name: /clear output\?/i })).toBeNull();
+    expect(screen.getByText("line 1")).toBeInTheDocument();
+    expect(onClear).not.toHaveBeenCalled();
+  });
+
+  it("closes the clear confirmation with Escape and backdrop click", async () => {
+    const user = userEvent.setup();
+    const onClear = vi.fn();
+
+    render(
+      <BottomPanel
+        output={[{ runId: "r1", line: "line 1", stream: "stdout" }]}
+        onClear={onClear}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
+    await user.keyboard("{Escape}");
+    expect(screen.queryByRole("alertdialog", { name: /clear output\?/i })).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
+    fireEvent.click(screen.getByRole("alertdialog", { name: /clear output\?/i }));
+
+    expect(screen.queryByRole("alertdialog", { name: /clear output\?/i })).toBeNull();
+    expect(screen.getByText("line 1")).toBeInTheDocument();
+    expect(onClear).not.toHaveBeenCalled();
   });
 
   it("invokes onRun when run-again is clicked", async () => {

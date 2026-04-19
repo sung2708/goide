@@ -12,6 +12,7 @@ use crate::ui_bridge::types::{
     ConcurrencyConstructKindDto, DeepTraceConstructKindDto, DiagnosticRangeDto,
     DiagnosticSeverityDto, DiagnosticsResponseDto, DiagnosticsToolingAvailabilityDto,
     EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto, RuntimeSignalDto,
+    ToolAvailabilityDto, ToolchainStatusDto,
 };
 use std::path::{Component, Path};
 use std::process::Command;
@@ -612,6 +613,45 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
     ApiResponse::ok(RuntimeAvailabilityResponseDto {
         runtime_availability: runtime_availability.to_string(),
     })
+}
+
+fn command_version(command: &str, args: &[&str]) -> ToolAvailabilityDto {
+    let output = Command::new(command).args(args).output();
+    match output {
+        Ok(output) if output.status.success() => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let version = stdout
+                .lines()
+                .chain(stderr.lines())
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .map(str::to_string);
+            ToolAvailabilityDto {
+                available: true,
+                version,
+            }
+        }
+        _ => ToolAvailabilityDto {
+            available: false,
+            version: None,
+        },
+    }
+}
+
+#[tauri::command]
+pub async fn get_toolchain_status() -> ApiResponse<ToolchainStatusDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || ToolchainStatusDto {
+        go: command_version("go", &["version"]),
+        gopls: command_version("gopls", &["version"]),
+        delve: command_version("dlv", &["version"]),
+    })
+    .await;
+
+    match result {
+        Ok(status) => ApiResponse::ok(status),
+        Err(error) => ApiResponse::err("toolchain_status_failed", &error.to_string()),
+    }
 }
 
 #[tauri::command]

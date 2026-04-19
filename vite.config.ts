@@ -34,4 +34,28 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          codemirror: [
+            "@codemirror/autocomplete",
+            "@codemirror/commands",
+            "@codemirror/lang-go",
+            "@codemirror/language",
+            "@codemirror/lint",
+            "@codemirror/state",
+            "@codemirror/view",
+            "@uiw/react-codemirror",
+          ],
+          react: ["react", "react-dom"],
+          tauri: [
+            "@tauri-apps/api",
+            "@tauri-apps/plugin-dialog",
+            "@tauri-apps/plugin-opener",
+          ],
+        },
+      },
+    },
+  },
 }));

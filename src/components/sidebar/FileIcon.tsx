@@ -4,16 +4,21 @@ type IconProps = {
 };
 
 const FolderIcon = ({ className = "", size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-    <path d="M10 4H4C2.9 4 2 4.9 2 6V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V8C22 6.9 21.1 6 20 6H12L10 4Z" fill="var(--blue)" />
-    <path d="M22 8V18C22 19.1 21.1 20 20 20H4C2.9 20 2 19.1 2 18V10C2 8.9 2.9 8 4 8H22Z" fill="var(--blue)" fillOpacity="0.8" />
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden="true">
+    <path d="M3 7.5C3 6.4 3.9 5.5 5 5.5H9.2C9.7 5.5 10.2 5.7 10.6 6.1L12.1 7.6H19C20.1 7.6 21 8.5 21 9.6V17.5C21 18.6 20.1 19.5 19 19.5H5C3.9 19.5 3 18.6 3 17.5V7.5Z" fill="var(--surface1)" />
+    <path d="M4.5 9C4.5 8.2 5.2 7.5 6 7.5H10.1L11.8 9.2C12.1 9.5 12.6 9.7 13 9.7H19.5V17.1C19.5 17.6 19.1 18 18.6 18H5.4C4.9 18 4.5 17.6 4.5 17.1V9Z" fill="var(--blue)" fillOpacity="0.88" />
+    <path d="M5.3 10.5H18.7C19.4 10.5 20 11.1 20 11.8V17.2C20 17.9 19.4 18.5 18.7 18.5H5.3C4.6 18.5 4 17.9 4 17.2V11.8C4 11.1 4.6 10.5 5.3 10.5Z" fill="var(--sky)" fillOpacity="0.72" />
+    <path d="M5.2 11.5H18.8" stroke="rgba(205,214,244,0.45)" strokeLinecap="round" />
   </svg>
 );
 
 const FolderOpenIcon = ({ className = "", size = 16 }: IconProps) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className}>
-    <path d="M4 20H20C21.1 20 22 19.1 22 18V10C22 8.9 21.1 8 20 8H12L10 6H4C2.9 6 2 6.9 2 8V18C2 19.1 2.9 20 4 20Z" fill="var(--blue)" fillOpacity="0.6" />
-    <path d="M2 10V18C2 19.1 2.9 20 4 20H20C21.1 20 22 19.1 22 18V12C22 10.9 21.1 10 20 10H2Z" fill="var(--blue)" />
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" className={className} aria-hidden="true">
+    <path d="M3 7.5C3 6.4 3.9 5.5 5 5.5H9.1C9.6 5.5 10.1 5.7 10.5 6.1L12 7.6H19C20.1 7.6 21 8.5 21 9.6V11.2H3V7.5Z" fill="var(--surface1)" />
+    <path d="M4.3 9.1C4.3 8.3 5 7.6 5.8 7.6H10L11.7 9.3C12.1 9.7 12.5 9.9 13.1 9.9H19.7V12H4.3V9.1Z" fill="var(--blue)" fillOpacity="0.86" />
+    <path d="M4.8 10.8H20.3C21.3 10.8 22 11.8 21.7 12.8L20.4 17.5C20.1 18.4 19.3 19 18.4 19H5.2C4.3 19 3.5 18.4 3.2 17.5L2.2 13.9C1.8 12.4 3 10.8 4.8 10.8Z" fill="var(--sky)" fillOpacity="0.82" />
+    <path d="M5.5 12.3H19.2" stroke="rgba(205,214,244,0.55)" strokeLinecap="round" />
+    <path d="M5.1 17.4H18.4" stroke="rgba(17,24,39,0.24)" strokeLinecap="round" />
   </svg>
 );
 

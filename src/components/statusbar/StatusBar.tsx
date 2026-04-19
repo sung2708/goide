@@ -1,4 +1,5 @@
 import { cn } from "../../lib/utils/cn";
+import type { ToolchainStatus } from "../../lib/ipc/types";
 
 type StatusBarProps = {
   workspacePath: string | null;
@@ -7,6 +8,7 @@ type StatusBarProps = {
   runtimeAvailability: "available" | "unavailable" | "degraded";
   diagnosticsAvailability: "available" | "unavailable" | "idle";
   completionAvailability: "available" | "degraded" | "idle";
+  toolchainStatus?: ToolchainStatus | null;
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
   isSummaryOpen: boolean;
@@ -24,6 +26,7 @@ function StatusBar({
   runtimeAvailability,
   diagnosticsAvailability,
   completionAvailability,
+  toolchainStatus = null,
   saveStatus = "idle",
   runStatus = "idle",
   isSummaryOpen,
@@ -52,6 +55,27 @@ function StatusBar({
       : completionAvailability === "degraded"
         ? "Comp Retry"
         : "Comp --";
+  const missingTools = toolchainStatus
+    ? ([
+        ["go", toolchainStatus.go],
+        ["gopls", toolchainStatus.gopls],
+        ["dlv", toolchainStatus.delve],
+      ] as const)
+        .filter(([, status]) => !status.available)
+        .map(([name]) => name)
+    : [];
+  const toolsLabel =
+    toolchainStatus === null
+      ? "Tools --"
+      : missingTools.length === 0
+        ? "Tools OK"
+        : "Tools Setup";
+  const toolsTitle =
+    toolchainStatus === null
+      ? "Toolchain preflight has not run yet."
+      : missingTools.length === 0
+        ? "Go, gopls, and Delve are available."
+        : `Missing ${missingTools.join(", ")}. Install missing tools to enable run, diagnostics, completions, and Deep Trace.`;
 
   return (
     <footer className="glass-morphism relative z-50 flex h-8 items-center justify-between border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.86)] px-3 text-[10px] font-medium text-[var(--overlay1)]">
@@ -129,6 +153,20 @@ function StatusBar({
           >
             {diagnosticsLabel}
             <span className="sr-only">Diagnostics: {diagnosticsLabel}</span>
+          </span>
+          <span
+            title={toolsTitle}
+            className={cn(
+              "rounded-sm border px-2 py-0.5 font-semibold",
+              toolchainStatus === null
+                ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
+                : missingTools.length === 0
+                  ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
+                  : "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
+            )}
+          >
+            {toolsLabel}
+            <span className="sr-only">Toolchain: {toolsLabel}</span>
           </span>
         </div>
 
