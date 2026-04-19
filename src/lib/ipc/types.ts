@@ -134,6 +134,17 @@ export type RuntimeAvailabilityResponse = {
   runtimeAvailability: "available" | "unavailable";
 };
 
+export type ToolAvailability = {
+  available: boolean;
+  version?: string | null;
+};
+
+export type ToolchainStatus = {
+  go: ToolAvailability;
+  gopls: ToolAvailability;
+  delve: ToolAvailability;
+};
+
 export type RuntimeSignal = {
   threadId: number;
   status: string;

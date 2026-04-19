@@ -211,8 +211,41 @@ const GO_SNIPPETS: Completion[] = [
   }),
 ];
 
+const GO_FUNCTION_NAME_SNIPPETS: Completion[] = [
+  snippetCompletion("main() {\n\t${}\n}", {
+    label: "main",
+    detail: "main function",
+    type: "function",
+    section: snippetSection,
+    boost: 40,
+  }),
+  snippetCompletion("Test${Name}(t *testing.T) {\n\t${}\n}", {
+    label: "test",
+    detail: "Go test",
+    type: "function",
+    section: snippetSection,
+    boost: 20,
+  }),
+  snippetCompletion(
+    "Benchmark${Name}(b *testing.B) {\n\tfor i := 0; i < b.N; i++ {\n\t\t${}\n\t}\n}",
+    {
+      label: "bench",
+      detail: "Go benchmark",
+      type: "function",
+      section: snippetSection,
+      boost: 15,
+    }
+  ),
+];
+
 function isPackageLineContext(linePrefix: string) {
   return /^\s*package(?:\s+[A-Za-z_][A-Za-z0-9_]*)?\s*$/.test(linePrefix);
+}
+
+function isFunctionNameContext(linePrefix: string) {
+  return /^\s*func\s+(?:\([^)]*\)\s*)?(?:[A-Za-z_][A-Za-z0-9_]*)?$/.test(
+    linePrefix
+  );
 }
 
 function isPackageContextAtSelection(view: EditorView) {
@@ -524,6 +557,14 @@ function CodeEditor({
       };
     }
 
+    if (isFunctionNameContext(linePrefix)) {
+      return {
+        from: prefixMatch ? prefixMatch.from : context.pos,
+        validFor: GO_IDENTIFIER_PATTERN,
+        options: GO_FUNCTION_NAME_SNIPPETS,
+      };
+    }
+
     const precedingText = context.state.sliceDoc(0, lineInfo.from).trim();
     const options =
       precedingText.length === 0 ? [...PACKAGE_SNIPPETS, ...GO_SNIPPETS] : GO_SNIPPETS;
@@ -711,6 +752,7 @@ function CodeEditor({
       override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
       defaultKeymap: false,
+      maxRenderedOptions: 80,
       updateSyncTime: 80,
     }),
     Prec.highest(keymap.of([
