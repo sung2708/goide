@@ -173,6 +173,28 @@ describe("CodeEditor", () => {
     expect(acceptCompletionMock).not.toHaveBeenCalled();
   });
 
+  it("enables closeBrackets integration and keeps close-bracket key bindings active", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    expect(closeBracketsMock).toHaveBeenCalledTimes(1);
+    expect(latestKeyBindings).toEqual(
+      expect.arrayContaining([expect.objectContaining({ key: "mock-close-bracket" })])
+    );
+  });
+
+  it("keeps custom key handlers ahead of close-bracket key bindings", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    const tabIndex = latestKeyBindings.findIndex((binding) => binding.key === "Tab");
+    const closeBracketIndex = latestKeyBindings.findIndex(
+      (binding) => binding.key === "mock-close-bracket"
+    );
+
+    expect(tabIndex).toBeGreaterThanOrEqual(0);
+    expect(closeBracketIndex).toBeGreaterThanOrEqual(0);
+    expect(tabIndex).toBeLessThan(closeBracketIndex);
+  });
+
   it("uses Tab to accept completion before indentation fallback", () => {
     hasNextSnippetFieldMock.mockReturnValue(false);
     acceptCompletionMock.mockReturnValue(true);
