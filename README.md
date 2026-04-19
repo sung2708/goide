@@ -84,7 +84,6 @@ src-tauri/target/release/bundle/
 On Windows, if the Rust build picks the wrong C/C++ compiler, open a Visual Studio Developer PowerShell or run:
 
 ```powershell
-cmd /c """C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat"" -arch=x64 && powershell"
 $env:CC="cl"
 $env:CXX="cl"
 npm run tauri -- build
