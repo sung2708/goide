@@ -7,7 +7,7 @@ import type {
   CompletionItem,
   CompletionRequest,
   ConcurrencyConstruct,
-  EditorDiagnostic,
+  DiagnosticsResponse,
   FsEntry,
   RuntimeAvailabilityResponse,
   RuntimeSignal,
@@ -83,8 +83,8 @@ export async function runWorkspaceFileWithRace(
 export async function fetchWorkspaceDiagnostics(
   workspaceRoot: string,
   relativePath: string
-): Promise<ApiResponse<EditorDiagnostic[]>> {
-  return invoke<ApiResponse<EditorDiagnostic[]>>("get_active_file_diagnostics", {
+): Promise<ApiResponse<DiagnosticsResponse>> {
+  return invoke<ApiResponse<DiagnosticsResponse>>("get_active_file_diagnostics", {
     workspaceRoot,
     relativePath,
   });

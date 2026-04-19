@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
-import type { EditorDiagnostic } from "../../lib/ipc/types";
+import type { DiagnosticsResponse, EditorDiagnostic } from "../../lib/ipc/types";
 
 const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
@@ -94,20 +94,23 @@ describe("EditorShell diagnostics", () => {
     writeWorkspaceFileMock.mockResolvedValue({ ok: true });
     fetchWorkspaceDiagnosticsMock.mockResolvedValue({
       ok: true,
-      data: [
-        {
-          severity: "error",
-          message: "expected expression",
-          source: "gopls",
-          code: "parse",
-          range: {
-            startLine: 1,
-            startColumn: 1,
-            endLine: 1,
-            endColumn: 2,
+      data: {
+        diagnostics: [
+          {
+            severity: "error",
+            message: "expected expression",
+            source: "gopls",
+            code: "parse",
+            range: {
+              startLine: 1,
+              startColumn: 1,
+              endLine: 1,
+              endColumn: 2,
+            },
           },
-        },
-      ],
+        ],
+        toolingAvailability: "available",
+      },
     });
     getRuntimeAvailabilityMock.mockResolvedValue({
       ok: true,
@@ -137,20 +140,23 @@ describe("EditorShell diagnostics", () => {
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     fetchWorkspaceDiagnosticsMock.mockResolvedValue({
       ok: true,
-      data: [
-        {
-          severity: "warning",
-          message: "unused variable",
-          source: "gopls",
-          code: "unused",
-          range: {
-            startLine: 1,
-            startColumn: 1,
-            endLine: 1,
-            endColumn: 2,
+      data: {
+        diagnostics: [
+          {
+            severity: "warning",
+            message: "unused variable",
+            source: "gopls",
+            code: "unused",
+            range: {
+              startLine: 1,
+              startColumn: 1,
+              endLine: 1,
+              endColumn: 2,
+            },
           },
-        },
-      ],
+        ],
+        toolingAvailability: "available",
+      },
     });
 
     render(<EditorShell />);
@@ -180,17 +186,25 @@ describe("EditorShell diagnostics", () => {
     });
 
     const diagnosticsResolver: {
-      current: ((value: { ok: boolean; data: EditorDiagnostic[] }) => void) | null;
+      current:
+        | ((value: { ok: boolean; data: DiagnosticsResponse }) => void)
+        | null;
     } = { current: null };
     fetchWorkspaceDiagnosticsMock
-      .mockResolvedValueOnce({ ok: true, data: [] })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { diagnostics: [], toolingAvailability: "available" },
+      })
       .mockImplementationOnce(
         () =>
-        new Promise<{ ok: boolean; data: EditorDiagnostic[] }>((resolve) => {
-          diagnosticsResolver.current = resolve;
-        })
+          new Promise<{ ok: boolean; data: DiagnosticsResponse }>((resolve) => {
+            diagnosticsResolver.current = resolve;
+          })
       )
-      .mockResolvedValue({ ok: true, data: [] });
+      .mockResolvedValue({
+        ok: true,
+        data: { diagnostics: [], toolingAvailability: "available" },
+      });
 
     render(<EditorShell />);
 
@@ -202,20 +216,23 @@ describe("EditorShell diagnostics", () => {
 
     diagnosticsResolver.current?.({
       ok: true,
-      data: [
-        {
-          severity: "error",
-          message: "stale diagnostic",
-          source: "gopls",
-          code: "parse",
-          range: {
-            startLine: 1,
-            startColumn: 1,
-            endLine: 1,
-            endColumn: 2,
+      data: {
+        diagnostics: [
+          {
+            severity: "error",
+            message: "stale diagnostic",
+            source: "gopls",
+            code: "parse",
+            range: {
+              startLine: 1,
+              startColumn: 1,
+              endLine: 1,
+              endColumn: 2,
+            },
           },
-        },
-      ],
+        ],
+        toolingAvailability: "available",
+      },
     });
 
     await waitFor(() => {
@@ -223,5 +240,62 @@ describe("EditorShell diagnostics", () => {
         "no diagnostics"
       );
     });
+  });
+
+  it("shows low-noise diagnostics setup hint when gopls is unavailable", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: { diagnostics: [], toolingAvailability: "unavailable" },
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+
+    await waitFor(() =>
+      expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
+        "C:/workspace",
+        "main.go"
+      )
+    );
+
+    expect(screen.getByText("Diag Setup")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/gopls is unavailable\. install gopls/i)
+    ).toBeInTheDocument();
+    expect(screen.getByTestId("diagnostic-message")).toHaveTextContent(
+      "no diagnostics"
+    );
+  });
+
+  it("keeps diagnostics indicator neutral when diagnostics request fails", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({
+      ok: false,
+      error: { code: "diagnostics_failed", message: "gopls failed" },
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+
+    await waitFor(() =>
+      expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
+        "C:/workspace",
+        "main.go"
+      )
+    );
+
+    expect(screen.getByText("Diag --")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/diagnostics have not been checked/i)
+    ).toBeInTheDocument();
   });
 });
