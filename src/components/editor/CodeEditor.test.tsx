@@ -210,6 +210,21 @@ describe("CodeEditor", () => {
     expect(tabIndex).toBeLessThan(closeBracketIndex);
   });
 
+  it("keeps autocompletion configured for low-latency typing feedback", () => {
+    render(<CodeEditor value={"package main\nfmt.\n"} />);
+
+    expect(autocompletionMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        activateOnTyping: true,
+        defaultKeymap: false,
+        updateSyncTime: 80,
+      })
+    );
+    expect(latestAutocompleteOverrides).toHaveLength(2);
+    expect(typeof latestAutocompleteOverrides[0]).toBe("function");
+    expect(typeof latestAutocompleteOverrides[1]).toBe("function");
+  });
+
   it("uses Tab to accept completion before indentation fallback", () => {
     hasNextSnippetFieldMock.mockReturnValue(false);
     acceptCompletionMock.mockReturnValue(true);
@@ -763,6 +778,44 @@ describe("CodeEditor", () => {
       triggerCharacter: null,
       fileContent: "package main\nPrin\n",
     });
+  });
+
+  it("keeps rapid completion trigger bursts non-blocking on the typing path", async () => {
+    const requestCompletions = vi
+      .fn()
+      .mockImplementation(() => new Promise<never>(() => {}));
+
+    render(
+      <CodeEditor
+        value={"package main\nPrin\n"}
+        onRequestCompletions={requestCompletions}
+      />
+    );
+
+    expect(latestAutocompleteOverride).toBeTruthy();
+
+    const context = {
+      pos: 16,
+      explicit: false,
+      matchBefore: () => ({ from: 12, to: 16, text: "Prin" }),
+      state: {
+        sliceDoc: () => "n",
+        doc: {
+          lineAt: () => ({ number: 2, from: 12 }),
+          toString: () => "package main\nPrin\n",
+        },
+      },
+    };
+
+    const burstCount = 200;
+    const startedAt = performance.now();
+    for (let index = 0; index < burstCount; index += 1) {
+      void latestAutocompleteOverride?.(context);
+    }
+    const elapsedMs = performance.now() - startedAt;
+
+    expect(requestCompletions).toHaveBeenCalledTimes(burstCount);
+    expect(elapsedMs).toBeLessThan(250);
   });
 
   it("serves local snippets while typing without calling gopls too early", async () => {

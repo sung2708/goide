@@ -223,4 +223,80 @@ describe("EditorShell completions", () => {
       expect(screen.getByTestId("completion-label")).toHaveTextContent("none");
     });
   });
+
+  it("shows low-noise completion retry cue when completion backend fails", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceCompletionsMock.mockResolvedValue({
+      ok: false,
+      error: { code: "completion_failed", message: "completion backend unavailable" },
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(await screen.findByRole("button", { name: /request completions/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Comp Retry")).toBeInTheDocument();
+    });
+    expect(
+      screen.getByTitle(/completion backend is unavailable/i)
+    ).toBeInTheDocument();
+  });
+
+  it("keeps completion cue healthy when a stale failed response returns after a newer success", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+
+    const pendingFirst: {
+      resolve: ((value: { ok: boolean; data?: CompletionItem[]; error?: { code: string; message: string } }) => void) | null;
+    } = { resolve: null };
+    fetchWorkspaceCompletionsMock
+      .mockImplementationOnce(
+        () =>
+          new Promise<{
+            ok: boolean;
+            data?: CompletionItem[];
+            error?: { code: string; message: string };
+          }>((resolve) => {
+            pendingFirst.resolve = resolve;
+          })
+      )
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          {
+            label: "Println",
+            detail: "func(a ...any)",
+            kind: "func",
+            insertText: "Println",
+            range: null,
+          },
+        ],
+      });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(await screen.findByRole("button", { name: /request completions/i }));
+    await user.click(await screen.findByRole("button", { name: /request completions/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Comp OK")).toBeInTheDocument();
+    });
+
+    pendingFirst.resolve?.({
+      ok: false,
+      error: { code: "completion_failed", message: "stale failure" },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Comp OK")).toBeInTheDocument();
+    });
+  });
 });

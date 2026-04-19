@@ -59,6 +59,7 @@ const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
 const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
 type RunMode = "standard" | "race";
 type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
+type CompletionIndicatorState = "available" | "degraded" | "idle";
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -349,6 +350,8 @@ function EditorShell() {
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [diagnosticsAvailability, setDiagnosticsAvailability] =
     useState<DiagnosticsIndicatorState>("idle");
+  const [completionAvailability, setCompletionAvailability] =
+    useState<CompletionIndicatorState>("idle");
   const [isDirty, setIsDirty] = useState(false);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const isSavingRef = useRef(false);
@@ -1027,6 +1030,7 @@ function EditorShell() {
       const currentWorkspace = workspacePathRef.current;
       const currentPath = activeFilePathRef.current;
       if (!currentWorkspace || !currentPath || !isGoFile(currentPath)) {
+        setCompletionAvailability("idle");
         return [];
       }
 
@@ -1055,8 +1059,10 @@ function EditorShell() {
         }
 
         if (!response.ok || !response.data) {
+          setCompletionAvailability("degraded");
           return [];
         }
+        setCompletionAvailability("available");
 
         return response.data;
       } catch (_error) {
@@ -1065,6 +1071,7 @@ function EditorShell() {
           workspacePathRef.current === currentWorkspace &&
           activeFilePathRef.current === currentPath
         ) {
+          setCompletionAvailability("degraded");
           return [];
         }
         return [];
@@ -1232,6 +1239,7 @@ function EditorShell() {
     setIsDirty(value !== savedContentRef.current);
     // Reset transient statuses when the user starts editing again
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
+    setCompletionAvailability((prev) => (prev === "degraded" ? "idle" : prev));
   }, []);
 
   const handleModifierClickLine = useCallback(
@@ -1325,6 +1333,7 @@ function EditorShell() {
         completionRequestIdRef.current += 1;
         setDiagnostics([]);
         setDiagnosticsAvailability("idle");
+        setCompletionAvailability("idle");
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
@@ -1351,6 +1360,7 @@ function EditorShell() {
       completionRequestIdRef.current += 1;
       setDiagnostics([]);
       setDiagnosticsAvailability("idle");
+      setCompletionAvailability("idle");
 
       try {
         const response = await readWorkspaceFile(workspacePath, relativePath);
@@ -1416,6 +1426,7 @@ function EditorShell() {
         if (!isGoFile(relativePath)) {
           setDiagnostics([]);
           setDiagnosticsAvailability("idle");
+          setCompletionAvailability("idle");
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
@@ -1668,6 +1679,7 @@ function EditorShell() {
         mode={mode}
         runtimeAvailability={runtimeAvailability}
         diagnosticsAvailability={diagnosticsAvailability}
+        completionAvailability={completionAvailability}
         saveStatus={saveStatus}
         runStatus={runStatus}
         isSummaryOpen={isSummaryOpen}
