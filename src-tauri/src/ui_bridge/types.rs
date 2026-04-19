@@ -126,6 +126,21 @@ pub struct RuntimeAvailabilityResponseDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct ToolAvailabilityDto {
+    pub available: bool,
+    pub version: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToolchainStatusDto {
+    pub go: ToolAvailabilityDto,
+    pub gopls: ToolAvailabilityDto,
+    pub delve: ToolAvailabilityDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeSignalDto {
     pub thread_id: i64,
     pub status: String,

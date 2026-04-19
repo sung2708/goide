@@ -55,6 +55,18 @@ const moveCompletionSelectionMock = vi.fn(
   (_forward: boolean, _by?: "option" | "page") => (_view: unknown) => false
 );
 let latestKeyBindings: Array<{ key?: string; run?: (view: unknown) => boolean }> = [];
+type TestCompletionResult = {
+  from: number;
+  options: Array<{
+    label: string;
+    detail?: string;
+    info?: string;
+    type?: string;
+    section?: unknown;
+    apply?: any;
+  }>;
+  validFor?: RegExp;
+};
 type TestCompletionSource =
   | ((context: {
       pos: number;
@@ -68,23 +80,7 @@ type TestCompletionSource =
           toString: () => string;
         };
       };
-    }) => Promise<{
-      from: number;
-      options: Array<{
-        label: string;
-        detail?: string;
-        info?: string;
-        type?: string;
-        section?: unknown;
-        apply: (
-          view: { dispatch: (args: unknown) => void },
-          completion: unknown,
-          from: number,
-          to: number
-        ) => void;
-      }>;
-      validFor?: RegExp;
-    } | null>)
+    }) => Promise<TestCompletionResult | null> | TestCompletionResult | null)
   | null;
 let latestAutocompleteOverride: TestCompletionSource = null;
 let latestAutocompleteOverrides: TestCompletionSource[] = [];
@@ -217,6 +213,7 @@ describe("CodeEditor", () => {
       expect.objectContaining({
         activateOnTyping: true,
         defaultKeymap: false,
+        maxRenderedOptions: 80,
         updateSyncTime: 80,
       })
     );
@@ -861,6 +858,45 @@ describe("CodeEditor", () => {
     );
     expect(goplsResult).toBeNull();
     expect(requestCompletions).not.toHaveBeenCalled();
+  });
+
+  it("uses function-name snippets after func keyword without duplicating func", async () => {
+    render(
+      <CodeEditor value={"package main\nfunc mai"} onRequestCompletions={vi.fn()} />
+    );
+
+    const snippetResult = await latestAutocompleteOverrides[0]?.({
+      pos: 21,
+      explicit: false,
+      matchBefore: () => ({ from: 18, to: 21, text: "mai" }),
+      state: {
+        sliceDoc: (from: number, to: number) =>
+          "package main\nfunc mai".slice(from, to),
+        doc: {
+          lineAt: () => ({ number: 2, from: 13 }),
+          toString: () => "package main\nfunc mai",
+        },
+      },
+    });
+
+    expect(snippetResult?.from).toBe(18);
+    expect(snippetResult?.options).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "main",
+          detail: "main function",
+          apply: "main() {\n\t${}\n}",
+        }),
+      ])
+    );
+    expect(snippetResult?.options).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          label: "main",
+          apply: "func main() {\n\t${}\n}",
+        }),
+      ])
+    );
   });
 
   it("keeps package declarations separate from the func main snippet", async () => {

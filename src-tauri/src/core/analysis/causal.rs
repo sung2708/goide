@@ -118,8 +118,7 @@ pub fn enrich_runtime_signals_with_correlation(
                     candidate_hint_match(&signals[*candidate_index], Some(hint))
                 })
             });
-            let step = (candidate_indexes.len() + MAX_CANDIDATES_PER_SOURCE - 1)
-                / MAX_CANDIDATES_PER_SOURCE;
+            let step = candidate_indexes.len().div_ceil(MAX_CANDIDATES_PER_SOURCE);
             let offset = source_index % step;
             let mut sampled = candidate_indexes
                 .into_iter()
