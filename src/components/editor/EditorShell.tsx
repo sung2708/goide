@@ -58,6 +58,7 @@ const BLOCKED_WAIT_REASONS = [
 const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
 const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
 type RunMode = "standard" | "race";
+type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -346,6 +347,8 @@ function EditorShell() {
   const [runMode, setRunMode] = useState<RunMode>("standard");
   const [raceSignals, setRaceSignals] = useState<RuntimeSignal[]>([]);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
+  const [diagnosticsAvailability, setDiagnosticsAvailability] =
+    useState<DiagnosticsIndicatorState>("idle");
   const [isDirty, setIsDirty] = useState(false);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const isSavingRef = useRef(false);
@@ -595,6 +598,7 @@ function EditorShell() {
     async (diagnosticWorkspacePath: string, diagnosticFilePath: string) => {
       if (!isGoFile(diagnosticFilePath)) {
         setDiagnostics([]);
+        setDiagnosticsAvailability("idle");
         return;
       }
       const requestId = diagnosticsRequestIdRef.current + 1;
@@ -615,9 +619,12 @@ function EditorShell() {
         }
 
         if (diagnosticsResponse.ok && diagnosticsResponse.data) {
-          setDiagnostics(diagnosticsResponse.data);
+          setDiagnostics(diagnosticsResponse.data.diagnostics);
+          setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
         } else {
           setDiagnostics([]);
+          // Generic diagnostics errors are not equivalent to missing tooling.
+          setDiagnosticsAvailability("idle");
         }
       } catch (_error) {
         if (
@@ -626,6 +633,8 @@ function EditorShell() {
           activeFilePathRef.current === diagnosticFilePath
         ) {
           setDiagnostics([]);
+          // Network/IPC/command failures should not imply missing gopls setup.
+          setDiagnosticsAvailability("idle");
         }
       }
     },
@@ -1315,6 +1324,7 @@ function EditorShell() {
         diagnosticsRequestIdRef.current += 1;
         completionRequestIdRef.current += 1;
         setDiagnostics([]);
+        setDiagnosticsAvailability("idle");
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
@@ -1340,6 +1350,7 @@ function EditorShell() {
       diagnosticsRequestIdRef.current += 1;
       completionRequestIdRef.current += 1;
       setDiagnostics([]);
+      setDiagnosticsAvailability("idle");
 
       try {
         const response = await readWorkspaceFile(workspacePath, relativePath);
@@ -1404,6 +1415,7 @@ function EditorShell() {
         setSaveStatus("idle");
         if (!isGoFile(relativePath)) {
           setDiagnostics([]);
+          setDiagnosticsAvailability("idle");
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
@@ -1655,6 +1667,7 @@ function EditorShell() {
         activeFilePath={activeFilePath}
         mode={mode}
         runtimeAvailability={runtimeAvailability}
+        diagnosticsAvailability={diagnosticsAvailability}
         saveStatus={saveStatus}
         runStatus={runStatus}
         isSummaryOpen={isSummaryOpen}
