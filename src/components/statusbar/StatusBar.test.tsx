@@ -3,14 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import StatusBar from "./StatusBar";
 
 function renderStatusBar(
-  runtimeAvailability: "available" | "unavailable" | "degraded"
+  diagnosticsAvailability: "available" | "unavailable" | "idle" = "available"
 ) {
   return render(
     <StatusBar
-      workspacePath="C:/repo"
+      workspacePath="C:/workspace"
       activeFilePath="main.go"
       mode="quick-insight"
-      runtimeAvailability={runtimeAvailability}
+      runtimeAvailability="available"
+      diagnosticsAvailability={diagnosticsAvailability}
+      saveStatus="idle"
+      runStatus="idle"
       isSummaryOpen={false}
       isBottomPanelOpen={false}
       isCommandPaletteOpen={false}
@@ -21,24 +24,29 @@ function renderStatusBar(
   );
 }
 
-describe("StatusBar", () => {
-  it("shows runtime unavailable without rendering error UI copy", () => {
-    renderStatusBar("unavailable");
-
-    expect(screen.getByText(/Runtime: Static/i)).toBeInTheDocument();
-    expect(screen.queryByText(/error/i)).toBeNull();
-  });
-
-  it("shows runtime available when runtime is healthy", () => {
+describe("StatusBar diagnostics availability", () => {
+  it("shows diagnostics healthy label when tooling is available", () => {
     renderStatusBar("available");
 
-    expect(screen.getByText(/Runtime: Active/i)).toBeInTheDocument();
+    expect(screen.getByText("Diag OK")).toBeInTheDocument();
   });
 
-  it("shows degraded runtime status when deep-trace sampling is unhealthy", () => {
-    renderStatusBar("degraded");
+  it("shows actionable setup label when tooling is unavailable", () => {
+    renderStatusBar("unavailable");
 
-    expect(screen.getByText(/Runtime: Degraded/i)).toBeInTheDocument();
-    expect(screen.queryByText(/error/i)).toBeNull();
+    expect(screen.getByText("Diag Setup")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/gopls is unavailable\. install gopls/i)
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /show commands palette/i })).toBeEnabled();
+  });
+
+  it("shows neutral diagnostics label before any diagnostics check runs", () => {
+    renderStatusBar("idle");
+
+    expect(screen.getByText("Diag --")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/diagnostics have not been checked/i)
+    ).toBeInTheDocument();
   });
 });

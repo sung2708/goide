@@ -5,6 +5,7 @@ type StatusBarProps = {
   activeFilePath: string | null;
   mode: "quick-insight" | "deep-trace";
   runtimeAvailability: "available" | "unavailable" | "degraded";
+  diagnosticsAvailability: "available" | "unavailable" | "idle";
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
   isSummaryOpen: boolean;
@@ -20,6 +21,7 @@ function StatusBar({
   activeFilePath,
   mode,
   runtimeAvailability,
+  diagnosticsAvailability,
   saveStatus = "idle",
   runStatus = "idle",
   isSummaryOpen,
@@ -36,6 +38,12 @@ function StatusBar({
       : runtimeAvailability === "degraded"
         ? "Degraded"
         : "Static";
+  const diagnosticsLabel =
+    diagnosticsAvailability === "available"
+      ? "Diag OK"
+      : diagnosticsAvailability === "unavailable"
+        ? "Diag Setup"
+        : "Diag --";
 
   return (
     <footer className="glass-morphism relative z-50 flex h-8 items-center justify-between border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.86)] px-3 text-[10px] font-medium text-[var(--overlay1)]">
@@ -73,6 +81,26 @@ function StatusBar({
           >
             {runtimeLabel}
             <span className="sr-only">Runtime: {runtimeLabel}</span>
+          </span>
+          <span
+            title={
+              diagnosticsAvailability === "available"
+                ? "Diagnostics are available."
+                : diagnosticsAvailability === "unavailable"
+                  ? "gopls is unavailable. Install gopls to restore diagnostics."
+                  : "Diagnostics have not been checked for the current context yet."
+            }
+            className={cn(
+              "rounded-sm border px-2 py-0.5 font-semibold",
+              diagnosticsAvailability === "available"
+                ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
+                : diagnosticsAvailability === "unavailable"
+                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
+                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
+            )}
+          >
+            {diagnosticsLabel}
+            <span className="sr-only">Diagnostics: {diagnosticsLabel}</span>
           </span>
         </div>
 

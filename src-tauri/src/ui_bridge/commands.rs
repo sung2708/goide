@@ -10,8 +10,8 @@ use crate::ui_bridge::types::{
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
     ConcurrencyConstructKindDto, DeepTraceConstructKindDto, DiagnosticRangeDto,
-    DiagnosticSeverityDto, EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto,
-    RuntimeSignalDto,
+    DiagnosticSeverityDto, DiagnosticsResponseDto, DiagnosticsToolingAvailabilityDto,
+    EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto, RuntimeSignalDto,
 };
 use std::path::{Component, Path};
 use std::process::Command;
@@ -286,7 +286,7 @@ pub async fn analyze_active_file_concurrency(
 pub async fn get_active_file_diagnostics(
     workspace_root: String,
     relative_path: String,
-) -> ApiResponse<Vec<EditorDiagnosticDto>> {
+) -> ApiResponse<DiagnosticsResponseDto> {
     if let Err(message) = validate_go_diagnostics_path(&relative_path) {
         return ApiResponse::err("diagnostics_invalid_input", &message);
     }
@@ -297,8 +297,9 @@ pub async fn get_active_file_diagnostics(
     .await;
 
     match result {
-        Ok(Ok(diagnostics)) => {
-            let mapped = diagnostics
+        Ok(Ok(diagnostics_result)) => {
+            let mapped = diagnostics_result
+                .diagnostics
                 .into_iter()
                 .map(|item| EditorDiagnosticDto {
                     severity: match item.severity {
@@ -317,7 +318,18 @@ pub async fn get_active_file_diagnostics(
                     },
                 })
                 .collect();
-            ApiResponse::ok(mapped)
+            let tooling_availability = match diagnostics_result.tooling_availability {
+                gopls::DiagnosticsToolingAvailability::Available => {
+                    DiagnosticsToolingAvailabilityDto::Available
+                }
+                gopls::DiagnosticsToolingAvailability::Unavailable => {
+                    DiagnosticsToolingAvailabilityDto::Unavailable
+                }
+            };
+            ApiResponse::ok(DiagnosticsResponseDto {
+                diagnostics: mapped,
+                tooling_availability,
+            })
         }
         Ok(Err(error)) => ApiResponse::err("diagnostics_failed", &error.to_string()),
         Err(error) => ApiResponse::err("diagnostics_failed", &error.to_string()),

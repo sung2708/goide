@@ -99,6 +99,13 @@ export type EditorDiagnostic = {
   range: EditorDiagnosticRange;
 };
 
+export type DiagnosticsToolingAvailability = "available" | "unavailable";
+
+export type DiagnosticsResponse = {
+  diagnostics: EditorDiagnostic[];
+  toolingAvailability: DiagnosticsToolingAvailability;
+};
+
 export type DeepTraceConstructKind =
   | "channel"
   | "select"
