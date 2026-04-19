@@ -3,7 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import StatusBar from "./StatusBar";
 
 function renderStatusBar(
-  diagnosticsAvailability: "available" | "unavailable" | "idle" = "available"
+  diagnosticsAvailability: "available" | "unavailable" | "idle" = "available",
+  completionAvailability: "available" | "degraded" | "idle" = "idle"
 ) {
   return render(
     <StatusBar
@@ -12,6 +13,7 @@ function renderStatusBar(
       mode="quick-insight"
       runtimeAvailability="available"
       diagnosticsAvailability={diagnosticsAvailability}
+      completionAvailability={completionAvailability}
       saveStatus="idle"
       runStatus="idle"
       isSummaryOpen={false}
@@ -47,6 +49,35 @@ describe("StatusBar diagnostics availability", () => {
     expect(screen.getByText("Diag --")).toBeInTheDocument();
     expect(
       screen.getByTitle(/diagnostics have not been checked/i)
+    ).toBeInTheDocument();
+  });
+});
+
+describe("StatusBar completion availability", () => {
+  it("shows completion healthy label when completion requests succeed", () => {
+    renderStatusBar("available", "available");
+
+    expect(screen.getByText("Comp OK")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/completion requests are healthy/i)
+    ).toBeInTheDocument();
+  });
+
+  it("shows low-noise retry label when completion requests fail", () => {
+    renderStatusBar("available", "degraded");
+
+    expect(screen.getByText("Comp Retry")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/completion backend is unavailable/i)
+    ).toBeInTheDocument();
+  });
+
+  it("shows neutral completion label before any completion checks", () => {
+    renderStatusBar("available", "idle");
+
+    expect(screen.getByText("Comp --")).toBeInTheDocument();
+    expect(
+      screen.getByTitle(/completion has not been checked/i)
     ).toBeInTheDocument();
   });
 });
