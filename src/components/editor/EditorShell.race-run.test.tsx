@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 15000 });
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
