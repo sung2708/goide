@@ -1,8 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-
-vi.setConfig({ testTimeout: 15000 });
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
@@ -189,7 +187,7 @@ describe("EditorShell race run", () => {
       expect(screen.getByText("Race Detector")).toBeInTheDocument();
       expect(screen.getAllByText("Race CLI").length).toBeGreaterThan(0);
     });
-  });
+  }, 15000);
 
   it("surfaces confirmed race signal on selected line without a predicted hint", async () => {
     const user = userEvent.setup();

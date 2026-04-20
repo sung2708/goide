@@ -1,6 +1,6 @@
 [package]
 name = "goide"
-version = "1.0.1"
+version = "1.0.2"
 description = "A desktop IDE for Go editing, runtime inspection, and concurrency workflows"
 authors = ["sung2708"]
 license = "MIT"

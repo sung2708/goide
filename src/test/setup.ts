@@ -1,7 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { cleanup } from "@testing-library/react";
-import { vi } from "vitest";
-import { afterEach } from "vitest";
+import { afterEach, vi } from "vitest";
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: vi.fn(async () => () => {}),
@@ -26,4 +25,5 @@ if (!document.fonts) {
 
 afterEach(() => {
   cleanup();
+  vi.clearAllMocks();
 });

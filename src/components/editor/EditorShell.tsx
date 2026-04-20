@@ -67,6 +67,8 @@ import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 
+const DEBUG_UI_ENABLED = false;
+
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
   select: "Select Stmt",
@@ -475,6 +477,8 @@ function EditorShell() {
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
   const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const diagnosticPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -525,11 +529,20 @@ function EditorShell() {
     };
   }, []);
 
-  // Clear the auto-dismiss timer on unmount to prevent setState on unmounted component
+  // Clear editor timers on unmount to prevent setState on unmounted component
   useEffect(() => {
     return () => {
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
+      }
+      if (diagnosticDebounceRef.current !== null) {
+        clearTimeout(diagnosticDebounceRef.current);
+      }
+      if (diagnosticPollRef.current !== null) {
+        clearTimeout(diagnosticPollRef.current);
+      }
+      if (autoSaveDebounceRef.current !== null) {
+        clearTimeout(autoSaveDebounceRef.current);
       }
     };
   }, []);
@@ -848,6 +861,11 @@ function EditorShell() {
           return;
         }
 
+        if (diagnosticPollRef.current !== null) {
+          clearTimeout(diagnosticPollRef.current);
+          diagnosticPollRef.current = null;
+        }
+
         if (diagnosticsResponse.ok && diagnosticsResponse.data) {
           setDiagnostics(diagnosticsResponse.data.diagnostics);
           setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
@@ -861,6 +879,16 @@ function EditorShell() {
             ...prev,
             [diagnosticFilePath]: { hasErrors, hasWarnings },
           }));
+          if (hasErrors) {
+            diagnosticPollRef.current = setTimeout(() => {
+              if (
+                workspacePathRef.current === diagnosticWorkspacePath &&
+                activeFilePathRef.current === diagnosticFilePath
+              ) {
+                void refreshDiagnosticsForFile(diagnosticWorkspacePath, diagnosticFilePath);
+              }
+            }, 1200);
+          }
         } else {
           setDiagnostics([]);
           // Generic diagnostics errors are not equivalent to missing tooling.
@@ -1456,6 +1484,7 @@ function EditorShell() {
   }, [handleRunFile]);
 
   const handleStartDebug = useCallback(() => {
+    if (!DEBUG_UI_ENABLED) return;
     if (runStatus === "running") return;
     if (!workspacePath || !activeFilePath) return;
 
@@ -1635,8 +1664,8 @@ function EditorShell() {
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const canStartDebug = Boolean(workspacePath && isGoFile(activeFilePath));
-      const isDebugRunning = runMode === "debug" && runStatus === "running";
+      const canStartDebug = DEBUG_UI_ENABLED && Boolean(workspacePath && isGoFile(activeFilePath));
+      const isDebugRunning = DEBUG_UI_ENABLED && runMode === "debug" && runStatus === "running";
 
       if (e.key === "F9" && activeFilePath && selectedLine) {
         e.preventDefault();
@@ -1668,11 +1697,6 @@ function EditorShell() {
         return;
       }
 
-      if (e.key === "Escape" && activeTab === "debug") {
-        e.preventDefault();
-        setActiveTab("explorer");
-        return;
-      }
 
       if (!isDebugRunning || !debuggerState?.paused) {
         return;
@@ -1794,12 +1818,25 @@ function EditorShell() {
     if (diagnosticDebounceRef.current) {
       clearTimeout(diagnosticDebounceRef.current);
     }
+    if (diagnosticPollRef.current) {
+      clearTimeout(diagnosticPollRef.current);
+      diagnosticPollRef.current = null;
+    }
     diagnosticDebounceRef.current = setTimeout(() => {
       if (workspacePath && activeFilePath) {
         void refreshDiagnosticsForFile(workspacePath, activeFilePath);
       }
     }, 1000);
-  }, [workspacePath, activeFilePath, refreshDiagnosticsForFile]);
+
+    if (autoSaveDebounceRef.current) {
+      clearTimeout(autoSaveDebounceRef.current);
+    }
+    autoSaveDebounceRef.current = setTimeout(() => {
+      if (workspacePathRef.current && activeFilePathRef.current) {
+        void persistActiveFileContent(value);
+      }
+    }, 5000);
+  }, [refreshDiagnosticsForFile, persistActiveFileContent]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -2066,7 +2103,7 @@ function EditorShell() {
               error={runtimeTopologyError}
             />
           )}
-          {activeTab === "debug" && (
+          {DEBUG_UI_ENABLED && (
             <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
@@ -2205,70 +2242,6 @@ function EditorShell() {
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                       {runStatus === "running" ? "Running..." : "Run"}
                     </button>
-                  )}
-                  {isGoFile(activeFilePath) && (
-                    <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[12px] font-semibold transition-colors duration-100 ${
-                        runStatus === "running" && runMode !== "debug"
-                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
-                      }`}
-                      onClick={handleStartDebug}
-                      type="button"
-                      aria-label="Debug active Go file"
-                      title="Start a debugging session."
-                      disabled={runStatus === "running" && runMode !== "debug"}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4h4"/><path d="M9 6h6l1 3v8a3 3 0 0 1-3 3h-2a3 3 0 0 1-3-3V9z"/><path d="M6 10h2"/><path d="M16 10h2"/></svg>
-                      {runStatus === "running" && runMode === "debug" ? "Debugging..." : "Debug"}
-                    </button>
-                  )}
-                  {runStatus === "running" && runMode === "debug" && debuggerState && (
-                    <div className="flex items-center gap-1 border-l border-[var(--border-subtle)] pl-2 ml-1">
-                      <button
-                        className="flex items-center p-1.5 rounded text-[var(--red)] hover:bg-[rgba(231,130,132,0.15)]"
-                        title="Stop (Shift+F5)"
-                        onClick={() => void handleStopDebug()}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"/></svg>
-                      </button>
-                      <button
-                        className="flex items-center p-1.5 rounded text-[var(--blue)] hover:bg-[rgba(140,170,238,0.15)] disabled:opacity-50"
-                        title={debuggerState.paused ? "Continue (F5)" : "Pause (F5)"}
-                        onClick={() => debuggerState.paused ? void debuggerContinue() : void debuggerPause()}
-                      >
-                        {debuggerState.paused ? (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                        ) : (
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
-                        )}
-                      </button>
-                      {debuggerState.paused && (
-                        <>
-                          <button
-                            className="flex items-center p-1.5 rounded text-[var(--teal)] hover:bg-[rgba(129,200,190,0.15)]"
-                            title="Step Over (F10)"
-                            onClick={() => void debuggerStepOver()}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18v-6a3 3 0 0 1 3-3h9"/><path d="M17 5l4 4-4 4"/></svg>
-                          </button>
-                          <button
-                            className="flex items-center p-1.5 rounded text-[var(--yellow)] hover:bg-[rgba(229,200,144,0.15)]"
-                            title="Step Into (F11)"
-                            onClick={() => void debuggerStepInto()}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
-                          </button>
-                          <button
-                            className="flex items-center p-1.5 rounded text-[var(--peach)] hover:bg-[rgba(239,159,118,0.15)]"
-                            title="Step Out (Shift+F11)"
-                            onClick={() => void debuggerStepOut()}
-                          >
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
-                          </button>
-                        </>
-                      )}
-                    </div>
                   )}
                   {isGoFile(activeFilePath) && runMode !== "debug" && (
                     <button

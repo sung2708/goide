@@ -23,9 +23,11 @@ import {
 } from "@codemirror/commands";
 import {
   closeSearchPanel,
+  findNext,
   openSearchPanel,
   search,
   searchKeymap,
+  searchPanelOpen,
 } from "@codemirror/search";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import {
@@ -857,6 +859,9 @@ function CodeEditor({
       {
         key: "Enter",
         run: (view) => {
+          if (searchPanelOpen(view.state)) {
+            return findNext(view);
+          }
           if (isPackageContextAtSelection(view)) {
             return false;
           }
