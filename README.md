@@ -1,94 +1,80 @@
-# GoIDE
+# goide
 
-GoIDE is a desktop IDE for Go focused on concurrency-aware development. It combines a familiar editor, workspace explorer, inline diagnostics, completions, terminal output, and Go-specific concurrency signals in one installable Tauri app.
+`goide` is a Tauri desktop IDE focused on Go editing, concurrency analysis, runtime inspection, race-detector workflows, and lightweight debugger controls.
 
-## Download
+## Core capabilities
 
-Download the latest Windows installer from the GitHub Releases page.
+- Open a local workspace and browse files in an IDE-style explorer
+- Edit Go source with CodeMirror-based syntax highlighting
+- Run active Go files and stream stdout/stderr into the terminal panel
+- Run with `-race` and surface race-detector findings in the editor
+- Show diagnostics and completions through `gopls`
+- Start a Delve-backed runtime session for breakpoints, pause/continue/step, and sampled runtime observations
 
-For v1.0.0, use one of these artifacts:
+## Required local tooling
 
-- `goide_1.0.0_x64_en-US.msi`
-- `goide_1.0.0_x64-setup.exe`
+For the full IDE experience, these commands must be available on `PATH`:
 
-Install GoIDE, open the app, then choose a Go workspace folder.
+- `go` for running active Go files
+- `gopls` for diagnostics, completions, and symbol enrichment
+- `dlv` for runtime sessions and breakpoint control
 
-## Features
+The app runs a toolchain preflight and surfaces missing tools in the status bar and editor shell.
 
-- Open and browse Go workspaces.
-- Edit Go files with syntax highlighting and editor snippets.
-- Save files directly from the editor.
-- Run the active Go file.
-- Run the active Go file with the Go race detector.
-- View run output in the built-in terminal panel.
-- Receive diagnostics and completions through `gopls`.
-- See concurrency signals for goroutines, channels, mutexes, wait groups, blocking operations, and related counterpart lines.
-- Use Deep Trace runtime sampling through Delve when available.
-- See startup toolchain status for `go`, `gopls`, and `dlv`.
+## Runtime behavior notes
 
-## Requirements
+### Runtime signal timeout
 
-GoIDE works best when these commands are available on `PATH`:
+Runtime polling timeout can be configured with:
 
-- `go` for running Go files.
-- `gopls` for diagnostics, completions, and symbol enrichment.
-- `dlv` for Deep Trace runtime sampling.
+- `VITE_RUNTIME_SIGNAL_TIMEOUT_MS`
 
-Install the Go tools with:
+Behavior:
 
-```powershell
-go install golang.org/x/tools/gopls@latest
-go install github.com/go-delve/delve/cmd/dlv@latest
-```
+- Default: `450` ms
+- Accepted range: `100` to `5000` ms
+- Out-of-range or non-numeric values fall back to the default
 
-The app runs a startup preflight check and surfaces missing tools in the status bar.
+### Product honesty notes
 
-## Current Analysis Engine
+- Runtime topology is built from sampled/inferred runtime observations, not a full causality graph
+- Race-detector findings come from `go run -race` output and are labeled separately from runtime-sampled observations
+- Runtime sessions depend on local Delve availability and may degrade when the debugger backend is unavailable
 
-GoIDE v1.0.0 currently uses:
+## Build and verification
 
-- CodeMirror Lezer for frontend Go syntax highlighting.
-- A lightweight Rust tokenizer for static concurrency markers.
-- `gopls` for diagnostics, completions, and symbol enrichment.
-- Delve (`dlv`) for runtime Deep Trace sampling.
+### Frontend
 
-Tree-sitter is not integrated in v1.0.0.
-
-## Build From Source
-
-Install dependencies:
-
-```powershell
-npm install
-```
-
-Run tests:
-
-```powershell
+```bash
 npm test
+npm run build
+```
+
+### Rust / Tauri backend
+
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml
 cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build
 ```
 
-Build the desktop app:
+## Windows build note
+
+On Windows, `cargo build`, `cargo test`, or `npm run tauri build` can fail if Git's `usr/bin/link.exe` or a Zig compiler override is picked up instead of the MSVC toolchain. If that happens, rerun from an MSVC-configured shell and force `cl` for both C and C++:
 
 ```powershell
-npm run tauri -- build
-```
-
-Release artifacts are generated under:
-
-```text
-src-tauri/target/release/bundle/
-```
-
-On Windows, if the Rust build picks the wrong C/C++ compiler, open a Visual Studio Developer PowerShell or run:
-
-```powershell
+cmd /c ""C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && powershell"
 $env:CC="cl"
 $env:CXX="cl"
-npm run tauri -- build
+$env:HOST_CC="cl"
+$env:HOST_CXX="cl"
+cargo build --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build
 ```
 
-## License
+## Recommended IDE setup for contributors
 
-MIT
+- [VS Code](https://code.visualstudio.com/)
+- [Tauri VS Code extension](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
+- [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

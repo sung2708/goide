@@ -39,7 +39,7 @@ describe("BottomPanel", () => {
     await user.click(screen.getAllByRole("button", { name: /^clear$/i })[1]);
 
     expect(screen.queryByText("line 1")).toBeNull();
-    expect(screen.getByText(/Unit idle\. Standby for output\./i)).toBeInTheDocument();
+    expect(screen.getByText(/No run output yet/i)).toBeInTheDocument();
   });
 
   it("closes the clear confirmation without clearing output", async () => {

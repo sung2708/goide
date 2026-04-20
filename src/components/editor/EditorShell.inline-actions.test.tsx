@@ -989,7 +989,7 @@ describe("EditorShell inline actions", () => {
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
 
     await waitFor(() => {
-      expect(screen.getByText(/Runtime: Degraded/i)).toBeInTheDocument();
+      expect(screen.getByText(/Runtime: Runtime Retry/i)).toBeInTheDocument();
       expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
       expect(
         screen.queryByTestId("trace-bubble-blocked-indicator")
@@ -999,7 +999,7 @@ describe("EditorShell inline actions", () => {
     await waitFor(
       () => {
         expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
-        expect(screen.getByText(/Runtime: Active/i)).toBeInTheDocument();
+        expect(screen.getByText(/Runtime: Runtime OK/i)).toBeInTheDocument();
       },
       { timeout: 2500 }
     );

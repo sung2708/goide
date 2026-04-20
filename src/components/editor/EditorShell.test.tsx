@@ -1,21 +1,16 @@
 import {
-  cleanup,
   fireEvent,
   render,
   screen,
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn().mockResolvedValue(null),
 }));
-
-afterEach(() => {
-  cleanup();
-});
 
 describe("EditorShell panels", () => {
   it("keeps optional panels hidden by default and toggles them on demand", async () => {
@@ -46,7 +41,14 @@ describe("EditorShell panels", () => {
     render(<EditorShell />);
 
     expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
-    expect(screen.getByText(/Runtime: Static/i)).toBeInTheDocument();
+    expect(screen.getByText(/Runtime: Runtime Off/i)).toBeInTheDocument();
+  });
+
+  it("surfaces missing toolchain state in the status bar instead of a top warning banner", async () => {
+    render(<EditorShell />);
+
+    expect(await screen.findByText("Tools Setup")).toBeInTheDocument();
+    expect(screen.queryByText(/toolchain issues detected/i)).toBeNull();
   });
 
   it("opens command palette from the status bar control", async () => {
@@ -54,7 +56,7 @@ describe("EditorShell panels", () => {
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
+    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
 
     expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
   });
@@ -66,7 +68,7 @@ describe("EditorShell panels", () => {
     document.body.appendChild(fauxEditor);
     fauxEditor.focus();
 
-    fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
+    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
 
     expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
 
@@ -86,7 +88,7 @@ describe("EditorShell panels", () => {
       const summaryTrigger = screen.getByRole("button", { name: /summary/i });
       summaryTrigger.focus();
 
-      fireEvent.click(screen.getByRole("button", { name: /show commands palette/i }));
+      fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
       expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
 
       fireEvent.click(screen.getByRole("button", { name: /^close$/i }));

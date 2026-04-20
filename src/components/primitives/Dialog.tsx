@@ -32,22 +32,40 @@ function Dialog({
   closeOnBackdrop = true,
   children,
 }: DialogProps) {
-  const dialogRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDialogElement>(null);
 
   useEffect(() => {
-    if (!open) {
+    const dialog = dialogRef.current;
+    if (!dialog) {
       return;
     }
 
-    const handleKeyDown = (event: KeyboardEvent) => {
+    if (!open) {
+      if (dialog.open) {
+        dialog.close();
+      } else {
+        dialog.removeAttribute("open");
+      }
+      return;
+    }
+
+    if (dialog.open) {
+      return;
+    }
+
+    if (typeof dialog.showModal === "function") {
+      dialog.showModal();
+      return;
+    }
+
+    dialog.setAttribute("open", "");
+    const handleFallbackKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        event.preventDefault();
         onOpenChange(false);
       }
     };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleFallbackKeyDown);
+    return () => window.removeEventListener("keydown", handleFallbackKeyDown);
   }, [onOpenChange, open]);
 
   if (!open) {
@@ -55,17 +73,19 @@ function Dialog({
   }
 
   return createPortal(
-    <div
+    <dialog
       ref={dialogRef}
       id={id}
       data-testid={dataTestId}
       role={role}
-      aria-modal="true"
       aria-label={ariaLabel}
       aria-labelledby={ariaLabelledBy}
       style={style}
       className={className}
       tabIndex={-1}
+      onCancel={() => {
+        onOpenChange(false);
+      }}
       onClick={(event) => {
         if (!closeOnBackdrop) {
           return;
@@ -76,7 +96,7 @@ function Dialog({
       }}
     >
       <div className={panelClassName}>{children}</div>
-    </div>,
+    </dialog>,
     document.body
   );
 }

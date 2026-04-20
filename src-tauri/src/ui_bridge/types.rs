@@ -120,6 +120,13 @@ pub struct ActivateDeepTraceResponseDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct StartDebugSessionRequestDto {
+    pub workspace_root: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
 }
@@ -161,6 +168,96 @@ pub struct RuntimeSignalDto {
     pub counterpart_line: Option<usize>,
     pub counterpart_column: Option<usize>,
     pub counterpart_confidence: Option<ConcurrencyConfidenceDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimePanelSnapshotDto {
+    pub session_active: bool,
+    pub signal_count: usize,
+    pub blocked_count: usize,
+    pub goroutine_count: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTopologyInteractionDto {
+    pub thread_id: i64,
+    pub kind: String,
+    pub wait_reason: String,
+    pub source: String,
+    pub target: Option<String>,
+    pub confidence: ConcurrencyConfidenceDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeTopologySnapshotDto {
+    pub session_active: bool,
+    pub interactions: Vec<RuntimeTopologyInteractionDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebuggerBreakpointDto {
+    pub relative_path: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebuggerStateDto {
+    pub session_active: bool,
+    pub paused: bool,
+    pub active_relative_path: Option<String>,
+    pub active_line: Option<usize>,
+    pub active_column: Option<usize>,
+    pub breakpoints: Vec<DebuggerBreakpointDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleBreakpointRequestDto {
+    pub relative_path: String,
+    pub line: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearchMatchDto {
+    pub line: usize,
+    pub preview: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearchFileDto {
+    pub relative_path: String,
+    pub matches: Vec<WorkspaceSearchMatchDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitChangedFileDto {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitCommitDto {
+    pub hash: String,
+    pub author: String,
+    pub relative_time: String,
+    pub subject: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitSnapshotDto {
+    pub branch: String,
+    pub changed_files: Vec<WorkspaceGitChangedFileDto>,
+    pub commits: Vec<WorkspaceGitCommitDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
