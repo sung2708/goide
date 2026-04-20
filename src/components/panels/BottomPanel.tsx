@@ -104,7 +104,7 @@ function BottomPanel({
       >
         {output.length === 0 ? (
           <div className="flex h-full items-center justify-center text-[13px] italic text-[var(--overlay0)]">
-            Waiting for output…
+            No run output yet.
           </div>
         ) : (
           <div className="space-y-0.5">

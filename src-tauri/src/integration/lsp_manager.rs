@@ -9,7 +9,7 @@ use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub struct LspSession {
-    pub child: Child,
+    pub _child: Child,
     pub stdin: ChildStdin,
     pub rx: mpsc::Receiver<Value>,
     pub workspace_root: PathBuf,
@@ -56,7 +56,7 @@ pub fn start_new_lsp_session<'a>(
     });
 
     let mut new_session = LspSession {
-        child,
+        _child: child,
         stdin,
         rx,
         workspace_root: workspace_root.to_path_buf(),

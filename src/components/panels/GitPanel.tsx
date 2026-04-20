@@ -21,7 +21,7 @@ function GitPanel({ loading = false, snapshot, error = null }: GitPanelProps) {
       </div>
       <div className="flex-1 overflow-auto p-2">
         {loading && <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Loading Git...</p>}
-        {error && <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Git is unavailable for this folder.</p>}
+        {error && <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Git data is unavailable for this folder.</p>}
         {snapshot && !isGitUnavailable && (
           <>
             <div className="mb-3">

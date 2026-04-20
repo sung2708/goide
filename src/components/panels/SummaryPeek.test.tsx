@@ -9,7 +9,7 @@ describe("SummaryPeek", () => {
     render(<SummaryPeek items={[]} />);
 
     expect(
-      screen.getByText(/No concurrency signals detected in current scope\./i)
+      screen.getByText(/No concurrency signals detected in the current file\./i)
     ).toBeInTheDocument();
   });
 

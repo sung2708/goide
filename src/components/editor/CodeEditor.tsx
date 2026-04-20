@@ -1054,6 +1054,37 @@ function CodeEditor({
 
   useEffect(() => {
     const view = viewRef.current;
+    const container = containerRef.current;
+    if (!view || !container) {
+      return;
+    }
+
+    const requestMeasure = () => {
+      view.requestMeasure();
+      emitViewportRange(view);
+    };
+
+    requestMeasure();
+
+    const resizeObserver = new ResizeObserver(() => {
+      requestMeasure();
+    });
+    resizeObserver.observe(container);
+
+    const fonts = document.fonts;
+    void fonts.ready.then(() => {
+      if (viewRef.current === view) {
+        requestMeasure();
+      }
+    });
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
     if (!view || jumpRequest === null) {
       return;
     }
@@ -1141,7 +1172,25 @@ function CodeEditor({
   return (
     <div
       ref={containerRef}
-      className="h-full w-full"
+      className="h-full min-h-0 w-full"
+      onWheel={(event) => {
+        const view = viewRef.current;
+        if (!view || event.ctrlKey) {
+          return;
+        }
+
+        if (event.deltaX === 0 && event.deltaY === 0) {
+          return;
+        }
+
+        view.scrollDOM.scrollBy({
+          left: event.deltaX,
+          top: event.deltaY,
+          behavior: "auto",
+        });
+        emitViewportRange(view);
+        event.preventDefault();
+      }}
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1237,13 +1286,16 @@ function CodeEditor({
     >
       <CodeMirror
         value={value}
+        className="h-full min-h-0"
         height="100%"
+        minHeight="100%"
         width="100%"
         theme="dark"
         basicSetup={false}
         extensions={extensions}
         onCreateEditor={(view) => {
           viewRef.current = view;
+          view.requestMeasure();
           emitViewportRange(view);
         }}
         editable={editable}

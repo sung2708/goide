@@ -1,4 +1,4 @@
-import { fireEvent, render } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
@@ -16,6 +16,10 @@ const mockView = {
   },
   dispatch: vi.fn(),
   focus: vi.fn(),
+  requestMeasure: vi.fn(),
+  scrollDOM: {
+    scrollBy: vi.fn(),
+  },
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
       return 5;
@@ -139,7 +143,7 @@ vi.mock("@codemirror/view", async () => {
 vi.mock("@uiw/react-codemirror", () => ({
   default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
     onCreateEditor?.(mockView);
-    return <div data-testid="mock-codemirror" />;
+    return <div data-testid="mock-codemirror" className="cm-editor" />;
   },
 }));
 
@@ -151,7 +155,32 @@ describe("CodeEditor", () => {
     nextSnippetFieldMock.mockReturnValue(true);
     prevSnippetFieldMock.mockReturnValue(true);
     acceptCompletionMock.mockReturnValue(false);
+    mockView.requestMeasure.mockClear();
+    mockView.scrollDOM.scrollBy.mockClear();
     latestKeyBindings = [];
+  });
+
+  it("keeps the editor host clipped inside the available viewport", () => {
+    const { container } = render(<CodeEditor value={"package main\n"} />);
+
+    expect(container.firstChild).toHaveClass("h-full", "min-h-0", "w-full");
+    expect(container.firstChild).not.toHaveClass("overflow-hidden");
+    expect(screen.getByTestId("mock-codemirror")).toBeInTheDocument();
+  });
+
+  it("forwards mouse wheel scrolling to the CodeMirror scroll container", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    fireEvent.wheel(screen.getByTestId("mock-codemirror").parentElement as HTMLElement, {
+      deltaX: 4,
+      deltaY: 36,
+    });
+
+    expect(mockView.scrollDOM.scrollBy).toHaveBeenCalledWith({
+      left: 4,
+      top: 36,
+      behavior: "auto",
+    });
   });
 
   it("uses Tab to move snippet placeholders before completion acceptance", () => {

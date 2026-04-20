@@ -57,7 +57,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signa
         icon={<FontAwesomeIcon icon={byPrefixAndName.fas['share-nodes']} />} 
         active={activeTab === "concurrency"} 
         onClick={() => onTabChange("concurrency")} 
-        title="Concurrency Lens"
+        title="Concurrency Signals"
         badge={signalCount > 0 ? signalCount : undefined}
       />
       <div className="mt-auto">
@@ -65,7 +65,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signa
           icon={<FontAwesomeIcon icon={byPrefixAndName.fas['bug']} />} 
           active={activeTab === "debug"} 
           onClick={() => onTabChange("debug")} 
-          title="Debug"
+          title="Runtime Debug"
         />
       </div>
     </div>

@@ -36,12 +36,14 @@ const editorTheme = EditorView.theme(
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
       fontSize: "13px",
       lineHeight: "1.62",
+      padding: "8px 0",
     },
     ".cm-content": {
-      padding: "8px 0",
+      padding: "0",
     },
     ".cm-line": {
       padding: "0 10px",
+      boxSizing: "border-box",
     },
     [`.cm-line.${PREDICTED_HINT_UNDERLINE_CLASS}`]: {
       textDecorationLine: "underline",
@@ -76,18 +78,20 @@ const editorTheme = EditorView.theme(
       backgroundColor: "var(--crust) !important",
       color: "var(--overlay0)",
       borderRight: "1px solid var(--border-subtle)",
-      padding: "8px 0",
+      padding: "0",
+    },
+    ".cm-lineNumbers": {
+      minWidth: "48px",
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
-      fontSize: "11px",
-      lineHeight: "calc(13px * 1.62)",
-      display: "flex",
-      alignItems: "flex-start",
-      justifyContent: "flex-end",
+      fontSize: "13px",
+      lineHeight: "1.62",
+      textAlign: "right",
+      fontVariantNumeric: "tabular-nums",
+      boxSizing: "border-box",
     },
     ".cm-gutterElement": {
-      minHeight: "calc(13px * 1.62)",
       boxSizing: "border-box",
     },
     ".cm-breakpoint-gutter": {
@@ -95,9 +99,11 @@ const editorTheme = EditorView.theme(
     },
     ".cm-breakpoint-gutter .cm-gutterElement": {
       padding: "0",
+      minHeight: "calc(13px * 1.62)",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
+      boxSizing: "border-box",
     },
     ".goide-breakpoint-marker": {
       display: "block",

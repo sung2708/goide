@@ -26,6 +26,7 @@ import {
   debuggerStepInto,
   debuggerStepOut,
   debuggerToggleBreakpoint,
+  startDebugSession,
   searchWorkspaceText,
 } from "../../lib/ipc/client";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
@@ -82,9 +83,15 @@ const BLOCKED_WAIT_REASONS = [
 ];
 const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
 const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
+const ACTIVE_DEBUG_POLL_INTERVAL_MS = 600;
+const DEBUG_POLL_BACKOFF_STEP_MS = 900;
+const DEBUG_POLL_MAX_INTERVAL_MS = 5000;
 type RunMode = "standard" | "race" | "debug";
 type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
 type CompletionIndicatorState = "available" | "degraded" | "idle";
+type RaceFinding = RuntimeSignal & {
+  source: "race-detector";
+};
 
 type FileDiagnosticsSummary = {
   hasErrors: boolean;
@@ -119,6 +126,13 @@ function resolveRuntimeSignalTimeoutMs(): number {
     return DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS;
   }
   return Math.round(parsed);
+}
+
+function nextPollingDelay(failureCount: number): number {
+  return Math.min(
+    ACTIVE_DEBUG_POLL_INTERVAL_MS + failureCount * DEBUG_POLL_BACKOFF_STEP_MS,
+    DEBUG_POLL_MAX_INTERVAL_MS
+  );
 }
 
 function normalizeRelativePath(path: string): string {
@@ -354,7 +368,7 @@ function extractGoFileLineReferences(text: string): Array<{
   return refs;
 }
 
-function toRaceRuntimeSignals(relativePath: string, lines: number[]): RuntimeSignal[] {
+function toRaceFindings(relativePath: string, lines: number[]): RaceFinding[] {
   return lines.map((line, index) => ({
     threadId: index + 1,
     status: "data race",
@@ -367,6 +381,7 @@ function toRaceRuntimeSignals(relativePath: string, lines: number[]): RuntimeSig
     relativePath,
     line,
     column: 1,
+    source: "race-detector",
   }));
 }
 
@@ -393,7 +408,7 @@ function EditorShell() {
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [runMode, setRunMode] = useState<RunMode>("standard");
-  const [raceSignals, setRaceSignals] = useState<RuntimeSignal[]>([]);
+  const [raceSignals, setRaceSignals] = useState<RaceFinding[]>([]);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [diagnosticsByFile, setDiagnosticsByFile] = useState<
     Record<string, FileDiagnosticsSummary>
@@ -743,6 +758,16 @@ function EditorShell() {
     }
 
     let isCancelled = false;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const scheduleNextPoll = () => {
+      if (isCancelled) {
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        void pollRuntimeTopology();
+      }, nextPollingDelay(failureCount));
+    };
     const pollRuntimeTopology = async () => {
       if (isCancelled) {
         return;
@@ -762,17 +787,20 @@ function EditorShell() {
         if (topologyResponse.ok && topologyResponse.data) {
           setRuntimeTopologySnapshot(topologyResponse.data);
           setRuntimeTopologyError(null);
+          failureCount = 0;
         } else {
+          failureCount += 1;
           setRuntimeTopologyError(topologyResponse.error?.message ?? "Topology unavailable");
         }
       } catch (_error) {
         if (!isCancelled) {
+          failureCount += 1;
           setRuntimeTopologyError("Topology unavailable");
         }
       } finally {
         if (!isCancelled) {
           setRuntimeTopologyLoading(false);
-          setTimeout(pollRuntimeTopology, 600);
+          scheduleNextPoll();
         }
       }
     };
@@ -781,6 +809,9 @@ function EditorShell() {
 
     return () => {
       isCancelled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
     };
   }, [runMode, runStatus]);
 
@@ -1086,7 +1117,16 @@ function EditorShell() {
 
     const scopeSnapshot = deepTraceScope;
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        void pollRuntimeSignals();
+      }, nextPollingDelay(failureCount));
+    };
 
     const pollRuntimeSignals = async () => {
       if (
@@ -1147,10 +1187,12 @@ function EditorShell() {
         }
 
         if (!response.ok || !response.data) {
+          failureCount += 1;
           markRuntimeDegraded();
           return;
         }
 
+        failureCount = 0;
         markRuntimeAvailable();
         const blockedCandidates =
           response.data.filter(
@@ -1170,24 +1212,25 @@ function EditorShell() {
           workspacePathRef.current === scopeSnapshot.workspacePath &&
           activeFilePathRef.current === scopeSnapshot.filePath
         ) {
+          failureCount += 1;
           markRuntimeDegraded();
         }
       } finally {
         releaseInFlight();
+        if (!cancelled) {
+          scheduleNextPoll();
+        }
       }
     };
 
     void pollRuntimeSignals();
-    intervalId = setInterval(() => {
-      void pollRuntimeSignals();
-    }, 600);
 
     return () => {
       cancelled = true;
       runtimeSignalInFlightRef.current = false;
       runtimeSignalPendingRequestCountRef.current = 0;
-      if (intervalId !== null) {
-        clearInterval(intervalId);
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
       }
     };
   }, [
@@ -1422,25 +1465,17 @@ function EditorShell() {
     setRunOutput([]);
     activeRunIdRef.current = "debug-" + Date.now();
 
-    void activateScopedDeepTrace({
+    void startDebugSession({
       workspaceRoot: workspacePath,
       relativePath: activeFilePath,
-      line: 1,
-      column: 1,
-      constructKind: "channel",
-      symbol: "debug_session",
-      counterpartRelativePath: null,
-      counterpartLine: null,
-      counterpartColumn: null,
-      counterpartConfidence: null,
     }).then((res) => {
       if (!res.ok) {
         setRunStatus("error");
-        setRunOutput([{ runId: activeRunIdRef.current!, line: `Debugger failed to start: ${res.error?.message}`, stream: "stderr" }]);
+        setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session failed to start: ${res.error?.message}`, stream: "stderr" }]);
       }
     }).catch(err => {
       setRunStatus("error");
-      setRunOutput([{ runId: activeRunIdRef.current!, line: `Debugger error: ${err}`, stream: "stderr" }]);
+      setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session error: ${err}`, stream: "stderr" }]);
     });
   }, [runStatus, workspacePath, activeFilePath]);
 
@@ -1457,26 +1492,55 @@ function EditorShell() {
   }, []);
 
   useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | null = null;
+    let cancelled = false;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
     if (runStatus === "running" && runMode === "debug") {
-      interval = setInterval(async () => {
-        const state = await getDebuggerState();
-        if (state.ok && state.data) {
-          setDebuggerState(state.data);
-          setBreakpoints(
-            activeFilePath
-              ? state.data.breakpoints
-                  .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
-                  .map((breakpoint) => breakpoint.line)
-              : [],
-          );
+      const scheduleNextPoll = () => {
+        if (cancelled) {
+          return;
         }
-      }, 500);
+        timeoutId = setTimeout(() => {
+          void pollDebuggerState();
+        }, nextPollingDelay(failureCount));
+      };
+      const pollDebuggerState = async () => {
+        try {
+          const state = await getDebuggerState();
+          if (cancelled) {
+            return;
+          }
+          if (state.ok && state.data) {
+            failureCount = 0;
+            setDebuggerState(state.data);
+            setBreakpoints(
+              activeFilePath
+                ? state.data.breakpoints
+                    .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
+                    .map((breakpoint) => breakpoint.line)
+                : [],
+            );
+          } else {
+            failureCount += 1;
+          }
+        } catch (_error) {
+          if (!cancelled) {
+            failureCount += 1;
+          }
+        } finally {
+          scheduleNextPoll();
+        }
+      };
+      void pollDebuggerState();
     } else {
       setDebuggerState(null);
     }
     return () => {
-      if (interval) clearInterval(interval);
+      cancelled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
     };
   }, [activeFilePath, runStatus, runMode]);
 
@@ -1693,7 +1757,7 @@ function EditorShell() {
               const lines = Array.from(raceRunCaptureRef.current.matchedLines).sort(
                 (left, right) => left - right
               );
-              setRaceSignals(toRaceRuntimeSignals(runTargetPath, lines));
+              setRaceSignals(toRaceFindings(runTargetPath, lines));
             } else {
               setRaceSignals([]);
             }
@@ -2005,7 +2069,7 @@ function EditorShell() {
           {activeTab === "debug" && (
             <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
-                <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Debugger</h3>
+                <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
                 <p className="text-[11px] text-[var(--subtext0)]">
                   {runMode === "debug" && runStatus === "running"
                     ? debuggerState?.paused
@@ -2024,7 +2088,7 @@ function EditorShell() {
               {!(runMode === "debug" && runStatus === "running") && (
                 <button
                   type="button"
-                  aria-label="Start debugging"
+                  aria-label="Start debug session"
                   className={`rounded-md border px-3 py-2 text-[11px] font-semibold ${
                     runStatus === "running" && runMode !== "debug"
                       ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
@@ -2033,7 +2097,7 @@ function EditorShell() {
                   onClick={handleStartDebug}
                   disabled={runStatus === "running" && runMode !== "debug"}
                 >
-                  Start Debugging
+                  Start Debug Session
                 </button>
               )}
 
@@ -2094,34 +2158,15 @@ function EditorShell() {
                   ? debuggerState?.paused
                     ? "Step controls are active while the program is paused."
                     : "Pause or hit a breakpoint to inspect state."
-                  : "Open a Go file, place breakpoints, then press Start."}
+                  : "Open a Go file, place breakpoints, then start a debug session."}
               </div>
             </div>
           )}
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          {toolchainStatus && (!toolchainStatus.goAvailable || !toolchainStatus.goplsAvailable || !toolchainStatus.delveAvailable) && (
-            <div className="bg-[var(--maroon)] bg-opacity-10 border-b border-[var(--maroon)] border-opacity-20 px-4 py-2 flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--maroon)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
-                <p className="text-[11px] font-medium text-[var(--maroon)]">
-                  Toolchain Issues Detected: 
-                  {!toolchainStatus.goAvailable && <span className="ml-1 font-bold">Go missing</span>}
-                  {!toolchainStatus.goplsAvailable && <span className="ml-1 font-bold">Gopls missing</span>}
-                  {!toolchainStatus.delveAvailable && <span className="ml-1 font-bold">Delve missing</span>}
-                </p>
-              </div>
-              <button 
-                className="text-[10px] text-[var(--maroon)] hover:underline font-semibold"
-                onClick={() => void getToolchainStatus().then(r => r.ok && setToolchainStatus(r.data!))}
-              >
-                Retry Check
-              </button>
-            </div>
-          )}
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="flex min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>
@@ -2245,7 +2290,7 @@ function EditorShell() {
                 </div>
               </header>
 
-              <div className="flex flex-1 flex-col p-3 sm:p-4 md:p-5">
+              <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4 md:p-5">
                 {!workspacePath && (
                   <div className="flex flex-1 flex-col items-center justify-center">
                     <div className="max-w-md text-center">
@@ -2282,7 +2327,7 @@ function EditorShell() {
                   </div>
                 )}
                 {workspacePath && activeFilePath && (
-                  <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+                  <div className="flex min-h-0 flex-1 flex-col gap-3">
                     <div className="flex items-center justify-between text-xs text-[var(--overlay2)]">
                       <span>Active File</span>
                       {isReading && <span>Loading.</span>}
@@ -2308,8 +2353,9 @@ function EditorShell() {
                           confidence={
                             isBlockedConfirmedVisible ? "confirmed" : traceBubbleConfidence
                           }
-                          label={activeRaceSignal ? "Data Race" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
+                          label={activeRaceSignal ? "Race Detector" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
+                          source={activeRaceSignal ? "race-detector" : "runtime"}
                           anchorTop={Math.max(
                             4,
                             (isBlockedConfirmedVisible

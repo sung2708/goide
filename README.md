@@ -1,25 +1,31 @@
-# Tauri + React + Typescript
+# goide
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+`goide` is a Tauri desktop IDE focused on Go editing, concurrency analysis, runtime inspection, race-detector workflows, and lightweight debugger controls.
 
-## Recommended IDE Setup
+## Core capabilities
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+- Open a local workspace and browse files in an IDE-style explorer
+- Edit Go source with CodeMirror-based syntax highlighting
+- Run active Go files and stream stdout/stderr into the terminal panel
+- Run with `-race` and surface race-detector findings in the editor
+- Show diagnostics and completions through `gopls`
+- Start a Delve-backed runtime session for breakpoints, pause/continue/step, and sampled runtime observations
 
-## Windows Build Note
+## Required local tooling
 
-On Windows, the `vswhom-sys` build step can fail if `zig` is picked up as the C/C++ compiler. If you see errors about the MSVC target being unknown, rerun with MSVC explicitly:
+For the full IDE experience, these commands must be available on `PATH`:
 
-```powershell
-cmd /c ""C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && powershell"
-$env:CC="cl"
-$env:CXX="cl"
-cargo test
-```
+- `go` for running active Go files
+- `gopls` for diagnostics, completions, and symbol enrichment
+- `dlv` for runtime sessions and breakpoint control
 
-## Runtime Signal Timeout
+The app runs a toolchain preflight and surfaces missing tools in the status bar and editor shell.
 
-Deep Trace runtime polling timeout can be configured with:
+## Runtime behavior notes
+
+### Runtime signal timeout
+
+Runtime polling timeout can be configured with:
 
 - `VITE_RUNTIME_SIGNAL_TIMEOUT_MS`
 
@@ -29,23 +35,46 @@ Behavior:
 - Accepted range: `100` to `5000` ms
 - Out-of-range or non-numeric values fall back to the default
 
-## Analysis Engine Status
+### Product honesty notes
 
-Current implementation uses:
+- Runtime topology is built from sampled/inferred runtime observations, not a full causality graph
+- Race-detector findings come from `go run -race` output and are labeled separately from runtime-sampled observations
+- Runtime sessions depend on local Delve availability and may degrade when the debugger backend is unavailable
 
-- CodeMirror Lezer for frontend Go syntax highlighting.
-- A lightweight Rust tokenizer for static concurrency markers.
-- `gopls` for symbol enrichment, diagnostics, and completions.
-- Delve (`dlv`) for runtime Deep Trace sampling.
+## Build and verification
 
-Tree-sitter is not currently integrated. If Tree-sitter becomes a hard product requirement, add `tree-sitter` and `tree-sitter-go` to the Rust backend and replace or augment the tokenizer path in `src-tauri/src/integration/gopls.rs`.
+### Frontend
 
-## Required Local Tooling
+```bash
+npm test
+npm run build
+```
 
-For the full IDE experience, users need these commands available on `PATH`:
+### Rust / Tauri backend
 
-- `go` for running active Go files.
-- `gopls` for diagnostics, completions, and symbol enrichment.
-- `dlv` for Deep Trace runtime sampling.
+```bash
+cargo build --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build
+```
 
-The app runs a startup preflight and surfaces missing tools in the status bar.
+## Windows build note
+
+On Windows, `cargo build`, `cargo test`, or `npm run tauri build` can fail if Git's `usr/bin/link.exe` or a Zig compiler override is picked up instead of the MSVC toolchain. If that happens, rerun from an MSVC-configured shell and force `cl` for both C and C++:
+
+```powershell
+cmd /c ""C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\VsDevCmd.bat" -arch=x64 && powershell"
+$env:CC="cl"
+$env:CXX="cl"
+$env:HOST_CC="cl"
+$env:HOST_CXX="cl"
+cargo build --manifest-path src-tauri/Cargo.toml
+cargo test --manifest-path src-tauri/Cargo.toml
+npm run tauri build
+```
+
+## Recommended IDE setup for contributors
+
+- [VS Code](https://code.visualstudio.com/)
+- [Tauri VS Code extension](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode)
+- [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

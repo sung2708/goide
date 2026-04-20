@@ -62,9 +62,9 @@ function CommandPalette({
                 onRun();
                 onClose();
               }}
-              title="Run the active Go file."
+              title="Run the active Go file (requires the Go toolchain)."
             >
-              Run File
+              Run Active Go File
             </button>
             <button
               type="button"
@@ -74,9 +74,9 @@ function CommandPalette({
                 onRunWithRace();
                 onClose();
               }}
-              title="Run the active Go file with the Go race detector."
+              title="Run the active Go file with the race detector to surface confirmed data races."
             >
-              Run With Race Detector
+              Run Active Go File with Race Detector
             </button>
           </div>
         </div>

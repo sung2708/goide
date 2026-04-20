@@ -32,6 +32,32 @@ function renderStatusBar(
   );
 }
 
+describe("StatusBar runtime availability", () => {
+  it("shows explicit runtime-off label before runtime is available", () => {
+    render(
+      <StatusBar
+        workspacePath="C:/workspace"
+        activeFilePath="main.go"
+        mode="quick-insight"
+        runtimeAvailability="unavailable"
+        diagnosticsAvailability="idle"
+        completionAvailability="idle"
+        toolchainStatus={null}
+        saveStatus="idle"
+        runStatus="idle"
+        isSummaryOpen={false}
+        isBottomPanelOpen={false}
+        isCommandPaletteOpen={false}
+        onToggleSummary={vi.fn()}
+        onToggleBottomPanel={vi.fn()}
+        onToggleCommandPalette={vi.fn()}
+      />
+    );
+
+    expect(screen.getByText("Runtime Off")).toBeInTheDocument();
+  });
+});
+
 describe("StatusBar diagnostics availability", () => {
   it("shows diagnostics healthy label when tooling is available", () => {
     renderStatusBar("available");
@@ -46,7 +72,7 @@ describe("StatusBar diagnostics availability", () => {
     expect(
       screen.getByTitle(/gopls is unavailable\. install gopls/i)
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /show commands palette/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /show command palette/i })).toBeEnabled();
   });
 
   it("shows neutral diagnostics label before any diagnostics check runs", () => {

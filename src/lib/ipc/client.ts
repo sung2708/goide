@@ -3,6 +3,7 @@ import type {
   ActivateDeepTraceRequest,
   ActivateDeepTraceResponse,
   AnalyzeConcurrencyRequest,
+  StartDebugSessionRequest,
   ApiResponse,
   CompletionItem,
   CompletionRequest,
@@ -118,6 +119,20 @@ export async function activateScopedDeepTrace(
       request,
     }
   );
+}
+
+export async function startDebugSession(
+  request: StartDebugSessionRequest
+): Promise<ApiResponse<ActivateDeepTraceResponse>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: { mode: "deep-trace", scopeKey: "runtime_session" },
+    };
+  }
+  return invoke<ApiResponse<ActivateDeepTraceResponse>>("start_debug_session", {
+    request,
+  });
 }
 
 export async function deactivateDeepTrace(): Promise<ApiResponse<void>> {

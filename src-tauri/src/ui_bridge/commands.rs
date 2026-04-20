@@ -14,9 +14,10 @@ use crate::ui_bridge::types::{
     DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
     DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
-    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ToggleBreakpointRequestDto,
-    ToolAvailabilityDto, ToolchainStatusDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
-    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
+    ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
+    WorkspaceGitChangedFileDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
+    WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -438,10 +439,26 @@ pub async fn get_active_file_completions(
     }
 }
 
-#[tauri::command]
-pub async fn activate_scoped_deep_trace(
-    request: ActivateDeepTraceRequestDto,
+async fn start_debug_session_internal(
+    workspace_root: String,
+    relative_path: String,
+    scope_line: usize,
+    scope_column: usize,
+    scope_symbol: Option<String>,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    let request = ActivateDeepTraceRequestDto {
+        workspace_root,
+        relative_path,
+        line: scope_line,
+        column: scope_column,
+        construct_kind: DeepTraceConstructKindDto::Channel,
+        symbol: scope_symbol,
+        counterpart_relative_path: None,
+        counterpart_line: None,
+        counterpart_column: None,
+        counterpart_confidence: None,
+    };
+
     if let Err(message) = validate_go_analysis_path(&request.relative_path) {
         return ApiResponse::err("deep_trace_invalid_input", &message);
     }
@@ -750,6 +767,34 @@ pub async fn activate_scoped_deep_trace(
         mode: "deep-trace".to_string(),
         scope_key: Some(scope_key),
     })
+}
+
+#[tauri::command]
+pub async fn activate_scoped_deep_trace(
+    request: ActivateDeepTraceRequestDto,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    start_debug_session_internal(
+        request.workspace_root,
+        request.relative_path,
+        request.line,
+        request.column,
+        request.symbol,
+    )
+    .await
+}
+
+#[tauri::command]
+pub async fn start_debug_session(
+    request: StartDebugSessionRequestDto,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    start_debug_session_internal(
+        request.workspace_root,
+        request.relative_path,
+        1,
+        1,
+        Some("runtime_session".to_string()),
+    )
+    .await
 }
 
 #[tauri::command]
@@ -1083,7 +1128,11 @@ pub async fn get_runtime_topology_snapshot() -> ApiResponse<RuntimeTopologySnaps
                 wait_reason: signal.wait_reason.clone(),
                 source,
                 target,
-                confidence: match signal.confidence.as_str() {
+                confidence: match signal
+                    .counterpart_confidence
+                    .as_deref()
+                    .unwrap_or(signal.confidence.as_str())
+                {
                     "predicted" => ConcurrencyConfidenceDto::Predicted,
                     "likely" => ConcurrencyConfidenceDto::Likely,
                     _ => ConcurrencyConfidenceDto::Confirmed,
@@ -1618,9 +1667,16 @@ mod tests {
         validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
     };
+    use std::sync::OnceLock;
     use crate::ui_bridge::types::ToggleBreakpointRequestDto;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::sync::Mutex;
+
+    fn shared_state_test_lock() -> &'static Mutex<()> {
+        static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        TEST_LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     #[test]
     fn rejects_non_go_paths_for_analysis() {
@@ -1735,6 +1791,7 @@ mod tests {
 
     #[tokio::test]
     async fn runtime_signals_reject_when_deep_trace_session_is_inactive() {
+        let _guard = shared_state_test_lock().lock().await;
         let signals_handle = get_runtime_signals_handle();
         {
             let mut store = signals_handle.lock().await;
@@ -1757,6 +1814,7 @@ mod tests {
 
     #[tokio::test]
     async fn debugger_toggle_breakpoint_works_without_active_session() {
+        let _guard = shared_state_test_lock().lock().await;
         let session_handle = get_dap_session_handle();
         {
             let mut session = session_handle.lock().await;
@@ -1798,6 +1856,7 @@ mod tests {
 
     #[tokio::test]
     async fn deactivate_deep_trace_preserves_breakpoints() {
+        let _guard = shared_state_test_lock().lock().await;
         let session_handle = get_dap_session_handle();
         {
             let mut session = session_handle.lock().await;

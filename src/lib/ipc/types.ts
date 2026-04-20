@@ -130,6 +130,11 @@ export type ActivateDeepTraceResponse = {
   scopeKey?: string | null;
 };
 
+export type StartDebugSessionRequest = {
+  workspaceRoot: string;
+  relativePath: string;
+};
+
 export type RuntimeAvailabilityResponse = {
   runtimeAvailability: "available" | "unavailable";
 };
