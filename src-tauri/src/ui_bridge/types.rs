@@ -120,6 +120,13 @@ pub struct ActivateDeepTraceResponseDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
+pub struct StartDebugSessionRequestDto {
+    pub workspace_root: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
 }

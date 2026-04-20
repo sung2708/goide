@@ -1,9 +1,14 @@
 [package]
 name = "goide"
 version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+description = "A desktop IDE for Go editing, runtime inspection, and concurrency workflows"
+authors = ["sung2708"]
+license = "MIT"
+repository = "https://github.com/sung2708/goide"
+homepage = "https://github.com/sung2708/goide"
+keywords = ["go", "ide", "tauri", "debugger", "concurrency"]
 edition = "2021"
+resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

@@ -26,6 +26,17 @@ function confidenceClass(confidence: RuntimeTopologyInteraction["confidence"]): 
   }
 }
 
+function confidenceLabel(confidence: RuntimeTopologyInteraction["confidence"]): string {
+  switch (confidence) {
+    case "confirmed":
+      return "Observed";
+    case "likely":
+      return "Inferred";
+    default:
+      return "Possible";
+  }
+}
+
 function RuntimeTopologyPanel({
   loading = false,
   runMode,
@@ -47,9 +58,9 @@ function RuntimeTopologyPanel({
         <p className="mt-1 text-[12px] text-[var(--subtext0)]">
           {sessionActive
             ? debuggerState?.paused
-              ? "Debugger paused"
-              : "Debugger running"
-            : "No active debug session"}
+              ? "Runtime inspection paused"
+              : "Runtime inspection running"
+            : "No active runtime session"}
         </p>
       </div>
 
@@ -79,19 +90,19 @@ function RuntimeTopologyPanel({
 
       <div className="min-h-0 flex-1 overflow-auto p-2">
         {loading && (
-          <p className="px-2 py-2 text-[12px] text-[var(--overlay1)]">Refreshing runtime graph…</p>
+          <p className="px-2 py-2 text-[12px] text-[var(--overlay1)]">Refreshing runtime observations…</p>
         )}
         {error && (
-          <p className="px-2 py-2 text-[12px] text-[var(--overlay1)]">Runtime data unavailable.</p>
+          <p className="px-2 py-2 text-[12px] text-[var(--overlay1)]">Runtime observations are temporarily unavailable.</p>
         )}
         {!loading && !error && !sessionActive && (
           <div className="px-2 py-3 text-[12px] text-[var(--overlay1)]">
-            Start debugging to inspect goroutine state, waits, and runtime edges.
+            Start a runtime session to observe blocked goroutines and likely wait relationships.
           </div>
         )}
         {!loading && !error && sessionActive && interactions.length === 0 && (
           <div className="px-2 py-3 text-[12px] text-[var(--overlay1)]">
-            Session active. Waiting for runtime interaction samples.
+            Runtime session active. Waiting for blocked goroutines or additional runtime samples.
           </div>
         )}
         {!loading && !error && interactions.length > 0 && (
@@ -106,7 +117,7 @@ function RuntimeTopologyPanel({
                     g#{interaction.threadId} · {interaction.kind}
                   </p>
                   <span className={`text-[11px] font-semibold uppercase ${confidenceClass(interaction.confidence)}`}>
-                    {interaction.confidence}
+                    {confidenceLabel(interaction.confidence)}
                   </span>
                 </div>
                 <p className="mt-1 truncate text-[11px] text-[var(--subtext0)]">{interaction.source}</p>

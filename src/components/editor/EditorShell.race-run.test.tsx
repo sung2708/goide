@@ -59,6 +59,10 @@ vi.mock("../../lib/ipc/client", async () => {
       ok: true,
       data: { mode: "deep-trace", scopeKey: "scope-a" },
     }),
+    startDebugSession: vi.fn().mockResolvedValue({
+      ok: true,
+      data: { mode: "deep-trace", scopeKey: "runtime_session" },
+    }),
     getRuntimeSignals: vi.fn().mockResolvedValue({ ok: true, data: [] }),
   };
 });
@@ -137,9 +141,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
 
     await waitFor(() => {
@@ -180,8 +184,8 @@ describe("EditorShell race run", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
+      expect(screen.getAllByText("Race CLI").length).toBeGreaterThan(0);
     });
   });
 
@@ -194,9 +198,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
 
     await waitFor(() => {
@@ -220,8 +224,8 @@ describe("EditorShell race run", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
+      expect(screen.getAllByText("Race CLI").length).toBeGreaterThan(0);
     });
   });
 
@@ -233,9 +237,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
 
     await waitFor(() => {
@@ -259,7 +263,7 @@ describe("EditorShell race run", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
     });
 
     await user.click(screen.getByRole("button", { name: /^run active go file$/i }));
@@ -267,7 +271,7 @@ describe("EditorShell race run", () => {
       expect(runWorkspaceFileMock).toHaveBeenCalledTimes(1);
     });
 
-    expect(screen.queryByText("Data Race")).toBeNull();
+    expect(screen.queryByText("Race Detector")).toBeNull();
   });
 
   it("attributes race findings to the original run target file even after active file switch", async () => {
@@ -278,9 +282,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -310,15 +314,15 @@ describe("EditorShell race run", () => {
       },
     });
 
-    expect(screen.queryByText("Data Race")).toBeNull();
+    expect(screen.queryByText("Race Detector")).toBeNull();
 
     mockFileToOpen = "main.go";
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
+      expect(screen.getAllByText("Race CLI").length).toBeGreaterThan(0);
     });
   });
 
@@ -330,9 +334,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -359,8 +363,8 @@ describe("EditorShell race run", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
-      expect(screen.getAllByText("Confirmed").length).toBeGreaterThan(0);
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
+      expect(screen.getAllByText("Race CLI").length).toBeGreaterThan(0);
     });
   });
 
@@ -372,9 +376,9 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show commands palette/i }));
+    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      await screen.findByRole("button", { name: /run with race detector/i })
+      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -401,7 +405,7 @@ describe("EditorShell race run", () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText("Data Race")).toBeInTheDocument();
+      expect(screen.getByText("Race Detector")).toBeInTheDocument();
     });
 
     openMock.mockResolvedValueOnce("C:/workspace-2");
@@ -409,7 +413,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    expect(screen.queryByText("Data Race")).toBeNull();
+    expect(screen.queryByText("Race Detector")).toBeNull();
   });
 
   it("does not render header Run Race button for non-go active files", async () => {
@@ -437,7 +441,7 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     expect(
-      screen.queryByRole("button", { name: /run active go file with race detector/i })
-    ).toBeNull();
+      screen.queryAllByRole("button", { name: /run active go file with race detector/i })
+    ).toHaveLength(0);
   });
 });

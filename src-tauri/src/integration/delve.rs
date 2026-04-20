@@ -429,7 +429,7 @@ pub fn thread_to_runtime_signal(
         thread_id: thread.id,
         status: parsed.status,
         wait_reason: parsed.wait_reason,
-        confidence: "confirmed".to_string(),
+        confidence: "predicted".to_string(),
         scope_key: scope.scope_key.clone(),
         scope_relative_path: scope.relative_path.clone(),
         scope_line: scope.line,
@@ -667,7 +667,7 @@ mod tests {
     }
 
     #[test]
-    fn thread_to_runtime_signal_marks_confirmed() {
+    fn thread_to_runtime_signal_starts_predicted() {
         let thread = DapThread {
             id: 42,
             name: "Goroutine 42 [IO wait] netpoll".to_string(),
@@ -685,7 +685,8 @@ mod tests {
         .expect("must map supported thread");
         assert_eq!(signal.thread_id, 42);
         assert_eq!(signal.wait_reason, "io wait");
-        assert_eq!(signal.confidence, "confirmed");
+        assert_eq!(signal.confidence, "predicted");
+        assert_eq!(signal.confidence, "predicted");
         assert_eq!(signal.scope_key, "pkg/main.go:10:2:channel:jobs");
         assert_eq!(signal.scope_relative_path, "pkg/main.go");
         assert_eq!(signal.relative_path, "pkg/main.go");
