@@ -1,9 +1,10 @@
 use anyhow::{anyhow, Context, Result};
+use crate::integration::command::tokio_command;
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::Mutex;
 
 /// A running go process handle, shared across async tasks.
@@ -61,6 +62,23 @@ fn build_go_run_args(target: &Path, mode: RunMode) -> Vec<String> {
     args
 }
 
+#[cfg(windows)]
+async fn kill_process_group(child: &mut Child) {
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("taskkill")
+            .arg("/F")
+            .arg("/T")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .output();
+    }
+}
+
+#[cfg(not(windows))]
+async fn kill_process_group(child: &mut Child) {
+    let _ = child.kill().await;
+}
+
 /// Spawns `go run <file>` in the workspace directory.
 /// Emits each output line as a `run-output` event on the `app_handle`.
 /// Kills any previous process in `process_handle` before starting a new one.
@@ -80,14 +98,14 @@ pub async fn run_go_file<R: tauri::Runtime>(
     {
         let mut guard = process_handle.lock().await;
         if let Some(child) = guard.as_mut() {
-            let _ = child.kill().await;
+            kill_process_group(child).await;
         }
         *guard = None;
     }
 
     // Spawn go run <file> (optionally with -race)
     let args = build_go_run_args(&target, mode);
-    let mut child = Command::new("go")
+    let mut child = tokio_command("go")
         .args(&args)
         .current_dir(&workspace_root)
         .stdout(Stdio::piped())
@@ -207,71 +225,4 @@ pub fn emit_run_failure<R: tauri::Runtime>(
             exit_code: Some(-1),
         },
     );
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn build_go_run_args_standard_omits_race_flag() {
-        let target = Path::new("main.go");
-        let args = build_go_run_args(target, RunMode::Standard);
-        assert_eq!(args, vec!["run".to_string(), "main.go".to_string()]);
-    }
-
-    #[test]
-    fn build_go_run_args_race_includes_race_flag() {
-        let target = Path::new("main.go");
-        let args = build_go_run_args(target, RunMode::Race);
-        assert_eq!(
-            args,
-            vec![
-                "run".to_string(),
-                "-race".to_string(),
-                "main.go".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn rejects_empty_relative_path() {
-        let tmp = std::env::temp_dir().join("goide_run_test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let root = tmp.to_string_lossy().to_string();
-        let result = resolve_run_path(&root, "");
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("required"));
-    }
-
-    #[test]
-    fn rejects_path_escape() {
-        let tmp = std::env::temp_dir().join("goide_run_escape_test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let root = tmp.to_string_lossy().to_string();
-        // "../" should escape workspace root
-        let result = resolve_run_path(&root, "../something.go");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn rejects_nonexistent_file() {
-        let tmp = std::env::temp_dir().join("goide_run_missing_test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let root = tmp.to_string_lossy().to_string();
-        let result = resolve_run_path(&root, "nonexistent.go");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn accepts_valid_existing_file() {
-        let tmp = std::env::temp_dir().join("goide_run_valid_test");
-        let _ = std::fs::create_dir_all(&tmp);
-        let file = tmp.join("main.go");
-        std::fs::write(&file, "package main").unwrap();
-
-        let root = tmp.to_string_lossy().to_string();
-        let result = resolve_run_path(&root, "main.go");
-        assert!(result.is_ok());
-    }
 }

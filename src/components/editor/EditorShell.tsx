@@ -8,7 +8,9 @@ import {
   activateScopedDeepTrace,
   deactivateDeepTrace,
   getRuntimeAvailability,
+  getRuntimePanelSnapshot,
   getRuntimeSignals,
+  getRuntimeTopologySnapshot,
   getToolchainStatus,
   readWorkspaceFile,
   writeWorkspaceFile,
@@ -16,6 +18,16 @@ import {
   runWorkspaceFileWithRace,
   fetchWorkspaceCompletions,
   fetchWorkspaceDiagnostics,
+  getWorkspaceGitSnapshot,
+  getDebuggerState,
+  debuggerContinue,
+  debuggerPause,
+  debuggerStepOver,
+  debuggerStepInto,
+  debuggerStepOut,
+  debuggerToggleBreakpoint,
+  startDebugSession,
+  searchWorkspaceText,
 } from "../../lib/ipc/client";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type {
@@ -24,8 +36,13 @@ import type {
   DeepTraceConstructKind,
   EditorDiagnostic,
   RuntimeSignal,
+  RuntimePanelSnapshot,
+  RuntimeTopologySnapshot,
   RunOutputPayload,
   ToolchainStatus,
+  WorkspaceGitSnapshot,
+  WorkspaceSearchFile,
+  DebuggerState,
 } from "../../lib/ipc/types";
 import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
@@ -35,13 +52,20 @@ import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
-import SummaryPeek, { type SummaryItem } from "../panels/SummaryPeek";
-import Explorer from "../sidebar/Explorer";
+import SummaryPeek, {
+  type SummaryItem,
+  type SummaryMetric,
+} from "../panels/SummaryPeek";
+import Explorer, { type FileDecoration } from "../sidebar/Explorer";
+import ActivityBar, { type ActivityBarTab } from "../sidebar/ActivityBar";
 import StatusBar from "../statusbar/StatusBar";
 import CodeEditor, {
   type EditorCompletionRequest,
   type JumpRequest,
 } from "./CodeEditor";
+import SearchPanel from "../panels/SearchPanel";
+import GitPanel from "../panels/GitPanel";
+import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -59,9 +83,36 @@ const BLOCKED_WAIT_REASONS = [
 ];
 const DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS = 450;
 const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
-type RunMode = "standard" | "race";
+const ACTIVE_DEBUG_POLL_INTERVAL_MS = 600;
+const DEBUG_POLL_BACKOFF_STEP_MS = 900;
+const DEBUG_POLL_MAX_INTERVAL_MS = 5000;
+type RunMode = "standard" | "race" | "debug";
 type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
 type CompletionIndicatorState = "available" | "degraded" | "idle";
+type RaceFinding = RuntimeSignal & {
+  source: "race-detector";
+};
+
+type FileDiagnosticsSummary = {
+  hasErrors: boolean;
+  hasWarnings: boolean;
+};
+
+function mapGitStatus(statusToken: string): "modified" | "untracked" | "staged" {
+  const token = statusToken.trim();
+  if (token.startsWith("??")) {
+    return "untracked";
+  }
+  const indexStatus = token[0] ?? " ";
+  const worktreeStatus = token[1] ?? " ";
+  if (indexStatus !== " " && indexStatus !== "?") {
+    return "staged";
+  }
+  if (worktreeStatus !== " " && worktreeStatus !== "?") {
+    return "modified";
+  }
+  return "modified";
+}
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -75,6 +126,13 @@ function resolveRuntimeSignalTimeoutMs(): number {
     return DEFAULT_RUNTIME_SIGNAL_REQUEST_TIMEOUT_MS;
   }
   return Math.round(parsed);
+}
+
+function nextPollingDelay(failureCount: number): number {
+  return Math.min(
+    ACTIVE_DEBUG_POLL_INTERVAL_MS + failureCount * DEBUG_POLL_BACKOFF_STEP_MS,
+    DEBUG_POLL_MAX_INTERVAL_MS
+  );
 }
 
 function normalizeRelativePath(path: string): string {
@@ -310,7 +368,7 @@ function extractGoFileLineReferences(text: string): Array<{
   return refs;
 }
 
-function toRaceRuntimeSignals(relativePath: string, lines: number[]): RuntimeSignal[] {
+function toRaceFindings(relativePath: string, lines: number[]): RaceFinding[] {
   return lines.map((line, index) => ({
     threadId: index + 1,
     status: "data race",
@@ -323,6 +381,7 @@ function toRaceRuntimeSignals(relativePath: string, lines: number[]): RuntimeSig
     relativePath,
     line,
     column: 1,
+    source: "race-detector",
   }));
 }
 
@@ -349,13 +408,29 @@ function EditorShell() {
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [runMode, setRunMode] = useState<RunMode>("standard");
-  const [raceSignals, setRaceSignals] = useState<RuntimeSignal[]>([]);
+  const [raceSignals, setRaceSignals] = useState<RaceFinding[]>([]);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
+  const [diagnosticsByFile, setDiagnosticsByFile] = useState<
+    Record<string, FileDiagnosticsSummary>
+  >({});
   const [diagnosticsAvailability, setDiagnosticsAvailability] =
     useState<DiagnosticsIndicatorState>("idle");
+  const [gitSnapshot, setGitSnapshot] = useState<WorkspaceGitSnapshot | null>(null);
+  const [gitError, setGitError] = useState<string | null>(null);
+  const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
+  const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
+    useState<RuntimePanelSnapshot | null>(null);
+  const [runtimeTopologySnapshot, setRuntimeTopologySnapshot] =
+    useState<RuntimeTopologySnapshot | null>(null);
+  const [runtimeTopologyLoading, setRuntimeTopologyLoading] = useState(false);
+  const [runtimeTopologyError, setRuntimeTopologyError] = useState<string | null>(null);
   const [completionAvailability, setCompletionAvailability] =
     useState<CompletionIndicatorState>("idle");
   const [isDirty, setIsDirty] = useState(false);
+  const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
+  const [breakpoints, setBreakpoints] = useState<number[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -396,8 +471,10 @@ function EditorShell() {
   const deepTraceRequestIdRef = useRef(0);
   const runtimeCheckRequestIdRef = useRef(0);
   const runtimeSignalRequestIdRef = useRef(0);
+  const searchRequestIdRef = useRef(0);
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
+  const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -615,11 +692,143 @@ function EditorShell() {
     resolveStaticCounterpart,
   ]);
 
+  const fileDecorations = useMemo(() => {
+    const decorations = new Map<string, FileDecoration>();
+    if (gitSnapshot) {
+      for (const file of gitSnapshot.changedFiles) {
+        const status = mapGitStatus(file.status);
+        decorations.set(file.path, { gitStatus: status });
+      }
+    }
+    for (const [path, summary] of Object.entries(diagnosticsByFile)) {
+      if (!summary.hasErrors && !summary.hasWarnings) {
+        continue;
+      }
+      const existing = decorations.get(path) || {};
+      decorations.set(path, {
+        ...existing,
+        hasErrors: summary.hasErrors,
+        hasWarnings: !summary.hasErrors && summary.hasWarnings,
+      });
+    }
+    return decorations;
+  }, [gitSnapshot, diagnosticsByFile]);
+
+  useEffect(() => {
+    if (!workspacePath) {
+      setGitSnapshot(null);
+      setGitError(null);
+      return;
+    }
+    let isCancelled = false;
+    const pollGit = async () => {
+      if (isCancelled) return;
+      try {
+        const res = await getWorkspaceGitSnapshot(workspacePath);
+        if (!isCancelled && res.ok && res.data) {
+          setGitSnapshot(res.data);
+          setGitError(null);
+        } else if (!isCancelled) {
+          setGitSnapshot(null);
+          setGitError(res.error?.message ?? "Git data unavailable");
+        }
+      } catch (err) {
+        if (!isCancelled) {
+          setGitSnapshot(null);
+          setGitError("Git data unavailable");
+        }
+      }
+      if (!isCancelled) {
+        setTimeout(pollGit, 5000);
+      }
+    };
+    void pollGit();
+    return () => {
+      isCancelled = true;
+    };
+  }, [workspacePath]);
+
+  useEffect(() => {
+    if (runMode !== "debug" || runStatus !== "running") {
+      setRuntimePanelSnapshot(null);
+      setRuntimeTopologySnapshot(null);
+      setRuntimeTopologyError(null);
+      setRuntimeTopologyLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const scheduleNextPoll = () => {
+      if (isCancelled) {
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        void pollRuntimeTopology();
+      }, nextPollingDelay(failureCount));
+    };
+    const pollRuntimeTopology = async () => {
+      if (isCancelled) {
+        return;
+      }
+      setRuntimeTopologyLoading(true);
+      try {
+        const [panelResponse, topologyResponse] = await Promise.all([
+          getRuntimePanelSnapshot(),
+          getRuntimeTopologySnapshot(),
+        ]);
+        if (isCancelled) {
+          return;
+        }
+        if (panelResponse.ok && panelResponse.data) {
+          setRuntimePanelSnapshot(panelResponse.data);
+        }
+        if (topologyResponse.ok && topologyResponse.data) {
+          setRuntimeTopologySnapshot(topologyResponse.data);
+          setRuntimeTopologyError(null);
+          failureCount = 0;
+        } else {
+          failureCount += 1;
+          setRuntimeTopologyError(topologyResponse.error?.message ?? "Topology unavailable");
+        }
+      } catch (_error) {
+        if (!isCancelled) {
+          failureCount += 1;
+          setRuntimeTopologyError("Topology unavailable");
+        }
+      } finally {
+        if (!isCancelled) {
+          setRuntimeTopologyLoading(false);
+          scheduleNextPoll();
+        }
+      }
+    };
+
+    void pollRuntimeTopology();
+
+    return () => {
+      isCancelled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [runMode, runStatus]);
+
+
   const refreshDiagnosticsForFile = useCallback(
     async (diagnosticWorkspacePath: string, diagnosticFilePath: string) => {
       if (!isGoFile(diagnosticFilePath)) {
         setDiagnostics([]);
         setDiagnosticsAvailability("idle");
+        setDiagnosticsByFile((prev) => {
+          if (!(diagnosticFilePath in prev)) {
+            return prev;
+          }
+          const next = { ...prev };
+          delete next[diagnosticFilePath];
+          return next;
+        });
         return;
       }
       const requestId = diagnosticsRequestIdRef.current + 1;
@@ -642,10 +851,28 @@ function EditorShell() {
         if (diagnosticsResponse.ok && diagnosticsResponse.data) {
           setDiagnostics(diagnosticsResponse.data.diagnostics);
           setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
+          const hasErrors = diagnosticsResponse.data.diagnostics.some(
+            (item) => item.severity === "error"
+          );
+          const hasWarnings = diagnosticsResponse.data.diagnostics.some(
+            (item) => item.severity === "warning"
+          );
+          setDiagnosticsByFile((prev) => ({
+            ...prev,
+            [diagnosticFilePath]: { hasErrors, hasWarnings },
+          }));
         } else {
           setDiagnostics([]);
           // Generic diagnostics errors are not equivalent to missing tooling.
           setDiagnosticsAvailability("idle");
+          setDiagnosticsByFile((prev) => {
+            if (!(diagnosticFilePath in prev)) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[diagnosticFilePath];
+            return next;
+          });
         }
       } catch (_error) {
         if (
@@ -656,6 +883,14 @@ function EditorShell() {
           setDiagnostics([]);
           // Network/IPC/command failures should not imply missing gopls setup.
           setDiagnosticsAvailability("idle");
+          setDiagnosticsByFile((prev) => {
+            if (!(diagnosticFilePath in prev)) {
+              return prev;
+            }
+            const next = { ...prev };
+            delete next[diagnosticFilePath];
+            return next;
+          });
         }
       }
     },
@@ -739,6 +974,35 @@ function EditorShell() {
         symbol: construct.symbol,
       }));
   }, [detectedConstructs]);
+
+  const summaryMetrics = useMemo<SummaryMetric[]>(() => {
+    if (!runtimePanelSnapshot) {
+      return [];
+    }
+
+    return [
+      {
+        label: "signals",
+        value: String(runtimePanelSnapshot.signalCount),
+        tone: runtimePanelSnapshot.signalCount > 0 ? "primary" : "secondary",
+      },
+      {
+        label: "blocked",
+        value: String(runtimePanelSnapshot.blockedCount),
+        tone: runtimePanelSnapshot.blockedCount > 0 ? "error" : "secondary",
+      },
+      {
+        label: "goroutines",
+        value: String(runtimePanelSnapshot.goroutineCount),
+        tone: runtimePanelSnapshot.goroutineCount > 0 ? "tertiary" : "secondary",
+      },
+      {
+        label: "runtime",
+        value: runtimePanelSnapshot.sessionActive ? "LIVE" : "IDLE",
+        tone: runtimePanelSnapshot.sessionActive ? "primary" : "secondary",
+      },
+    ];
+  }, [runtimePanelSnapshot]);
 
   const requestJump = useCallback((targetLine: number | null) => {
     if (targetLine === null) {
@@ -853,7 +1117,16 @@ function EditorShell() {
 
     const scopeSnapshot = deepTraceScope;
     let cancelled = false;
-    let intervalId: ReturnType<typeof setInterval> | null = null;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    const scheduleNextPoll = () => {
+      if (cancelled) {
+        return;
+      }
+      timeoutId = setTimeout(() => {
+        void pollRuntimeSignals();
+      }, nextPollingDelay(failureCount));
+    };
 
     const pollRuntimeSignals = async () => {
       if (
@@ -914,10 +1187,12 @@ function EditorShell() {
         }
 
         if (!response.ok || !response.data) {
+          failureCount += 1;
           markRuntimeDegraded();
           return;
         }
 
+        failureCount = 0;
         markRuntimeAvailable();
         const blockedCandidates =
           response.data.filter(
@@ -937,24 +1212,25 @@ function EditorShell() {
           workspacePathRef.current === scopeSnapshot.workspacePath &&
           activeFilePathRef.current === scopeSnapshot.filePath
         ) {
+          failureCount += 1;
           markRuntimeDegraded();
         }
       } finally {
         releaseInFlight();
+        if (!cancelled) {
+          scheduleNextPoll();
+        }
       }
     };
 
     void pollRuntimeSignals();
-    intervalId = setInterval(() => {
-      void pollRuntimeSignals();
-    }, 600);
 
     return () => {
       cancelled = true;
       runtimeSignalInFlightRef.current = false;
       runtimeSignalPendingRequestCountRef.current = 0;
-      if (intervalId !== null) {
-        clearInterval(intervalId);
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
       }
     };
   }, [
@@ -1179,6 +1455,262 @@ function EditorShell() {
     void handleRunFile("standard");
   }, [handleRunFile]);
 
+  const handleStartDebug = useCallback(() => {
+    if (runStatus === "running") return;
+    if (!workspacePath || !activeFilePath) return;
+
+    setRunStatus("running");
+    setRunMode("debug");
+    setIsBottomPanelOpen(true);
+    setRunOutput([]);
+    activeRunIdRef.current = "debug-" + Date.now();
+
+    void startDebugSession({
+      workspaceRoot: workspacePath,
+      relativePath: activeFilePath,
+    }).then((res) => {
+      if (!res.ok) {
+        setRunStatus("error");
+        setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session failed to start: ${res.error?.message}`, stream: "stderr" }]);
+      }
+    }).catch(err => {
+      setRunStatus("error");
+      setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session error: ${err}`, stream: "stderr" }]);
+    });
+  }, [runStatus, workspacePath, activeFilePath]);
+
+  const handleStopDebug = useCallback(async () => {
+    await deactivateDeepTrace();
+    setRunStatus("done");
+    setRunMode("standard");
+    setDebuggerState(null);
+    setRuntimePanelSnapshot(null);
+    setRuntimeTopologySnapshot(null);
+    setRuntimeTopologyError(null);
+    setActiveBlockedSignal(null);
+    setDeepTraceScope(null);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let failureCount = 0;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    if (runStatus === "running" && runMode === "debug") {
+      const scheduleNextPoll = () => {
+        if (cancelled) {
+          return;
+        }
+        timeoutId = setTimeout(() => {
+          void pollDebuggerState();
+        }, nextPollingDelay(failureCount));
+      };
+      const pollDebuggerState = async () => {
+        try {
+          const state = await getDebuggerState();
+          if (cancelled) {
+            return;
+          }
+          if (state.ok && state.data) {
+            failureCount = 0;
+            setDebuggerState(state.data);
+            setBreakpoints(
+              activeFilePath
+                ? state.data.breakpoints
+                    .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
+                    .map((breakpoint) => breakpoint.line)
+                : [],
+            );
+          } else {
+            failureCount += 1;
+          }
+        } catch (_error) {
+          if (!cancelled) {
+            failureCount += 1;
+          }
+        } finally {
+          scheduleNextPoll();
+        }
+      };
+      void pollDebuggerState();
+    } else {
+      setDebuggerState(null);
+    }
+    return () => {
+      cancelled = true;
+      if (timeoutId !== null) {
+        clearTimeout(timeoutId);
+      }
+    };
+  }, [activeFilePath, runStatus, runMode]);
+
+  useEffect(() => {
+    if (runMode !== "debug" || runStatus !== "running") {
+      return;
+    }
+    if (debuggerState && !debuggerState.sessionActive) {
+      setRunStatus("done");
+      setRunMode("standard");
+      setRuntimePanelSnapshot(null);
+      setRuntimeTopologySnapshot(null);
+      setRuntimeTopologyError(null);
+    }
+  }, [debuggerState, runMode, runStatus]);
+
+  useEffect(() => {
+    if (!workspacePath || !activeFilePath) {
+      setBreakpoints([]);
+      return;
+    }
+
+    let isCancelled = false;
+    void getDebuggerState().then((state) => {
+      if (isCancelled || !state.ok || !state.data) {
+        return;
+      }
+      setDebuggerState((current) => current ?? state.data ?? null);
+      setBreakpoints(
+        state.data.breakpoints
+          .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
+          .map((breakpoint) => breakpoint.line),
+      );
+    });
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [activeFilePath, workspacePath]);
+
+  const handleWorkspaceSearch = useCallback(async (query: string) => {
+    const trimmedQuery = query.trim();
+    if (!workspacePath || !trimmedQuery) {
+      setWorkspaceSearchResults([]);
+      setSearchLoading(false);
+      return;
+    }
+    const requestId = searchRequestIdRef.current + 1;
+    searchRequestIdRef.current = requestId;
+    setSearchLoading(true);
+    try {
+      const resp = await searchWorkspaceText(workspacePath, trimmedQuery);
+      if (requestId !== searchRequestIdRef.current) {
+        return;
+      }
+      if (resp.ok && resp.data) {
+        setWorkspaceSearchResults(resp.data);
+      } else {
+        setWorkspaceSearchResults([]);
+      }
+    } catch (err) {
+      console.error("Search failed:", err);
+      if (requestId === searchRequestIdRef.current) {
+        setWorkspaceSearchResults([]);
+      }
+    } finally {
+      if (requestId === searchRequestIdRef.current) {
+        setSearchLoading(false);
+      }
+    }
+  }, [workspacePath]);
+
+  const handleToggleBreakpoint = useCallback(async (line: number) => {
+    if (!workspacePath || !activeFilePath) return;
+    try {
+      const resp = await debuggerToggleBreakpoint({
+        relativePath: activeFilePath,
+        line,
+      });
+      if (resp.ok && resp.data) {
+        setDebuggerState(resp.data);
+        setBreakpoints(
+          resp.data.breakpoints
+            .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
+            .map((breakpoint) => breakpoint.line),
+        );
+      }
+    } catch (err) {
+      console.error("Failed to toggle breakpoint:", err);
+    }
+  }, [workspacePath, activeFilePath]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const canStartDebug = Boolean(workspacePath && isGoFile(activeFilePath));
+      const isDebugRunning = runMode === "debug" && runStatus === "running";
+
+      if (e.key === "F9" && activeFilePath && selectedLine) {
+        e.preventDefault();
+        void handleToggleBreakpoint(selectedLine);
+        return;
+      }
+
+      if (e.key === "F5" && !e.shiftKey) {
+        e.preventDefault();
+        if (!isDebugRunning) {
+          if (canStartDebug) {
+            handleStartDebug();
+          }
+          return;
+        }
+        if (debuggerState?.paused) {
+          void debuggerContinue();
+        } else {
+          void debuggerPause();
+        }
+        return;
+      }
+
+      if (e.key === "F5" && e.shiftKey) {
+        e.preventDefault();
+        if (isDebugRunning) {
+          void handleStopDebug();
+        }
+        return;
+      }
+
+      if (e.key === "Escape" && activeTab === "debug") {
+        e.preventDefault();
+        setActiveTab("explorer");
+        return;
+      }
+
+      if (!isDebugRunning || !debuggerState?.paused) {
+        return;
+      }
+
+      if (e.key === "F10") {
+        e.preventDefault();
+        void debuggerStepOver();
+        return;
+      }
+
+      if (e.key === "F11" && !e.shiftKey) {
+        e.preventDefault();
+        void debuggerStepInto();
+        return;
+      }
+
+      if (e.key === "F11" && e.shiftKey) {
+        e.preventDefault();
+        void debuggerStepOut();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [
+    activeFilePath,
+    activeTab,
+    debuggerState,
+    handleToggleBreakpoint,
+    handleStartDebug,
+    handleStopDebug,
+    runMode,
+    runStatus,
+    selectedLine,
+    workspacePath,
+  ]);
+
   const handleRunFileWithRace = useCallback(() => {
     if (runtimeAvailability === "unavailable") {
       return;
@@ -1225,7 +1757,7 @@ function EditorShell() {
               const lines = Array.from(raceRunCaptureRef.current.matchedLines).sort(
                 (left, right) => left - right
               );
-              setRaceSignals(toRaceRuntimeSignals(runTargetPath, lines));
+              setRaceSignals(toRaceFindings(runTargetPath, lines));
             } else {
               setRaceSignals([]);
             }
@@ -1258,7 +1790,16 @@ function EditorShell() {
     // Reset transient statuses when the user starts editing again
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
     setCompletionAvailability((prev) => (prev === "degraded" ? "idle" : prev));
-  }, []);
+
+    if (diagnosticDebounceRef.current) {
+      clearTimeout(diagnosticDebounceRef.current);
+    }
+    diagnosticDebounceRef.current = setTimeout(() => {
+      if (workspacePath && activeFilePath) {
+        void refreshDiagnosticsForFile(workspacePath, activeFilePath);
+      }
+    }, 1000);
+  }, [workspacePath, activeFilePath, refreshDiagnosticsForFile]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -1347,9 +1888,13 @@ function EditorShell() {
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
+        searchRequestIdRef.current += 1;
+        setWorkspaceSearchResults([]);
+        setSearchLoading(false);
         diagnosticsRequestIdRef.current += 1;
         completionRequestIdRef.current += 1;
         setDiagnostics([]);
+        setDiagnosticsByFile({});
         setDiagnosticsAvailability("idle");
         setCompletionAvailability("idle");
         setSelectedLine(null);
@@ -1475,28 +2020,161 @@ function EditorShell() {
     <div
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
-      <div className="flex flex-1 overflow-hidden">
-        <aside className="utilitarian-noise flex min-w-[170px] w-[22%] max-w-[280px] flex-col border-r border-[rgba(113,125,144,0.25)] bg-[var(--mantle)]">
-          <Explorer
-            workspacePath={workspacePath}
-            activeFilePath={activeFilePath}
-            onOpenFile={handleOpenFile}
-          />
+      <div className="flex min-w-0 flex-1 overflow-hidden">
+        <ActivityBar 
+          activeTab={activeTab} 
+          onTabChange={setActiveTab} 
+          signalCount={raceSignals.length} 
+        />
+        <aside className="flex w-[clamp(180px,22vw,320px)] min-w-[180px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
+          {activeTab === "explorer" && (
+            <Explorer
+              workspacePath={workspacePath}
+              activeFilePath={activeFilePath}
+              onOpenFile={handleOpenFile}
+              fileDecorations={fileDecorations}
+            />
+          )}
+          {activeTab === "search" && (
+            <SearchPanel 
+              results={workspaceSearchResults}
+              loading={searchLoading}
+              onSearch={handleWorkspaceSearch}
+              onOpenResult={(file, line) => {
+                void handleOpenFile(file).then(() => {
+                  requestJump(line);
+                });
+              }}
+              autoFocus
+            />
+          )}
+          {activeTab === "git" && (
+            <GitPanel
+              loading={!gitSnapshot && Boolean(workspacePath)}
+              snapshot={gitSnapshot}
+              error={gitError}
+            />
+          )}
+          {activeTab === "concurrency" && (
+            <RuntimeTopologyPanel
+              loading={runtimeTopologyLoading}
+              runMode={runMode}
+              runStatus={runStatus}
+              debuggerState={debuggerState}
+              panelSnapshot={runtimePanelSnapshot}
+              topologySnapshot={runtimeTopologySnapshot}
+              error={runtimeTopologyError}
+            />
+          )}
+          {activeTab === "debug" && (
+            <div className="flex flex-1 flex-col gap-4 p-4">
+              <div className="space-y-1">
+                <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
+                <p className="text-[11px] text-[var(--subtext0)]">
+                  {runMode === "debug" && runStatus === "running"
+                    ? debuggerState?.paused
+                      ? "Paused"
+                      : "Running"
+                    : "Idle"}
+                </p>
+                {debuggerState?.activeRelativePath && debuggerState.activeLine && (
+                  <p className="text-[11px] tabular-nums text-[var(--subtext1)]">
+                    {debuggerState.activeRelativePath}:{debuggerState.activeLine}
+                    {debuggerState.activeColumn ? `:${debuggerState.activeColumn}` : ""}
+                  </p>
+                )}
+              </div>
+
+              {!(runMode === "debug" && runStatus === "running") && (
+                <button
+                  type="button"
+                  aria-label="Start debug session"
+                  className={`rounded-md border px-3 py-2 text-[11px] font-semibold ${
+                    runStatus === "running" && runMode !== "debug"
+                      ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
+                      : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
+                  }`}
+                  onClick={handleStartDebug}
+                  disabled={runStatus === "running" && runMode !== "debug"}
+                >
+                  Start Debug Session
+                </button>
+              )}
+
+              {runMode === "debug" && runStatus === "running" && (
+                <div className="space-y-2">
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      aria-label={debuggerState?.paused ? "Continue debugging" : "Pause debugging"}
+                      className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
+                      onClick={() => debuggerState?.paused ? void debuggerContinue() : void debuggerPause()}
+                    >
+                      {debuggerState?.paused ? "Continue" : "Pause"}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="Stop debugging"
+                      className="rounded-md border border-[rgba(231,130,132,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--red)] hover:bg-[rgba(231,130,132,0.12)]"
+                      onClick={() => void handleStopDebug()}
+                    >
+                      Stop
+                    </button>
+                  </div>
+
+                  {debuggerState?.paused && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        aria-label="Step over"
+                        className="rounded-md border border-[rgba(129,200,190,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--teal)] hover:bg-[rgba(129,200,190,0.12)]"
+                        onClick={() => void debuggerStepOver()}
+                      >
+                        Over
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Step into"
+                        className="rounded-md border border-[rgba(229,200,144,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--yellow)] hover:bg-[rgba(229,200,144,0.12)]"
+                        onClick={() => void debuggerStepInto()}
+                      >
+                        Into
+                      </button>
+                      <button
+                        type="button"
+                        aria-label="Step out"
+                        className="rounded-md border border-[rgba(239,159,118,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
+                        onClick={() => void debuggerStepOut()}
+                      >
+                        Out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--subtext0)]">
+                {runMode === "debug" && runStatus === "running"
+                  ? debuggerState?.paused
+                    ? "Step controls are active while the program is paused."
+                    : "Pause or hit a breakpoint to inspect state."
+                  : "Open a Go file, place breakpoints, then start a debug session."}
+              </div>
+            </div>
+          )}
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="flex min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
-              <header
-                className="flex items-center justify-between border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-4 py-2"
-              >
+            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>
                   <span className="text-[var(--overlay0)] opacity-50">/</span>
                   <span className="text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
                 </div>
                 
-                <div className="flex items-center gap-2">
+                <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
                   <button
                     className={`flex cursor-pointer items-center gap-2 rounded border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.4)] px-3 py-1.5 text-[11px] font-semibold text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] ${
                       isOpening ? "cursor-not-allowed opacity-60" : ""
@@ -1530,6 +2208,70 @@ function EditorShell() {
                   )}
                   {isGoFile(activeFilePath) && (
                     <button
+                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[12px] font-semibold transition-colors duration-100 ${
+                        runStatus === "running" && runMode !== "debug"
+                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
+                      }`}
+                      onClick={handleStartDebug}
+                      type="button"
+                      aria-label="Debug active Go file"
+                      title="Start a debugging session."
+                      disabled={runStatus === "running" && runMode !== "debug"}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><path d="M10 4h4"/><path d="M9 6h6l1 3v8a3 3 0 0 1-3 3h-2a3 3 0 0 1-3-3V9z"/><path d="M6 10h2"/><path d="M16 10h2"/></svg>
+                      {runStatus === "running" && runMode === "debug" ? "Debugging..." : "Debug"}
+                    </button>
+                  )}
+                  {runStatus === "running" && runMode === "debug" && debuggerState && (
+                    <div className="flex items-center gap-1 border-l border-[var(--border-subtle)] pl-2 ml-1">
+                      <button
+                        className="flex items-center p-1.5 rounded text-[var(--red)] hover:bg-[rgba(231,130,132,0.15)]"
+                        title="Stop (Shift+F5)"
+                        onClick={() => void handleStopDebug()}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="5" y="5" width="14" height="14"/></svg>
+                      </button>
+                      <button
+                        className="flex items-center p-1.5 rounded text-[var(--blue)] hover:bg-[rgba(140,170,238,0.15)] disabled:opacity-50"
+                        title={debuggerState.paused ? "Continue (F5)" : "Pause (F5)"}
+                        onClick={() => debuggerState.paused ? void debuggerContinue() : void debuggerPause()}
+                      >
+                        {debuggerState.paused ? (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        ) : (
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+                        )}
+                      </button>
+                      {debuggerState.paused && (
+                        <>
+                          <button
+                            className="flex items-center p-1.5 rounded text-[var(--teal)] hover:bg-[rgba(129,200,190,0.15)]"
+                            title="Step Over (F10)"
+                            onClick={() => void debuggerStepOver()}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M9 18v-6a3 3 0 0 1 3-3h9"/><path d="M17 5l4 4-4 4"/></svg>
+                          </button>
+                          <button
+                            className="flex items-center p-1.5 rounded text-[var(--yellow)] hover:bg-[rgba(229,200,144,0.15)]"
+                            title="Step Into (F11)"
+                            onClick={() => void debuggerStepInto()}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg>
+                          </button>
+                          <button
+                            className="flex items-center p-1.5 rounded text-[var(--peach)] hover:bg-[rgba(239,159,118,0.15)]"
+                            title="Step Out (Shift+F11)"
+                            onClick={() => void debuggerStepOut()}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg>
+                          </button>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  {isGoFile(activeFilePath) && runMode !== "debug" && (
+                    <button
                       className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
                         runStatus === "running" || runtimeAvailability === "unavailable"
                           ? "border-[rgba(113,125,144,0.25)] text-[var(--overlay2)] cursor-not-allowed"
@@ -1548,7 +2290,7 @@ function EditorShell() {
                 </div>
               </header>
 
-              <div className="flex flex-1 flex-col p-5 md:p-6">
+              <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4 md:p-5">
                 {!workspacePath && (
                   <div className="flex flex-1 flex-col items-center justify-center">
                     <div className="max-w-md text-center">
@@ -1585,7 +2327,7 @@ function EditorShell() {
                   </div>
                 )}
                 {workspacePath && activeFilePath && (
-                  <div className="flex h-full min-h-0 flex-1 flex-col gap-3">
+                  <div className="flex min-h-0 flex-1 flex-col gap-3">
                     <div className="flex items-center justify-between text-xs text-[var(--overlay2)]">
                       <span>Active File</span>
                       {isReading && <span>Loading.</span>}
@@ -1611,8 +2353,9 @@ function EditorShell() {
                           confidence={
                             isBlockedConfirmedVisible ? "confirmed" : traceBubbleConfidence
                           }
-                          label={activeRaceSignal ? "Data Race" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
+                          label={activeRaceSignal ? "Race Detector" : isBlockedConfirmedVisible ? "Blocked Op" : traceBubbleLabel}
                           blocked={isBlockedConfirmedVisible}
+                          source={activeRaceSignal ? "race-detector" : "runtime"}
                           anchorTop={Math.max(
                             4,
                             (isBlockedConfirmedVisible
@@ -1637,6 +2380,10 @@ function EditorShell() {
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
+                            executionLine={debuggerState?.activeLine ?? null}
+                            breakpoints={breakpoints}
+                            onToggleBreakpoint={handleToggleBreakpoint}
+                            diagnostics={diagnostics}
                             selectionContextKey={activeFilePath}
                               hintLine={activeHintLine}
                               counterpartLine={counterpartResolution?.line ?? null}
@@ -1650,7 +2397,6 @@ function EditorShell() {
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
-                            diagnostics={diagnostics}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -1671,6 +2417,10 @@ function EditorShell() {
             {isSummaryOpen && (
               <SummaryPeek
                 items={summaryItems}
+                metrics={summaryMetrics}
+                topologyInteractions={runtimeTopologySnapshot?.interactions ?? []}
+                topologyActive={runtimeTopologySnapshot?.sessionActive ?? false}
+                hasDebugSession={runMode === "debug" && runStatus === "running"}
                 onJumpToLine={(line) => requestJump(line)}
                 onClose={() => setIsSummaryOpen(false)}
               />
@@ -1729,3 +2479,4 @@ function EditorShell() {
 }
 
 export default EditorShell;
+

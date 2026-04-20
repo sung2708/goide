@@ -44,6 +44,19 @@ export function useHoverHint({
       }),
     [detectedConstructs, visibleRange]
   );
+  const predictedByLine = useMemo(() => {
+    const index = new Map<number, LensConstruct>();
+    for (const construct of visiblePredictedConstructs) {
+      if (construct.confidence !== ConcurrencyConfidence.Predicted) {
+        continue;
+      }
+      const existing = index.get(construct.line);
+      if (!existing || construct.column < existing.column) {
+        index.set(construct.line, construct);
+      }
+    }
+    return index;
+  }, [visiblePredictedConstructs]);
 
   const interactionLine = hoveredLine ?? selectedLine;
 
@@ -62,11 +75,7 @@ export function useHoverHint({
       return null;
     }
 
-    const match = visiblePredictedConstructs.find(
-      (construct) =>
-        construct.line === interactionLine &&
-        construct.confidence === ConcurrencyConfidence.Predicted
-    );
+    const match = predictedByLine.get(interactionLine);
     if (!match) {
       return null;
     }
@@ -83,7 +92,7 @@ export function useHoverHint({
     activeFilePath,
     interactionLine,
     runtimeAvailability,
-    visiblePredictedConstructs,
+    predictedByLine,
     workspacePath,
   ]);
 
