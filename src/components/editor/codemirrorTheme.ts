@@ -19,6 +19,7 @@ import { tags } from "@lezer/highlight";
 
 export const PREDICTED_HINT_UNDERLINE_CLASS = "goide-predicted-hint-underline";
 export const GOIDE_SIGNAL_PREDICTED_TOKEN = "var(--goide-signal-predicted)";
+export const DEBUG_CURRENT_LINE_CLASS = "goide-debug-current-line";
 
 const editorTheme = EditorView.theme(
   {
@@ -49,6 +50,10 @@ const editorTheme = EditorView.theme(
       textDecorationThickness: "1px",
       textUnderlineOffset: "3px",
     },
+    [`.cm-line.${DEBUG_CURRENT_LINE_CLASS}`]: {
+      backgroundColor: "var(--bg-active)",
+      borderLeft: "2px solid var(--red)",
+    },
     ".cm-lintRange-error": {
       backgroundColor: "var(--signal-blocked-bg)",
       textDecoration: "underline wavy var(--red)",
@@ -70,29 +75,115 @@ const editorTheme = EditorView.theme(
     ".cm-gutters": {
       backgroundColor: "var(--crust) !important",
       color: "var(--overlay0)",
-      borderRight: "1px solid rgba(113, 125, 144, 0.25)",
+      borderRight: "1px solid var(--border-subtle)",
+      padding: "8px 0",
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
       fontSize: "11px",
+      lineHeight: "calc(13px * 1.62)",
+      display: "flex",
+      alignItems: "flex-start",
+      justifyContent: "flex-end",
+    },
+    ".cm-gutterElement": {
+      minHeight: "calc(13px * 1.62)",
+      boxSizing: "border-box",
+    },
+    ".cm-breakpoint-gutter": {
+      width: "20px",
+    },
+    ".cm-breakpoint-gutter .cm-gutterElement": {
+      padding: "0",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    ".goide-breakpoint-marker": {
+      display: "block",
+      width: "10px",
+      height: "10px",
+      borderRadius: "999px",
+      backgroundColor: "var(--red)",
+      margin: "0 auto",
+      boxShadow: "0 0 0 1px rgba(35, 38, 52, 0.8)",
     },
     ".cm-activeLine": {
-      backgroundColor: "rgba(126, 162, 220, 0.09)",
+      backgroundColor: "var(--bg-active)",
     },
     ".cm-activeLineGutter": {
-      backgroundColor: "rgba(126, 162, 220, 0.12)",
+      backgroundColor: "var(--bg-active)",
       color: "var(--subtext1)",
     },
     ".cm-selectionBackground, .cm-content ::selection": {
-      backgroundColor: "rgba(126, 162, 220, 0.24) !important",
+      backgroundColor: "var(--selection-bg) !important",
     },
     ".cm-tooltip": {
       backgroundColor: "var(--mantle)",
-      border: "1px solid rgba(126, 162, 220, 0.26)",
+      border: "1px solid var(--border-muted)",
       borderRadius: "10px",
       boxShadow: "0 18px 48px rgba(0, 0, 0, 0.42)",
       color: "var(--text)",
       overflow: "hidden",
+    },
+    ".cm-panels": {
+      backgroundColor: "var(--mantle)",
+      borderBottom: "1px solid var(--border-muted)",
+    },
+    ".cm-search": {
+      alignItems: "center",
+      display: "flex",
+      flexWrap: "wrap",
+      gap: "6px",
+      padding: "8px 10px",
+    },
+    ".cm-search label": {
+      color: "var(--overlay1)",
+      fontSize: "11px",
+      fontWeight: "600",
+      letterSpacing: "0.02em",
+      textTransform: "uppercase",
+    },
+    ".cm-search input": {
+      border: "1px solid var(--border-muted)",
+      borderRadius: "6px",
+      backgroundColor: "var(--crust)",
+      color: "var(--text)",
+      fontFamily:
+        '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
+      fontSize: "12px",
+      height: "26px",
+      padding: "0 8px",
+      minWidth: "140px",
+    },
+    ".cm-search input:focus": {
+      borderColor: "var(--blue)",
+      outline: "1px solid var(--focus-ring)",
+      outlineOffset: "0",
+    },
+    ".cm-search button": {
+      border: "1px solid var(--border-muted)",
+      borderRadius: "6px",
+      backgroundColor: "rgba(140,170,238,0.08)",
+      color: "var(--subtext1)",
+      fontSize: "11px",
+      fontWeight: "600",
+      height: "24px",
+      padding: "0 8px",
+    },
+    ".cm-search button:hover": {
+      backgroundColor: "rgba(140,170,238,0.16)",
+    },
+    ".cm-search button[disabled]": {
+      opacity: "0.55",
+    },
+    ".cm-search .cm-searchMatch": {
+      backgroundColor: "rgba(229,200,144,0.22)",
+      borderBottom: "1px solid rgba(229,200,144,0.75)",
+    },
+    ".cm-search .cm-searchMatch-selected": {
+      backgroundColor: "rgba(140,170,238,0.26)",
+      borderBottom: "1px solid rgba(140,170,238,0.8)",
     },
     ".cm-tooltip-autocomplete": {
       "& > ul": {
@@ -111,7 +202,7 @@ const editorTheme = EditorView.theme(
         padding: "3px 10px",
       },
       "& ul li[aria-selected]": {
-        backgroundColor: "rgba(126, 162, 220, 0.18)",
+        backgroundColor: "var(--bg-active)",
         color: "var(--text)",
       },
       "& .cm-completionLabel": {
@@ -134,7 +225,7 @@ const editorTheme = EditorView.theme(
       },
       "& .cm-completionInfo": {
         backgroundColor: "var(--mantle)",
-        border: "1px solid rgba(126, 162, 220, 0.24)",
+        border: "1px solid var(--border-muted)",
         borderRadius: "9px",
         color: "var(--subtext1)",
         maxWidth: "420px",
@@ -156,27 +247,30 @@ const editorTheme = EditorView.theme(
 
 const syntaxStyle = HighlightStyle.define([
   { tag: tags.docComment, color: "var(--overlay1)", fontStyle: "italic" },
-  { tag: tags.comment, color: "var(--overlay0)", fontStyle: "italic" },
-  { tag: tags.moduleKeyword, color: "var(--teal)", fontWeight: "700" },
+  { tag: tags.comment, color: "var(--overlay1)", fontStyle: "italic" },
+  { tag: tags.moduleKeyword, color: "var(--lavender)", fontWeight: "700" },
   { tag: tags.controlKeyword, color: "var(--mauve)", fontWeight: "700" },
-  { tag: tags.definitionKeyword, color: "var(--pink)", fontWeight: "700" },
-  { tag: tags.operatorKeyword, color: "var(--sapphire)", fontWeight: "600" },
+  { tag: tags.definitionKeyword, color: "var(--red)", fontWeight: "700" },
+  { tag: tags.operatorKeyword, color: "var(--sky)", fontWeight: "600" },
   { tag: tags.keyword, color: "var(--mauve)", fontWeight: "600" },
+  { tag: [tags.special(tags.name), tags.name], color: "var(--subtext1)" },
   { tag: [tags.string, tags.character], color: "var(--green)" },
   { tag: tags.escape, color: "var(--pink)", fontWeight: "600" },
   { tag: tags.regexp, color: "var(--teal)" },
   { tag: [tags.number, tags.bool, tags.null], color: "var(--peach)" },
-  { tag: [tags.typeName, tags.className], color: "var(--lavender)", fontWeight: "600" },
+  { tag: [tags.typeName, tags.className], color: "var(--yellow)", fontWeight: "600" },
   { tag: tags.namespace, color: "var(--teal)" },
   { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "600" },
+  { tag: tags.function(tags.propertyName), color: "var(--sapphire)", fontWeight: "600" },
   { tag: tags.definition(tags.variableName), color: "var(--text)", fontWeight: "600" },
-  { tag: tags.standard(tags.variableName), color: "var(--sky)" },
-  { tag: tags.operator, color: "var(--sapphire)" },
-  { tag: [tags.punctuation, tags.separator], color: "var(--overlay1)" },
+  { tag: tags.definition(tags.function(tags.variableName)), color: "var(--blue)", fontWeight: "700" },
+  { tag: tags.standard(tags.variableName), color: "var(--sapphire)" },
+  { tag: tags.operator, color: "var(--teal)" },
+  { tag: [tags.punctuation, tags.separator], color: "var(--overlay2)" },
   { tag: tags.bracket, color: "var(--subtext0)" },
   { tag: tags.variableName, color: "var(--text)" },
   { tag: tags.propertyName, color: "var(--sky)", fontWeight: "500" },
-  { tag: tags.labelName, color: "var(--yellow)" },
+  { tag: tags.labelName, color: "var(--peach)" },
   { tag: tags.atom, color: "var(--maroon)" },
   { tag: tags.invalid, color: "var(--red)", textDecoration: "underline wavy var(--red)" },
 ]);

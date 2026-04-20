@@ -8,11 +8,21 @@ import type {
   CompletionRequest,
   ConcurrencyConstruct,
   DiagnosticsResponse,
+  DebuggerState,
   FsEntry,
   RuntimeAvailabilityResponse,
+  RuntimePanelSnapshot,
+  RuntimeTopologySnapshot,
   RuntimeSignal,
   ToolchainStatus,
+  ToggleBreakpointRequest,
+  WorkspaceGitSnapshot,
+  WorkspaceSearchFile,
 } from "./types";
+
+function hasTauriInternals(): boolean {
+  return Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
 
 export async function listWorkspaceEntries(
   workspaceRoot: string,
@@ -111,12 +121,81 @@ export async function activateScopedDeepTrace(
 }
 
 export async function deactivateDeepTrace(): Promise<ApiResponse<void>> {
-  const tauriInternals = (globalThis as { __TAURI_INTERNALS__?: unknown })
-    .__TAURI_INTERNALS__;
-  if (!tauriInternals) {
+  if (!hasTauriInternals()) {
     return { ok: true };
   }
   return invoke<ApiResponse<void>>("deactivate_deep_trace");
+}
+
+export async function createWorkspaceFile(
+  workspaceRoot: string,
+  relativePath: string,
+  content = ""
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("create_workspace_file", {
+    workspaceRoot,
+    relativePath,
+    content: content ?? "",
+  });
+}
+
+export async function createWorkspaceFolder(
+  workspaceRoot: string,
+  relativePath: string
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("create_workspace_folder", {
+    workspaceRoot,
+    relativePath,
+  });
+}
+
+export async function deleteWorkspaceEntry(
+  workspaceRoot: string,
+  relativePath: string
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("delete_workspace_entry", {
+    workspaceRoot,
+    relativePath,
+  });
+}
+
+export async function renameWorkspaceEntry(
+  workspaceRoot: string,
+  relativePath: string,
+  newName: string
+): Promise<ApiResponse<string>> {
+  if (!hasTauriInternals()) {
+    return { ok: true, data: relativePath };
+  }
+  return invoke<ApiResponse<string>>("rename_workspace_entry", {
+    workspaceRoot,
+    relativePath,
+    newName,
+  });
+}
+
+export async function moveWorkspaceEntry(
+  workspaceRoot: string,
+  relativePath: string,
+  destinationRelativePath: string
+): Promise<ApiResponse<string>> {
+  if (!hasTauriInternals()) {
+    return { ok: true, data: destinationRelativePath };
+  }
+  return invoke<ApiResponse<string>>("move_workspace_entry", {
+    workspaceRoot,
+    relativePath,
+    destinationRelativePath,
+  });
 }
 
 export async function getRuntimeAvailability(): Promise<
@@ -128,9 +207,7 @@ export async function getRuntimeAvailability(): Promise<
 }
 
 export async function getToolchainStatus(): Promise<ApiResponse<ToolchainStatus>> {
-  const tauriInternals = (globalThis as { __TAURI_INTERNALS__?: unknown })
-    .__TAURI_INTERNALS__;
-  if (!tauriInternals) {
+  if (!hasTauriInternals()) {
     return {
       ok: true,
       data: {
@@ -145,4 +222,122 @@ export async function getToolchainStatus(): Promise<ApiResponse<ToolchainStatus>
 
 export async function getRuntimeSignals(): Promise<ApiResponse<RuntimeSignal[]>> {
   return invoke<ApiResponse<RuntimeSignal[]>>("get_runtime_signals");
+}
+
+export async function getRuntimePanelSnapshot(): Promise<
+  ApiResponse<RuntimePanelSnapshot>
+> {
+  return invoke<ApiResponse<RuntimePanelSnapshot>>("get_runtime_panel_snapshot");
+}
+
+export async function getRuntimeTopologySnapshot(): Promise<
+  ApiResponse<RuntimeTopologySnapshot>
+> {
+  return invoke<ApiResponse<RuntimeTopologySnapshot>>(
+    "get_runtime_topology_snapshot"
+  );
+}
+
+export async function getDebuggerState(): Promise<ApiResponse<DebuggerState>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        sessionActive: false,
+        paused: false,
+        activeRelativePath: null,
+        activeLine: null,
+        activeColumn: null,
+        breakpoints: [],
+      },
+    };
+  }
+  return invoke<ApiResponse<DebuggerState>>("get_debugger_state");
+}
+
+export async function debuggerContinue(): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("debugger_continue");
+}
+
+export async function debuggerPause(): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("debugger_pause");
+}
+
+export async function debuggerStepOver(): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("debugger_step_over");
+}
+
+export async function debuggerStepInto(): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("debugger_step_into");
+}
+
+export async function debuggerStepOut(): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("debugger_step_out");
+}
+
+export async function debuggerToggleBreakpoint(
+  request: ToggleBreakpointRequest
+): Promise<ApiResponse<DebuggerState>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        sessionActive: false,
+        paused: false,
+        activeRelativePath: null,
+        activeLine: null,
+        activeColumn: null,
+        breakpoints: [],
+      },
+    };
+  }
+  return invoke<ApiResponse<DebuggerState>>("debugger_toggle_breakpoint", {
+    request,
+  });
+}
+
+export async function searchWorkspaceText(
+  workspaceRoot: string,
+  query: string
+): Promise<ApiResponse<WorkspaceSearchFile[]>> {
+  return invoke<ApiResponse<WorkspaceSearchFile[]>>("search_workspace_text", {
+    workspaceRoot,
+    query,
+  });
+}
+
+export async function getWorkspaceGitSnapshot(
+  workspaceRoot: string
+): Promise<ApiResponse<WorkspaceGitSnapshot>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        branch: "unknown",
+        changedFiles: [],
+        commits: [],
+      },
+    };
+  }
+  return invoke<ApiResponse<WorkspaceGitSnapshot>>(
+    "get_workspace_git_snapshot",
+    {
+      workspaceRoot,
+    }
+  );
 }

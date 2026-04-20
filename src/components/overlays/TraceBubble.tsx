@@ -55,10 +55,10 @@ function TraceBubble({
       }}
     >
       <div
-        className="glass-morphism flex items-center gap-2 rounded-full border px-3 py-1 text-[9px] font-bold shadow-md"
+        className="glass-morphism flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-bold shadow-md"
         style={{
           borderColor: config.color,
-          backgroundColor: `rgba(30, 30, 46, 0.45)`,
+          backgroundColor: `var(--crust)`,
           color: "var(--text)",
         }}
       >
@@ -78,7 +78,7 @@ function TraceBubble({
         {blocked ? (
           <>
             <span className="opacity-20">|</span>
-            <span className="inline-flex items-center gap-1.5 text-[9px] uppercase text-[var(--signal-blocked)]">
+            <span className="inline-flex items-center gap-1.5 text-[11px] uppercase text-[var(--signal-blocked)]">
               <span
                 data-testid="trace-bubble-blocked-indicator"
                 className="inline-block h-2 w-2 rounded-full bg-[var(--signal-blocked)]"

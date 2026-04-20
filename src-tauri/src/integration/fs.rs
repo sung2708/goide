@@ -129,6 +129,161 @@ pub fn read_file(workspace_root: &str, relative_path: &str) -> Result<String> {
         .with_context(|| format!("failed to read file: {}", target.display()))
 }
 
+pub fn create_file(workspace_root: &str, relative_path: &str, content: &str) -> Result<()> {
+    if relative_path.trim().is_empty() {
+        return Err(anyhow!("relative path is required"));
+    }
+
+    let root = canonicalize_root(workspace_root)?;
+    let target = resolve_scoped_create_target(&root, relative_path)?;
+    if target.exists() {
+        return Err(anyhow!("path already exists"));
+    }
+
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("path has no parent directory"))?;
+    fs::create_dir_all(parent)
+        .with_context(|| format!("failed to create parent directories: {}", parent.display()))?;
+
+    let mut file = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&target)
+        .with_context(|| format!("failed to create file: {}", target.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("failed to write file: {}", target.display()))?;
+    file.sync_all()
+        .with_context(|| format!("failed to flush file: {}", target.display()))?;
+    Ok(())
+}
+
+pub fn create_folder(workspace_root: &str, relative_path: &str) -> Result<()> {
+    if relative_path.trim().is_empty() {
+        return Err(anyhow!("relative path is required"));
+    }
+
+    let root = canonicalize_root(workspace_root)?;
+    let target = resolve_scoped_create_target(&root, relative_path)?;
+    if target.exists() {
+        return Err(anyhow!("path already exists"));
+    }
+
+    fs::create_dir_all(&target)
+        .with_context(|| format!("failed to create folder: {}", target.display()))?;
+    Ok(())
+}
+
+pub fn delete_entry(workspace_root: &str, relative_path: &str) -> Result<()> {
+    if relative_path.trim().is_empty() {
+        return Err(anyhow!("relative path is required"));
+    }
+
+    let root = canonicalize_root(workspace_root)?;
+    let target = resolve_scoped_path(&root, Some(relative_path))?;
+    let metadata = fs::symlink_metadata(&target)
+        .with_context(|| format!("failed to read metadata: {}", target.display()))?;
+
+    if metadata.is_dir() {
+        fs::remove_dir_all(&target)
+            .with_context(|| format!("failed to remove folder: {}", target.display()))?;
+    } else {
+        fs::remove_file(&target)
+            .with_context(|| format!("failed to remove file: {}", target.display()))?;
+    }
+    Ok(())
+}
+
+pub fn rename_entry(workspace_root: &str, relative_path: &str, new_name: &str) -> Result<String> {
+    if relative_path.trim().is_empty() {
+        return Err(anyhow!("relative path is required"));
+    }
+
+    let trimmed_name = new_name.trim();
+    if trimmed_name.is_empty() {
+        return Err(anyhow!("new name is required"));
+    }
+    if trimmed_name.contains('/') || trimmed_name.contains('\\') {
+        return Err(anyhow!("new name must not contain path separators"));
+    }
+    if trimmed_name == "." || trimmed_name == ".." {
+        return Err(anyhow!("invalid new name"));
+    }
+
+    let root = canonicalize_root(workspace_root)?;
+    let source = resolve_scoped_path(&root, Some(relative_path))?;
+    let parent = source
+        .parent()
+        .ok_or_else(|| anyhow!("source has no parent directory"))?;
+    let destination = parent.join(trimmed_name);
+    if destination.exists() {
+        return Err(anyhow!("destination already exists"));
+    }
+
+    fs::rename(&source, &destination).with_context(|| {
+        format!(
+            "failed to rename entry from {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+
+    let relative = destination
+        .strip_prefix(&root)
+        .unwrap_or(&destination)
+        .to_string_lossy()
+        .replace('\\', "/");
+    Ok(relative)
+}
+
+pub fn move_entry(
+    workspace_root: &str,
+    relative_path: &str,
+    destination_relative_path: &str,
+) -> Result<String> {
+    if relative_path.trim().is_empty() || destination_relative_path.trim().is_empty() {
+        return Err(anyhow!("source and destination paths are required"));
+    }
+
+    let root = canonicalize_root(workspace_root)?;
+    let source = resolve_scoped_path(&root, Some(relative_path))?;
+    let destination = resolve_scoped_create_target(&root, destination_relative_path)?;
+    if destination.exists() {
+        return Err(anyhow!("destination already exists"));
+    }
+
+    let source_metadata = fs::symlink_metadata(&source)
+        .with_context(|| format!("failed to read metadata: {}", source.display()))?;
+    if source_metadata.is_dir() && destination.starts_with(&source) {
+        return Err(anyhow!("cannot move a folder into itself"));
+    }
+
+    let parent = destination
+        .parent()
+        .ok_or_else(|| anyhow!("destination has no parent directory"))?;
+    fs::create_dir_all(parent).with_context(|| {
+        format!(
+            "failed to create destination parent directories: {}",
+            parent.display()
+        )
+    })?;
+
+    fs::rename(&source, &destination).with_context(|| {
+        format!(
+            "failed to move entry from {} to {}",
+            source.display(),
+            destination.display()
+        )
+    })?;
+
+    let relative = destination
+        .strip_prefix(&root)
+        .unwrap_or(&destination)
+        .to_string_lossy()
+        .replace('\\', "/");
+    Ok(relative)
+}
+
 fn canonicalize_root(root: &str) -> Result<PathBuf> {
     let root_path = Path::new(root);
     let canonical = root_path
@@ -152,6 +307,45 @@ fn resolve_scoped_path(root: &Path, relative_path: Option<&str>) -> Result<PathB
     }
 
     Ok(canonical_target)
+}
+
+fn resolve_scoped_create_target(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    let trimmed = relative_path.trim();
+    let candidate = Path::new(trimmed);
+    if candidate.is_absolute() {
+        return Err(anyhow!("absolute paths are not allowed"));
+    }
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(anyhow!("path escapes workspace root"));
+    }
+
+    let target = root.join(candidate);
+    let parent = target
+        .parent()
+        .ok_or_else(|| anyhow!("path has no parent directory"))?;
+
+    let mut probe = parent.to_path_buf();
+    while !probe.exists() {
+        probe = probe
+            .parent()
+            .ok_or_else(|| anyhow!("path escapes workspace root"))?
+            .to_path_buf();
+    }
+    let canonical_probe = probe
+        .canonicalize()
+        .with_context(|| format!("failed to resolve parent path: {}", probe.display()))?;
+    if !canonical_probe.starts_with(root) {
+        return Err(anyhow!("path escapes workspace root"));
+    }
+
+    Ok(target)
 }
 
 fn write_file_atomic(

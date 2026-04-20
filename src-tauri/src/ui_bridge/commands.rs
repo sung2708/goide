@@ -2,6 +2,7 @@ use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
+use crate::integration::command::std_command;
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
@@ -9,16 +10,20 @@ use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
-    ConcurrencyConstructKindDto, DeepTraceConstructKindDto, DiagnosticRangeDto,
-    DiagnosticSeverityDto, DiagnosticsResponseDto, DiagnosticsToolingAvailabilityDto,
-    EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto, RuntimeSignalDto,
-    ToolAvailabilityDto, ToolchainStatusDto,
+    ConcurrencyConstructKindDto, DebuggerBreakpointDto, DebuggerStateDto,
+    DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
+    DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
+    RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
+    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ToggleBreakpointRequestDto,
+    ToolAvailabilityDto, ToolchainStatusDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
+    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
-use std::path::{Component, Path};
-use std::process::Command;
+use std::collections::{HashMap, HashSet};
+use std::fs as std_fs;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{mpsc, oneshot, Mutex};
 
 /// Global shared handle to the currently-running `go run` process.
 /// A `OnceLock` gives us a lazily initialized, Send + Sync singleton without unsafe.
@@ -39,12 +44,36 @@ static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<RuntimeSignalStore>>> =
 struct RuntimeSignalStore {
     healthy: bool,
     signals: Vec<RuntimeSignal>,
+    paused: bool,
+    active_relative_path: Option<String>,
+    active_line: Option<usize>,
+    active_column: Option<usize>,
+    active_thread_id: Option<i64>,
+    breakpoints: HashMap<String, Vec<usize>>,
 }
 
 struct DapSessionHandle {
     child: tokio::process::Child,
     stop_tx: oneshot::Sender<()>,
+    control_tx: mpsc::UnboundedSender<DebuggerControlCommand>,
     sampler_task: tokio::task::JoinHandle<()>,
+}
+
+enum DebuggerControlKind {
+    Continue,
+    Pause,
+    StepOver,
+    StepInto,
+    StepOut,
+    ToggleBreakpoint {
+        relative_path: String,
+        line: usize,
+    },
+}
+
+struct DebuggerControlCommand {
+    kind: DebuggerControlKind,
+    response_tx: oneshot::Sender<Result<(), String>>,
 }
 
 fn get_dap_session_handle() -> Arc<Mutex<Option<DapSessionHandle>>> {
@@ -59,10 +88,21 @@ fn get_runtime_signals_handle() -> Arc<Mutex<RuntimeSignalStore>> {
         .clone()
 }
 
+fn is_blocked_wait_reason(wait_reason: &str) -> bool {
+    let normalized = wait_reason.trim().to_ascii_lowercase();
+    normalized.contains("chan receive")
+        || normalized.contains("chan send")
+        || normalized.contains("semacquire")
+        || normalized.contains("select")
+        || normalized.contains("sleep")
+        || normalized.contains("io wait")
+}
+
 async fn stop_dap_session(session: DapSessionHandle) {
     let DapSessionHandle {
         mut child,
         stop_tx,
+        control_tx: _,
         sampler_task,
     } = session;
     let mut sampler_task = sampler_task;
@@ -486,13 +526,32 @@ pub async fn activate_scoped_deep_trace(
     }
 
     let signals_handle = get_runtime_signals_handle();
-    {
+    let breakpoint_snapshot = {
         let mut store = signals_handle.lock().await;
         store.signals.clear();
         store.healthy = true;
+        store.paused = false;
+        store.active_relative_path = None;
+        store.active_line = None;
+        store.active_column = None;
+        store.active_thread_id = None;
+        store.breakpoints.clone()
+    };
+
+    for (relative_path, lines) in &breakpoint_snapshot {
+        if lines.is_empty() {
+            continue;
+        }
+        let resolved_path = workspace_root.join(relative_path);
+        if let Err(error) = client.set_breakpoints(&resolved_path, lines).await {
+            let _ = client.disconnect().await;
+            let _ = dap_process.child.kill().await;
+            return ApiResponse::err("debugger_breakpoint_failed", &format!("{error:#}"));
+        }
     }
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
+    let (control_tx, mut control_rx) = mpsc::unbounded_channel::<DebuggerControlCommand>();
     let session_pid = dap_process.child.id();
     let session_handle_for_sampler = get_dap_session_handle();
     let runtime_scope = RuntimeSignalScope {
@@ -521,6 +580,7 @@ pub async fn activate_scoped_deep_trace(
         }),
         _ => None,
     };
+    let debugger_workspace_root = workspace_root.clone();
     let sampler_task = tokio::spawn(async move {
         let mut client = client;
         loop {
@@ -529,16 +589,105 @@ pub async fn activate_scoped_deep_trace(
                     let _ = client.disconnect().await;
                     break;
                 }
+                Some(control) = control_rx.recv() => {
+                    let result: Result<(), String> = async {
+                        match control.kind {
+                            DebuggerControlKind::Continue => {
+                                let threads = client.threads().await.map_err(|error| error.to_string())?;
+                                let thread_id = {
+                                    let store = signals_handle.lock().await;
+                                    select_debug_thread_id(&store, &threads)
+                                }
+                                .ok_or_else(|| "no active thread to continue".to_string())?;
+                                client.continue_thread(thread_id).await.map_err(|error| error.to_string())?;
+                                let mut store = signals_handle.lock().await;
+                                store.paused = false;
+                                store.active_thread_id = Some(thread_id);
+                                refresh_debugger_location(&mut client, &mut store).await;
+                            }
+                            DebuggerControlKind::Pause => {
+                                let threads = client.threads().await.map_err(|error| error.to_string())?;
+                                let thread_id = {
+                                    let store = signals_handle.lock().await;
+                                    select_debug_thread_id(&store, &threads)
+                                }
+                                .ok_or_else(|| "no active thread to pause".to_string())?;
+                                client.pause_thread(thread_id).await.map_err(|error| error.to_string())?;
+                                let mut store = signals_handle.lock().await;
+                                store.paused = true;
+                                store.active_thread_id = Some(thread_id);
+                                refresh_debugger_location(&mut client, &mut store).await;
+                            }
+                            DebuggerControlKind::StepOver => {
+                                let threads = client.threads().await.map_err(|error| error.to_string())?;
+                                let thread_id = {
+                                    let store = signals_handle.lock().await;
+                                    select_debug_thread_id(&store, &threads)
+                                }
+                                .ok_or_else(|| "no active thread to step over".to_string())?;
+                                client.next(thread_id).await.map_err(|error| error.to_string())?;
+                                let mut store = signals_handle.lock().await;
+                                store.paused = true;
+                                store.active_thread_id = Some(thread_id);
+                                refresh_debugger_location(&mut client, &mut store).await;
+                            }
+                            DebuggerControlKind::StepInto => {
+                                let threads = client.threads().await.map_err(|error| error.to_string())?;
+                                let thread_id = {
+                                    let store = signals_handle.lock().await;
+                                    select_debug_thread_id(&store, &threads)
+                                }
+                                .ok_or_else(|| "no active thread to step into".to_string())?;
+                                client.step_in(thread_id).await.map_err(|error| error.to_string())?;
+                                let mut store = signals_handle.lock().await;
+                                store.paused = true;
+                                store.active_thread_id = Some(thread_id);
+                                refresh_debugger_location(&mut client, &mut store).await;
+                            }
+                            DebuggerControlKind::StepOut => {
+                                let threads = client.threads().await.map_err(|error| error.to_string())?;
+                                let thread_id = {
+                                    let store = signals_handle.lock().await;
+                                    select_debug_thread_id(&store, &threads)
+                                }
+                                .ok_or_else(|| "no active thread to step out".to_string())?;
+                                client.step_out(thread_id).await.map_err(|error| error.to_string())?;
+                                let mut store = signals_handle.lock().await;
+                                store.paused = true;
+                                store.active_thread_id = Some(thread_id);
+                                refresh_debugger_location(&mut client, &mut store).await;
+                            }
+                            DebuggerControlKind::ToggleBreakpoint { relative_path, line } => {
+                                let mut store = signals_handle.lock().await;
+                                toggle_breakpoint_in_store(&mut store, &relative_path, line);
+                                let line_snapshot = store
+                                    .breakpoints
+                                    .get(&relative_path)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                drop(store);
+                                let resolved_path = debugger_workspace_root.join(&relative_path);
+                                client
+                                    .set_breakpoints(&resolved_path, &line_snapshot)
+                                    .await
+                                    .map_err(|error| error.to_string())?;
+                            }
+                        }
+                        Ok(())
+                    }
+                    .await;
+                    let _ = control.response_tx.send(result);
+                }
                 _ = tokio::time::sleep(Duration::from_millis(500)) => {
                     match client.threads().await {
                         Ok(threads) => {
                             let mut mapped = Vec::new();
-                            for thread in threads {
+                            for thread in &threads {
                                 // Performance: only fetch stack trace for relevant concurrency threads
                                 if delve::parse_thread_wait_state(&thread.name).is_some() {
                                     let frame = client.stack_trace(thread.id).await.unwrap_or(None);
                                     if let Some(signal) = delve::thread_to_runtime_signal(
-                                        &thread,
+                                        thread,
                                         &runtime_scope,
                                         frame.as_ref(),
                                     ) {
@@ -553,6 +702,9 @@ pub async fn activate_scoped_deep_trace(
                             let mut store = signals_handle.lock().await;
                             store.signals = correlated;
                             store.healthy = true;
+                            if !store.paused {
+                                store.active_thread_id = threads.first().map(|thread| thread.id);
+                            }
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;
@@ -586,6 +738,7 @@ pub async fn activate_scoped_deep_trace(
         guard.replace(DapSessionHandle {
             child: dap_process.child,
             stop_tx,
+            control_tx,
             sampler_task,
         })
     };
@@ -601,9 +754,10 @@ pub async fn activate_scoped_deep_trace(
 
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || Command::new("dlv").arg("version").output())
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        std_command("dlv").arg("version").output()
+    })
+    .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -616,7 +770,7 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
 }
 
 fn command_version(command: &str, args: &[&str]) -> ToolAvailabilityDto {
-    let output = Command::new(command).args(args).output();
+    let output = std_command(command).args(args).output();
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -676,6 +830,683 @@ pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
 }
 
 #[tauri::command]
+pub async fn create_workspace_file(
+    workspace_root: String,
+    relative_path: String,
+    content: Option<String>,
+) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::create_file(
+            &workspace_root,
+            &relative_path,
+            content.as_deref().unwrap_or_default(),
+        )
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(error)) => ApiResponse::err("fs_create_file_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_create_file_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn create_workspace_folder(
+    workspace_root: String,
+    relative_path: String,
+) -> ApiResponse<()> {
+    let result =
+        tauri::async_runtime::spawn_blocking(move || fs::create_folder(&workspace_root, &relative_path))
+            .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(error)) => ApiResponse::err("fs_create_folder_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_create_folder_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn delete_workspace_entry(
+    workspace_root: String,
+    relative_path: String,
+) -> ApiResponse<()> {
+    let result =
+        tauri::async_runtime::spawn_blocking(move || fs::delete_entry(&workspace_root, &relative_path))
+            .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(error)) => ApiResponse::err("fs_delete_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_delete_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn rename_workspace_entry(
+    workspace_root: String,
+    relative_path: String,
+    new_name: String,
+) -> ApiResponse<String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::rename_entry(&workspace_root, &relative_path, &new_name)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(next_relative_path)) => ApiResponse::ok(next_relative_path),
+        Ok(Err(error)) => ApiResponse::err("fs_rename_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_rename_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn move_workspace_entry(
+    workspace_root: String,
+    relative_path: String,
+    destination_relative_path: String,
+) -> ApiResponse<String> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::move_entry(&workspace_root, &relative_path, &destination_relative_path)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(next_relative_path)) => ApiResponse::ok(next_relative_path),
+        Ok(Err(error)) => ApiResponse::err("fs_move_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("fs_move_failed", &error.to_string()),
+    }
+}
+
+fn flatten_breakpoints(store: &RuntimeSignalStore) -> Vec<DebuggerBreakpointDto> {
+    let mut items = store
+        .breakpoints
+        .iter()
+        .flat_map(|(path, lines)| {
+            lines.iter().map(|line| DebuggerBreakpointDto {
+                relative_path: path.clone(),
+                line: *line,
+            })
+        })
+        .collect::<Vec<_>>();
+    items.sort_by(|left, right| {
+        left.relative_path
+            .cmp(&right.relative_path)
+            .then(left.line.cmp(&right.line))
+    });
+    items
+}
+
+fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> DebuggerStateDto {
+    DebuggerStateDto {
+        session_active,
+        paused: store.paused,
+        active_relative_path: store.active_relative_path.clone(),
+        active_line: store.active_line,
+        active_column: store.active_column,
+        breakpoints: flatten_breakpoints(store),
+    }
+}
+
+fn toggle_breakpoint_in_store(store: &mut RuntimeSignalStore, relative_path: &str, line: usize) {
+    let mut remove_entry = false;
+    {
+        let lines = store
+            .breakpoints
+            .entry(relative_path.to_string())
+            .or_default();
+        if lines.contains(&line) {
+            lines.retain(|item| *item != line);
+            remove_entry = lines.is_empty();
+        } else {
+            lines.push(line);
+            lines.sort_unstable();
+        }
+    }
+    if remove_entry {
+        store.breakpoints.remove(relative_path);
+    }
+}
+
+fn select_debug_thread_id(store: &RuntimeSignalStore, threads: &[delve::DapThread]) -> Option<i64> {
+    if let Some(active) = store.active_thread_id {
+        if threads.iter().any(|thread| thread.id == active) {
+            return Some(active);
+        }
+    }
+    threads.first().map(|thread| thread.id)
+}
+
+async fn refresh_debugger_location(client: &mut DapClient, store: &mut RuntimeSignalStore) {
+    if !store.paused {
+        store.active_relative_path = None;
+        store.active_line = None;
+        store.active_column = None;
+        return;
+    }
+    let Ok(threads) = client.threads().await else {
+        return;
+    };
+    let Some(thread_id) = select_debug_thread_id(store, &threads) else {
+        return;
+    };
+    store.active_thread_id = Some(thread_id);
+    if let Ok(frame) = client.stack_trace(thread_id).await {
+        if let Some(frame) = frame {
+            store.active_relative_path = Some(frame.relative_path);
+            store.active_line = Some(frame.line);
+            store.active_column = Some(frame.column);
+            return;
+        }
+    }
+    store.active_relative_path = None;
+    store.active_line = None;
+    store.active_column = None;
+}
+
+#[tauri::command]
+pub async fn get_runtime_panel_snapshot() -> ApiResponse<RuntimePanelSnapshotDto> {
+    let session_handle = get_dap_session_handle();
+    let session_active = {
+        let guard = session_handle.lock().await;
+        guard.is_some()
+    };
+
+    let signals_handle = get_runtime_signals_handle();
+    let store = signals_handle.lock().await;
+    let blocked_count = store
+        .signals
+        .iter()
+        .filter(|signal| is_blocked_wait_reason(&signal.wait_reason))
+        .count();
+    let goroutine_count = store
+        .signals
+        .iter()
+        .map(|signal| signal.thread_id)
+        .collect::<HashSet<_>>()
+        .len();
+
+    ApiResponse::ok(RuntimePanelSnapshotDto {
+        session_active,
+        signal_count: store.signals.len(),
+        blocked_count,
+        goroutine_count,
+    })
+}
+
+fn classify_runtime_interaction(wait_reason: &str) -> &'static str {
+    let normalized = wait_reason.to_ascii_lowercase();
+    if normalized.contains("chan") {
+        "channel"
+    } else if normalized.contains("semacquire") {
+        "mutex"
+    } else {
+        "blocking"
+    }
+}
+
+#[tauri::command]
+pub async fn get_runtime_topology_snapshot() -> ApiResponse<RuntimeTopologySnapshotDto> {
+    let session_handle = get_dap_session_handle();
+    let session_active = {
+        let guard = session_handle.lock().await;
+        guard.is_some()
+    };
+
+    let signals_handle = get_runtime_signals_handle();
+    let store = signals_handle.lock().await;
+    if !session_active || !store.healthy {
+        return ApiResponse::ok(RuntimeTopologySnapshotDto {
+            session_active: false,
+            interactions: Vec::new(),
+        });
+    }
+
+    let interactions = store
+        .signals
+        .iter()
+        .map(|signal| {
+            let interaction_kind = classify_runtime_interaction(&signal.wait_reason).to_string();
+            let source = format!(
+                "g#{} @ {}:{}",
+                signal.thread_id, signal.relative_path, signal.line
+            );
+            let target = signal
+                .counterpart_relative_path
+                .as_ref()
+                .zip(signal.counterpart_line)
+                .map(|(path, line)| format!("{path}:{line}"));
+            RuntimeTopologyInteractionDto {
+                thread_id: signal.thread_id,
+                kind: interaction_kind,
+                wait_reason: signal.wait_reason.clone(),
+                source,
+                target,
+                confidence: match signal.confidence.as_str() {
+                    "predicted" => ConcurrencyConfidenceDto::Predicted,
+                    "likely" => ConcurrencyConfidenceDto::Likely,
+                    _ => ConcurrencyConfidenceDto::Confirmed,
+                },
+            }
+        })
+        .collect();
+
+    ApiResponse::ok(RuntimeTopologySnapshotDto {
+        session_active: true,
+        interactions,
+    })
+}
+
+async fn send_debugger_control(kind: DebuggerControlKind) -> Result<(), String> {
+    let session_handle = get_dap_session_handle();
+    let control_tx = {
+        let guard = session_handle.lock().await;
+        guard
+            .as_ref()
+            .map(|session| session.control_tx.clone())
+            .ok_or_else(|| "debug session is not active".to_string())?
+    };
+    let (response_tx, response_rx) = oneshot::channel::<Result<(), String>>();
+    control_tx
+        .send(DebuggerControlCommand { kind, response_tx })
+        .map_err(|_| "debugger control channel is unavailable".to_string())?;
+    match response_rx.await {
+        Ok(result) => result,
+        Err(_) => Err("debugger control response failed".to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
+    let session_handle = get_dap_session_handle();
+    let session_active = {
+        let guard = session_handle.lock().await;
+        guard.is_some()
+    };
+    let signals_handle = get_runtime_signals_handle();
+    let store = signals_handle.lock().await;
+    ApiResponse::ok(map_debugger_state(session_active, &store))
+}
+
+#[tauri::command]
+pub async fn debugger_continue() -> ApiResponse<()> {
+    match send_debugger_control(DebuggerControlKind::Continue).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(message) => ApiResponse::err("debugger_continue_failed", &message),
+    }
+}
+
+#[tauri::command]
+pub async fn debugger_pause() -> ApiResponse<()> {
+    match send_debugger_control(DebuggerControlKind::Pause).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(message) => ApiResponse::err("debugger_pause_failed", &message),
+    }
+}
+
+#[tauri::command]
+pub async fn debugger_step_over() -> ApiResponse<()> {
+    match send_debugger_control(DebuggerControlKind::StepOver).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(message) => ApiResponse::err("debugger_step_over_failed", &message),
+    }
+}
+
+#[tauri::command]
+pub async fn debugger_step_into() -> ApiResponse<()> {
+    match send_debugger_control(DebuggerControlKind::StepInto).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(message) => ApiResponse::err("debugger_step_into_failed", &message),
+    }
+}
+
+#[tauri::command]
+pub async fn debugger_step_out() -> ApiResponse<()> {
+    match send_debugger_control(DebuggerControlKind::StepOut).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(message) => ApiResponse::err("debugger_step_out_failed", &message),
+    }
+}
+
+#[tauri::command]
+pub async fn debugger_toggle_breakpoint(
+    request: ToggleBreakpointRequestDto,
+) -> ApiResponse<DebuggerStateDto> {
+    if request.line < 1 {
+        return ApiResponse::err("debugger_breakpoint_invalid", "line must be >= 1");
+    }
+    if request.relative_path.trim().is_empty() {
+        return ApiResponse::err("debugger_breakpoint_invalid", "relative path is required");
+    }
+    if let Err(message) = validate_go_analysis_path(&request.relative_path) {
+        return ApiResponse::err("debugger_breakpoint_invalid", &message);
+    }
+
+    let session_active = {
+        let session_handle = get_dap_session_handle();
+        let guard = session_handle.lock().await;
+        guard.is_some()
+    };
+
+    if session_active {
+        match send_debugger_control(DebuggerControlKind::ToggleBreakpoint {
+            relative_path: request.relative_path,
+            line: request.line,
+        })
+        .await
+        {
+            Ok(()) => get_debugger_state().await,
+            Err(message) => ApiResponse::err("debugger_breakpoint_failed", &message),
+        }
+    } else {
+        let signals_handle = get_runtime_signals_handle();
+        let mut store = signals_handle.lock().await;
+        toggle_breakpoint_in_store(&mut store, &request.relative_path, request.line);
+        ApiResponse::ok(map_debugger_state(false, &store))
+    }
+}
+
+fn resolve_workspace_root(workspace_root: &str) -> Result<PathBuf, String> {
+    let root = Path::new(workspace_root)
+        .canonicalize()
+        .map_err(|error| format!("workspace root does not exist: {error}"))?;
+    if !root.is_dir() {
+        return Err("workspace root must be a directory".to_string());
+    }
+    Ok(root)
+}
+
+fn should_search_file(path: &Path) -> bool {
+    let extension = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    match extension.as_deref() {
+        Some("go")
+        | Some("mod")
+        | Some("sum")
+        | Some("md")
+        | Some("txt")
+        | Some("json")
+        | Some("yaml")
+        | Some("yml")
+        | Some("toml")
+        | Some("rs")
+        | Some("ts")
+        | Some("tsx")
+        | Some("js")
+        | Some("jsx")
+        | Some("css")
+        | Some("html") => true,
+        _ => false,
+    }
+}
+
+fn collect_search_results(
+    root: &Path,
+    current: &Path,
+    query: &str,
+    results: &mut Vec<WorkspaceSearchFileDto>,
+    file_cap: usize,
+) {
+    if results.len() >= file_cap {
+        return;
+    }
+    let Ok(entries) = std_fs::read_dir(current) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if results.len() >= file_cap {
+            break;
+        }
+        let path = entry.path();
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_dir() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if matches!(
+                name.as_str(),
+                ".git" | "node_modules" | "target" | "dist" | ".turbo" | ".cache" | "vendor"
+            ) {
+                continue;
+            }
+            collect_search_results(root, &path, query, results, file_cap);
+            continue;
+        }
+        if !file_type.is_file() || !should_search_file(&path) {
+            continue;
+        }
+        
+        // Skip large files (> 1MB) for search performance
+        if let Ok(metadata) = path.metadata() {
+            if metadata.len() > 1_000_000 {
+                continue;
+            }
+        }
+
+        let Ok(content) = std_fs::read_to_string(&path) else {
+            continue;
+        };
+        let mut matches = Vec::new();
+        for (index, line) in content.lines().enumerate() {
+            if line.to_ascii_lowercase().contains(query) {
+                matches.push(WorkspaceSearchMatchDto {
+                    line: index + 1,
+                    preview: line.trim().to_string(),
+                });
+                if matches.len() >= 10 {
+                    break;
+                }
+            }
+        }
+        if matches.is_empty() {
+            continue;
+        }
+        let relative_path = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        results.push(WorkspaceSearchFileDto {
+            relative_path,
+            matches,
+        });
+    }
+}
+
+fn search_with_git_grep(
+    root: &Path,
+    query: &str,
+) -> Result<Vec<WorkspaceSearchFileDto>, String> {
+    let output = std_command("git")
+        .arg("grep")
+        .arg("-i")
+        .arg("-I")
+        .arg("--line-number")
+        .arg("--")
+        .arg(query)
+        .current_dir(root)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() && output.status.code() != Some(1) {
+        return Err(String::from_utf8_lossy(&output.stderr).to_string());
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut file_map: HashMap<String, Vec<WorkspaceSearchMatchDto>> = HashMap::new();
+    
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.splitn(3, ':').collect();
+        if parts.len() < 3 {
+            continue;
+        }
+        
+        let path = parts[0].replace('\\', "/");
+        let line_num = parts[1].parse::<usize>().unwrap_or(0);
+        let preview = parts[2].trim().to_string();
+        
+        if line_num == 0 {
+            continue;
+        }
+        
+        let matches = file_map.entry(path).or_insert_with(Vec::new);
+        if matches.len() < 10 {
+            matches.push(WorkspaceSearchMatchDto {
+                line: line_num,
+                preview,
+            });
+        }
+    }
+
+    let mut results: Vec<WorkspaceSearchFileDto> = file_map
+        .into_iter()
+        .map(|(relative_path, matches)| WorkspaceSearchFileDto {
+            relative_path,
+            matches,
+        })
+        .collect();
+    
+    results.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
+    
+    // Limit to 100 files for git grep to maintain UI performance
+    if results.len() > 100 {
+        results.truncate(100);
+    }
+    
+    Ok(results)
+}
+
+#[tauri::command]
+pub async fn search_workspace_text(
+    workspace_root: String,
+    query: String,
+) -> ApiResponse<Vec<WorkspaceSearchFileDto>> {
+    let trimmed = query.trim().to_ascii_lowercase();
+    if trimmed.is_empty() {
+        return ApiResponse::ok(Vec::new());
+    }
+    let root = match resolve_workspace_root(&workspace_root) {
+        Ok(path) => path,
+        Err(message) => return ApiResponse::err("search_invalid_workspace", &message),
+    };
+
+    let is_git = root.join(".git").exists();
+    let query_clone = trimmed.clone();
+    let root_clone = root.clone();
+
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
+        if is_git {
+            if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
+                return Ok(results);
+            }
+        }
+        
+        let mut files = Vec::new();
+        collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
+        Ok(files)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(files)) => ApiResponse::ok(files),
+        Ok(Err(message)) => ApiResponse::err("search_failed", &message),
+        Err(error) => ApiResponse::err("search_failed", &error.to_string()),
+    }
+}
+
+fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std_command("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(if stderr.is_empty() {
+            "git command failed".to_string()
+        } else {
+            stderr
+        });
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[tauri::command]
+pub async fn get_workspace_git_snapshot(
+    workspace_root: String,
+) -> ApiResponse<WorkspaceGitSnapshotDto> {
+    let root = match resolve_workspace_root(&workspace_root) {
+        Ok(path) => path,
+        Err(message) => return ApiResponse::err("git_invalid_workspace", &message),
+    };
+
+    let snapshot_result = tauri::async_runtime::spawn_blocking(move || {
+        let branch = run_git_command(&root, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .map(|value| value.trim().to_string())
+            .map_err(|message| format!("git_unavailable::{message}"))?;
+
+        let status_output = run_git_command(&root, &["status", "--porcelain"])
+            .map_err(|message| format!("git_status_failed::{message}"))?;
+        let changed_files = status_output
+            .lines()
+            .filter_map(|line| {
+                if line.len() < 4 {
+                    return None;
+                }
+                let status = line[..2].trim().to_string();
+                let path = line[3..].trim().replace('\\', "/");
+                if path.is_empty() {
+                    return None;
+                }
+                Some(WorkspaceGitChangedFileDto { path, status })
+            })
+            .collect();
+
+        let commits_output = run_git_command(
+            &root,
+            &["log", "--pretty=format:%h%x09%an%x09%ar%x09%s", "-n", "20"],
+        )
+        .map_err(|message| format!("git_log_failed::{message}"))?;
+        let commits = commits_output
+            .lines()
+            .filter_map(|line| {
+                let parts: Vec<&str> = line.splitn(4, '\t').collect();
+                if parts.len() < 4 {
+                    return None;
+                }
+                Some(WorkspaceGitCommitDto {
+                    hash: parts[0].to_string(),
+                    author: parts[1].to_string(),
+                    relative_time: parts[2].to_string(),
+                    subject: parts[3].to_string(),
+                })
+            })
+            .collect();
+
+        Ok::<WorkspaceGitSnapshotDto, String>(WorkspaceGitSnapshotDto {
+            branch,
+            changed_files,
+            commits,
+        })
+    })
+    .await;
+
+    match snapshot_result {
+        Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
+        Ok(Err(error)) => {
+            let mut parts = error.splitn(2, "::");
+            let code = parts.next().unwrap_or("git_failed");
+            let message = parts.next().unwrap_or("git command failed");
+            ApiResponse::err(code, message)
+        }
+        Err(error) => ApiResponse::err("git_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     let session_handle = get_dap_session_handle();
     let existing_session = {
@@ -691,6 +1522,11 @@ pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     let mut store = signals_handle.lock().await;
     store.signals.clear();
     store.healthy = false;
+    store.paused = false;
+    store.active_relative_path = None;
+    store.active_line = None;
+    store.active_column = None;
+    store.active_thread_id = None;
     ApiResponse::ok(())
 }
 
@@ -777,10 +1613,12 @@ fn validate_workspace_scoped_go_path(
 #[cfg(test)]
 mod tests {
     use super::{
+        deactivate_deep_trace, debugger_toggle_breakpoint, get_dap_session_handle,
         get_runtime_signals, get_runtime_signals_handle, validate_completion_cursor,
         validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
     };
+    use crate::ui_bridge::types::ToggleBreakpointRequestDto;
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -915,5 +1753,71 @@ mod tests {
             .expect("error payload must be present for inactive session");
         assert_eq!(error.code, "deep_trace_session_inactive");
         assert!(error.message.contains("not active"));
+    }
+
+    #[tokio::test]
+    async fn debugger_toggle_breakpoint_works_without_active_session() {
+        let session_handle = get_dap_session_handle();
+        {
+            let mut session = session_handle.lock().await;
+            *session = None;
+        }
+
+        let signals_handle = get_runtime_signals_handle();
+        {
+            let mut store = signals_handle.lock().await;
+            store.breakpoints.clear();
+            store.paused = false;
+            store.active_relative_path = None;
+            store.active_line = None;
+            store.active_column = None;
+            store.active_thread_id = None;
+        }
+
+        let first = debugger_toggle_breakpoint(ToggleBreakpointRequestDto {
+            relative_path: "main.go".to_string(),
+            line: 12,
+        })
+        .await;
+        assert!(first.ok, "should allow storing breakpoints before debug starts");
+        let first_state = first.data.expect("state payload should be returned");
+        assert!(!first_state.session_active);
+        assert_eq!(first_state.breakpoints.len(), 1);
+        assert_eq!(first_state.breakpoints[0].relative_path, "main.go");
+        assert_eq!(first_state.breakpoints[0].line, 12);
+
+        let second = debugger_toggle_breakpoint(ToggleBreakpointRequestDto {
+            relative_path: "main.go".to_string(),
+            line: 12,
+        })
+        .await;
+        assert!(second.ok, "second toggle should remove stored breakpoint");
+        let second_state = second.data.expect("state payload should be returned");
+        assert!(second_state.breakpoints.is_empty());
+    }
+
+    #[tokio::test]
+    async fn deactivate_deep_trace_preserves_breakpoints() {
+        let session_handle = get_dap_session_handle();
+        {
+            let mut session = session_handle.lock().await;
+            *session = None;
+        }
+
+        let signals_handle = get_runtime_signals_handle();
+        {
+            let mut store = signals_handle.lock().await;
+            store.signals.clear();
+            store.healthy = true;
+            store.breakpoints.clear();
+            store.breakpoints.insert("main.go".to_string(), vec![7, 9]);
+        }
+
+        let response = deactivate_deep_trace().await;
+        assert!(response.ok, "deactivate should succeed without a live session");
+
+        let store = signals_handle.lock().await;
+        assert_eq!(store.breakpoints.get("main.go"), Some(&vec![7, 9]));
+        assert!(!store.healthy);
     }
 }
