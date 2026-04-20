@@ -35,28 +35,28 @@ function BottomPanel({
     <section
       id="bottom-panel"
       aria-label="Bottom panel"
-      className="utilitarian-noise relative z-40 flex max-h-[40vh] min-h-[11rem] flex-col border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.88)] shadow-lg"
+      className="relative z-40 flex max-h-[40vh] min-h-[11rem] flex-col border-t border-[var(--border-muted)] bg-[var(--mantle)]"
       data-testid="bottom-panel"
     >
-      <div className="relative z-50 flex items-center justify-between border-b border-[rgba(113,125,144,0.2)] bg-[var(--mantle)] px-4 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--mantle)] px-3 py-2.5">
         <div className="flex items-center gap-3">
-          <p className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">
+          <p className="text-[12px] font-semibold uppercase text-[var(--overlay1)] text-balance">
             Terminal
           </p>
           {isRunning && (
             <span className="flex items-center gap-2">
-              <span className="size-1.5 rounded-full bg-[var(--green)]"></span>
-              <span className="text-[10px] font-bold text-[var(--green)]">
+              <span className="size-[6px] rounded-full bg-[var(--green)]"></span>
+              <span className="text-[12px] font-semibold text-[var(--green)]">
                 Running
               </span>
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto pb-0.5">
           {onRun && !isRunning && (
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(127,176,142,0.35)] bg-[rgba(127,176,142,0.16)] px-3 py-1 text-[10px] font-semibold text-[var(--green)] transition-colors duration-150 ease-out hover:bg-[rgba(127,176,142,0.26)]"
+              className="cursor-pointer rounded border border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.16)]"
               onClick={onRun}
               title="Run the active Go file again."
             >
@@ -66,7 +66,7 @@ function BottomPanel({
           {onRunWithRace && !isRunning && (
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(126,162,220,0.35)] px-3 py-1 text-[10px] font-semibold text-[var(--blue)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.06)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.12)] disabled:cursor-not-allowed disabled:opacity-40"
               onClick={onRunWithRace}
               disabled={!canRunWithRace}
               title="Run the active Go file with race detection."
@@ -77,7 +77,7 @@ function BottomPanel({
           {onClear && (
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(113,125,144,0.3)] px-3 py-1 text-[10px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.1)]"
+              className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
               onClick={() => setIsClearConfirmOpen(true)}
               title="Clear terminal output."
             >
@@ -87,7 +87,7 @@ function BottomPanel({
           {onClose && (
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(113,125,144,0.3)] px-3 py-1 text-[10px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.1)]"
+              className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
               onClick={onClose}
               title="Hide the terminal panel."
             >
@@ -99,30 +99,30 @@ function BottomPanel({
 
       <div
         ref={scrollRef}
-        className="relative z-40 flex-1 overflow-auto bg-[rgba(12,17,24,0.55)] p-5 font-code text-[12px] leading-relaxed selection:bg-[rgba(126,162,220,0.28)]"
+        className="flex-1 overflow-auto bg-[var(--crust)] p-4 font-code text-[13px] leading-relaxed selection:bg-[var(--selection-bg-strong)]"
         style={{ scrollbarWidth: "thin" }}
       >
         {output.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-[10px] italic text-[var(--overlay0)] opacity-50 text-pretty">
-            Unit idle. Standby for output.
+          <div className="flex h-full items-center justify-center text-[13px] italic text-[var(--overlay0)]">
+            No run output yet.
           </div>
         ) : (
-          <div className="space-y-1">
+          <div className="space-y-0.5">
             {output.map((entry, i) => (
               <div
                 key={i}
                 className={cn(
                   "whitespace-pre-wrap break-all",
                   entry.stream === "stderr"
-                    ? "text-[var(--red)] opacity-90"
+                    ? "text-[var(--red)]"
                     : entry.stream === "exit"
-                      ? "mt-4 flex justify-between border-t border-[var(--surface0)] pt-3 font-bold text-[var(--blue)]"
-                      : "text-[var(--green)] opacity-80"
+                      ? "mt-3 flex justify-between border-t border-[var(--surface0)] pt-3 font-semibold text-[var(--blue)]"
+                      : "text-[var(--green)]"
                 )}
               >
                 <span>{entry.line}</span>
                 {entry.stream === "exit" && (
-                  <span className="text-[10px] opacity-60">Process Terminated</span>
+                  <span className="text-[12px] text-[var(--overlay1)]">Process Terminated</span>
                 )}
               </div>
             ))}

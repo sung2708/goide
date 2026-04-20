@@ -26,7 +26,7 @@ function InlineActions({
 
   return (
     <div
-      className="absolute z-10 flex items-center gap-1 rounded border border-[#313244] bg-[#11111b] px-2 py-1 text-[10px] uppercase text-[#cdd6f4]"
+      className="pointer-events-none absolute z-10 flex items-center gap-1 rounded border border-[var(--border-subtle)] bg-[var(--mantle)] px-2 py-1 text-[11px] uppercase text-[var(--text)]"
       data-testid="inline-actions"
       aria-label="Inline quick actions"
       style={{
@@ -37,8 +37,8 @@ function InlineActions({
       <button
         type="button"
         aria-label="Jump to counterpart line"
-        title="Jump to the paired send/receive or related concurrency line."
-        className="rounded border border-[#313244] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
+        title="Jump to the related send/receive or concurrency line when available."
+        className="pointer-events-auto rounded border border-[var(--border-subtle)] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canJump}
         onClick={() => onJump?.()}
       >
@@ -47,8 +47,8 @@ function InlineActions({
       <button
         type="button"
         aria-label="Deep Trace selected line"
-        title="Run deeper runtime tracing for the selected concurrency signal."
-        className="rounded border border-[#313244] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
+        title="Focus runtime inspection on the selected concurrency signal."
+        className="pointer-events-auto rounded border border-[var(--border-subtle)] px-2 py-1 transition-colors duration-150 ease-out disabled:cursor-not-allowed disabled:opacity-60"
         disabled={!canDeepTrace}
         onClick={() => onDeepTrace?.()}
       >

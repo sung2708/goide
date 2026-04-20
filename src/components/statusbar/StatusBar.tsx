@@ -39,10 +39,10 @@ function StatusBar({
   const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
   const runtimeLabel =
     runtimeAvailability === "available"
-      ? "Active"
+      ? "Runtime OK"
       : runtimeAvailability === "degraded"
-        ? "Degraded"
-        : "Static";
+        ? "Runtime Retry"
+        : "Runtime Off";
   const diagnosticsLabel =
     diagnosticsAvailability === "available"
       ? "Diag OK"
@@ -75,42 +75,37 @@ function StatusBar({
       ? "Toolchain preflight has not run yet."
       : missingTools.length === 0
         ? "Go, gopls, and Delve are available."
-        : `Missing ${missingTools.join(", ")}. Install missing tools to enable run, diagnostics, completions, and Deep Trace.`;
+        : `Missing ${missingTools.join(", ")}. Install missing tools to enable run, diagnostics, completions, and runtime sessions.`;
+
+  const pillOk = "border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] text-[var(--green)]";
+  const pillWarn = "border-[rgba(229,200,144,0.3)] bg-[rgba(229,200,144,0.08)] text-[var(--yellow)]";
+  const pillIdle = "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--overlay1)]";
 
   return (
-    <footer className="glass-morphism relative z-50 flex h-8 items-center justify-between border-t border-[rgba(113,125,144,0.25)] bg-[rgba(12,17,24,0.86)] px-3 text-[10px] font-medium text-[var(--overlay1)]">
+    <footer className="relative z-50 flex h-9 items-center justify-between border-t border-[var(--border-muted)] bg-[var(--crust)] px-3 text-[12px] font-medium text-[var(--subtext0)]">
       <div className="flex items-center gap-4 overflow-hidden">
         <div className="flex items-center gap-2">
-          <span className="flex size-1.5 rounded-full bg-[var(--green)]"></span>
-          <span className="max-w-[120px] truncate font-semibold text-[var(--subtext1)] tabular-nums">
+          <span className="flex size-[6px] rounded-full bg-[var(--green)]"></span>
+          <span className="max-w-[140px] truncate font-semibold text-[var(--subtext1)] tabular-nums">
             {workspacePath ? workspacePath.split(/[\\/]/).pop() : "OFFLINE"}
           </span>
         </div>
-        <div className="flex items-center gap-2 opacity-75">
+        <div className="flex items-center gap-2 text-[var(--overlay1)]">
           <span className="text-[var(--surface2)]">/</span>
-          <span className="max-w-[180px] truncate">{activeFilePath ?? "IDLE"}</span>
+          <span className="max-w-[200px] truncate">{activeFilePath ?? "IDLE"}</span>
         </div>
       </div>
 
       <div className="flex items-center gap-4">
-        <div className="flex items-center gap-3">
-          <span className="flex items-center gap-1.5 rounded-sm border border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.6)] px-2 py-0.5 font-semibold text-[var(--subtext0)]">
+        <div className="flex items-center gap-2">
+          <span className="flex items-center gap-1.5 rounded border px-2 py-0.5 font-semibold border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext0)]">
             <span
-              className={`h-1.5 w-1.5 rounded-full ${mode === "deep-trace" ? "bg-[var(--blue)]" : "bg-[var(--overlay2)]"}`}
+              className={`size-[5px] rounded-full ${mode === "deep-trace" ? "bg-[var(--blue)]" : "bg-[var(--overlay2)]"}`}
             ></span>
             {modeLabel}
             <span className="sr-only">Mode: {modeLabel}</span>
           </span>
-          <span
-            className={cn(
-              "rounded-sm border px-2 py-0.5 font-semibold",
-              runtimeAvailability === "available"
-                ? "border-[rgba(127,176,142,0.35)] bg-[var(--signal-confirmed-bg)] text-[var(--green)]"
-                : runtimeAvailability === "degraded"
-                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
-                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
-            )}
-          >
+          <span className={cn("rounded border px-2 py-0.5 font-semibold", runtimeAvailability === "available" ? pillOk : runtimeAvailability === "degraded" ? pillWarn : pillIdle)}>
             {runtimeLabel}
             <span className="sr-only">Runtime: {runtimeLabel}</span>
           </span>
@@ -122,14 +117,7 @@ function StatusBar({
                   ? "Completion backend is unavailable. Retry after a moment."
                   : "Completion has not been checked for the current context yet."
             }
-            className={cn(
-              "rounded-sm border px-2 py-0.5 font-semibold",
-              completionAvailability === "available"
-                ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
-                : completionAvailability === "degraded"
-                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
-                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
-            )}
+            className={cn("rounded border px-2 py-0.5 font-semibold", completionAvailability === "available" ? pillOk : completionAvailability === "degraded" ? pillWarn : pillIdle)}
           >
             {completionLabel}
             <span className="sr-only">Completion: {completionLabel}</span>
@@ -142,50 +130,32 @@ function StatusBar({
                   ? "gopls is unavailable. Install gopls to restore diagnostics."
                   : "Diagnostics have not been checked for the current context yet."
             }
-            className={cn(
-              "rounded-sm border px-2 py-0.5 font-semibold",
-              diagnosticsAvailability === "available"
-                ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
-                : diagnosticsAvailability === "unavailable"
-                  ? "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
-                  : "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
-            )}
+            className={cn("rounded border px-2 py-0.5 font-semibold", diagnosticsAvailability === "available" ? pillOk : diagnosticsAvailability === "unavailable" ? pillWarn : pillIdle)}
           >
             {diagnosticsLabel}
             <span className="sr-only">Diagnostics: {diagnosticsLabel}</span>
           </span>
           <span
             title={toolsTitle}
-            className={cn(
-              "rounded-sm border px-2 py-0.5 font-semibold",
-              toolchainStatus === null
-                ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.45)] text-[var(--overlay1)]"
-                : missingTools.length === 0
-                  ? "border-[rgba(127,176,142,0.35)] bg-[rgba(166,227,161,0.08)] text-[var(--green)]"
-                  : "border-[rgba(213,189,117,0.35)] bg-[var(--signal-likely-bg)] text-[var(--yellow)]"
-            )}
+            className={cn("rounded border px-2 py-0.5 font-semibold", toolchainStatus === null ? pillIdle : missingTools.length === 0 ? pillOk : pillWarn)}
           >
             {toolsLabel}
             <span className="sr-only">Toolchain: {toolsLabel}</span>
           </span>
         </div>
 
-        <div className="h-3 w-[1px] bg-[var(--surface0)] opacity-50"></div>
+        <div className="h-3 w-px bg-[var(--surface1)]"></div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5">
           <button
             type="button"
-            aria-label={
-              isCommandPaletteOpen
-                ? "Hide commands palette"
-                : "Show commands palette"
-            }
-            title="Open the command palette for quick run commands."
+            aria-label={isCommandPaletteOpen ? "Hide command palette" : "Show command palette"}
+            title="Open run commands for the active Go file."
             className={cn(
-              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isCommandPaletteOpen
-                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
-                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+                ? "bg-[var(--bg-active)] text-[var(--lavender)]"
+                : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
             )}
             onClick={onToggleCommandPalette}
           >
@@ -194,12 +164,12 @@ function StatusBar({
           <button
             type="button"
             aria-label={isSummaryOpen ? "Hide summary panel" : "Show summary panel"}
-            title="Show or hide the concurrency signal summary."
+            title="Show or hide the current file's concurrency summary."
             className={cn(
-              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isSummaryOpen
-                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
-                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+                ? "bg-[var(--bg-active)] text-[var(--lavender)]"
+                : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
             )}
             onClick={onToggleSummary}
           >
@@ -207,15 +177,13 @@ function StatusBar({
           </button>
           <button
             type="button"
-            aria-label={
-              isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"
-            }
-            title="Show or hide run output for the active Go file."
+            aria-label={isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"}
+            title="Show or hide run and debug output for the active Go file."
             className={cn(
-              "rounded-sm px-2 py-0.5 font-semibold transition-colors duration-150 ease-out",
+              "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isBottomPanelOpen
-                ? "bg-[rgba(126,162,220,0.2)] text-[var(--flamingo)]"
-                : "text-[var(--subtext0)] hover:bg-[rgba(126,162,220,0.1)] hover:text-[var(--subtext1)]"
+                ? "bg-[var(--bg-active)] text-[var(--lavender)]"
+                : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
             )}
             onClick={onToggleBottomPanel}
           >
@@ -223,7 +191,7 @@ function StatusBar({
           </button>
         </div>
 
-        <div className="h-3 w-[1px] bg-[var(--surface0)] opacity-50"></div>
+        <div className="h-3 w-px bg-[var(--surface1)]"></div>
 
         <div className="flex min-w-[80px] items-center justify-end gap-3 tabular-nums">
           <span className="font-semibold text-[var(--overlay2)]">

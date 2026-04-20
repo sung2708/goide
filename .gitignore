@@ -30,7 +30,7 @@ _bmad-output/code-review.diff
 .codex
 .gemini/
 
-# Internal AI/planning artifacts live only on development branches.
+# Internal AI/planning artifacts are not part of release branches.
 .agent/
 .agents/
 .claude/

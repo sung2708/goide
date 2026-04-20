@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
 import CodeMirror from "@uiw/react-codemirror";
-import { EditorState, Prec } from "@codemirror/state";
 import {
+  EditorState,
+  Prec,
+  RangeSet,
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+} from "@codemirror/state";
+import {
+  DEBUG_CURRENT_LINE_CLASS,
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
-import { EditorView, keymap } from "@codemirror/view";
+import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
 import {
   defaultKeymap,
   history,
@@ -13,6 +21,12 @@ import {
   indentLess,
   indentWithTab,
 } from "@codemirror/commands";
+import {
+  closeSearchPanel,
+  openSearchPanel,
+  search,
+  searchKeymap,
+} from "@codemirror/search";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import {
   acceptCompletion,
@@ -41,7 +55,7 @@ import type {
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
-const GOPLS_AUTO_PREFIX_LENGTH = 3;
+const GOPLS_AUTO_PREFIX_LENGTH = 2;
 
 const snippetSection = { name: "Go snippets", rank: -1 };
 
@@ -419,10 +433,45 @@ export type EditorCompletionRequest = {
   fileContent?: string | null;
 };
 
+class BreakpointMarker extends GutterMarker {
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "goide-breakpoint-marker";
+    el.setAttribute("aria-hidden", "true");
+    return el;
+  }
+}
+
+const breakpointEffect = StateEffect.define<number[]>();
+const breakpointField = StateField.define<RangeSet<BreakpointMarker>>({
+  create() { return RangeSet.empty; },
+  update(set, tr) {
+    set = set.map(tr.changes);
+    for (const e of tr.effects) {
+      if (e.is(breakpointEffect)) {
+        const builder = new RangeSetBuilder<BreakpointMarker>();
+        const sorted = [...e.value].sort((a, b) => a - b);
+        for (const line of sorted) {
+          if (line > 0 && line <= tr.state.doc.lines) {
+            builder.add(tr.state.doc.line(line).from, tr.state.doc.line(line).from, new BreakpointMarker());
+          }
+        }
+        set = builder.finish();
+      }
+    }
+    return set;
+  },
+  provide: f => gutter({
+    class: "cm-breakpoint-gutter",
+    markers: v => v.state.field(f)
+  })
+});
+
 type CodeEditorProps = {
   value: string;
   selectionContextKey?: string | null;
   hintLine?: number | null;
+  executionLine?: number | null;
   counterpartLine?: number | null;
   jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
@@ -438,12 +487,17 @@ type CodeEditorProps = {
   ) => Promise<CompletionItem[]>;
   editable?: boolean;
   diagnostics?: EditorDiagnostic[];
+  breakpoints?: number[];
+  onToggleBreakpoint?: (line: number) => void;
 };
+
+
 
 function CodeEditor({
   value,
   selectionContextKey = null,
   hintLine = null,
+  executionLine = null,
   jumpRequest = null,
   counterpartLine = null,
   onHoverLineChange,
@@ -457,7 +511,18 @@ function CodeEditor({
   onRequestCompletions,
   editable = true,
   diagnostics = [],
+  breakpoints = [],
+  onToggleBreakpoint,
 }: CodeEditorProps) {
+  useEffect(() => {
+    const view = viewRef.current;
+    if (view) {
+      view.dispatch({
+        effects: breakpointEffect.of(breakpoints)
+      });
+    }
+  }, [breakpoints]);
+
   const resolveCompletionRange = (
     view: EditorView,
     fallbackFrom: number,
@@ -687,12 +752,23 @@ function CodeEditor({
               item,
               request.line
             );
+            const rawInsertText = item.insertText || item.label;
+            const linePrefix = view.state.sliceDoc(
+              view.state.doc.lineAt(context.pos).from,
+              context.pos
+            );
+            // Avoid "func func main" when accepting completions in function-name context.
+            const normalizedInsertText =
+              isFunctionNameContext(linePrefix) &&
+              rawInsertText.trimStart().startsWith("func ")
+                ? rawInsertText.trimStart().replace(/^func\s+/, "")
+                : rawInsertText;
             dispatchCompletionChanges(
               view,
               {
                 from: range.from,
                 to: Math.max(range.to, to),
-                insert: item.insertText || item.label,
+                insert: normalizedInsertText,
               },
               item.additionalTextEdits
             );
@@ -741,6 +817,7 @@ function CodeEditor({
 
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
+    breakpointField,
     EditorState.readOnly.of(!editable),
     EditorState.tabSize.of(4),
     EditorView.editable.of(editable),
@@ -748,6 +825,9 @@ function CodeEditor({
     lintGutter(),
     linter(() => []),
     closeBrackets(),
+    search({
+      top: true,
+    }),
     autocompletion({
       override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
@@ -801,7 +881,7 @@ function CodeEditor({
       },
       {
         key: "Escape",
-        run: (view) => closeCompletion(view),
+        run: (view) => closeCompletion(view) || closeSearchPanel(view),
       },
       {
         key: "Ctrl-Space",
@@ -811,12 +891,17 @@ function CodeEditor({
         },
       },
       {
+        key: "Mod-f",
+        run: openSearchPanel,
+      },
+      {
         key: "Mod-s",
         run: (view) => {
           onSave?.(view.state.doc.toString());
           return true;
         },
       },
+      ...searchKeymap,
       ...closeBracketsKeymap,
       ...historyKeymap,
       ...defaultKeymap,
@@ -874,6 +959,7 @@ function CodeEditor({
   ]);
   const viewRef = useRef<EditorView | null>(null);
   const highlightedLineRef = useRef<number | null>(null);
+  const executionLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
   const selectedLineRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
@@ -936,6 +1022,22 @@ function CodeEditor({
   }, [hintLine, value]);
 
   useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+    const previousLine = executionLineRef.current;
+    if (previousLine !== null) {
+      getLineElement(view, previousLine)?.classList.remove(DEBUG_CURRENT_LINE_CLASS);
+      executionLineRef.current = null;
+    }
+    if (executionLine !== null) {
+      getLineElement(view, executionLine)?.classList.add(DEBUG_CURRENT_LINE_CLASS);
+      executionLineRef.current = executionLine;
+    }
+  }, [executionLine, value]);
+
+  useEffect(() => {
     // New file/content context should not inherit previous-line dedupe state.
     selectedLineRef.current = null;
   }, [selectionContextKey, value]);
@@ -949,6 +1051,37 @@ function CodeEditor({
     const cmDiagnostics = buildCodeMirrorDiagnostics(view);
     view.dispatch(setDiagnostics(view.state, cmDiagnostics));
   }, [diagnostics, value]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const container = containerRef.current;
+    if (!view || !container) {
+      return;
+    }
+
+    const requestMeasure = () => {
+      view.requestMeasure();
+      emitViewportRange(view);
+    };
+
+    requestMeasure();
+
+    const resizeObserver = new ResizeObserver(() => {
+      requestMeasure();
+    });
+    resizeObserver.observe(container);
+
+    const fonts = document.fonts;
+    void fonts.ready.then(() => {
+      if (viewRef.current === view) {
+        requestMeasure();
+      }
+    });
+
+    return () => {
+      resizeObserver.disconnect();
+    };
+  }, [value]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1039,7 +1172,25 @@ function CodeEditor({
   return (
     <div
       ref={containerRef}
-      className="h-full w-full"
+      className="h-full min-h-0 w-full"
+      onWheel={(event) => {
+        const view = viewRef.current;
+        if (!view || event.ctrlKey) {
+          return;
+        }
+
+        if (event.deltaX === 0 && event.deltaY === 0) {
+          return;
+        }
+
+        view.scrollDOM.scrollBy({
+          left: event.deltaX,
+          top: event.deltaY,
+          behavior: "auto",
+        });
+        emitViewportRange(view);
+        event.preventDefault();
+      }}
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1056,7 +1207,9 @@ function CodeEditor({
           x: event.clientX,
           y: event.clientY,
         });
+
         const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
+
 
         if (nextLine !== hoveredLineRef.current) {
           hoveredLineRef.current = nextLine;
@@ -1077,16 +1230,34 @@ function CodeEditor({
         }
       }}
       onMouseDown={(event) => {
+        const view_ = viewRef.current;
+        if (!view_) {
+          return;
+        }
+
+        const pos = view_.posAtCoords({
+          x: event.clientX,
+          y: event.clientY,
+        });
+        const nextLine = pos === null ? null : view_.state.doc.lineAt(pos).number;
+
+
+        // Handle breakpoint toggle on gutter click
+        const target = event.target as HTMLElement;
+        if (target.closest(".cm-gutter") || target.closest(".cm-lineNumbers")) {
+          if (nextLine !== null) {
+            onToggleBreakpoint?.(nextLine);
+            event.preventDefault();
+            event.stopPropagation();
+            return;
+          }
+        }
+
         const view = viewRef.current;
         if (!view) {
           return;
         }
 
-        const pos = view.posAtCoords({
-          x: event.clientX,
-          y: event.clientY,
-        });
-        const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
         const isMac = navigator.platform.startsWith("Mac");
         const isModifierClick =
           event.button === 0 && (isMac ? event.metaKey : event.ctrlKey);
@@ -1115,13 +1286,16 @@ function CodeEditor({
     >
       <CodeMirror
         value={value}
+        className="h-full min-h-0"
         height="100%"
+        minHeight="100%"
         width="100%"
         theme="dark"
         basicSetup={false}
         extensions={extensions}
         onCreateEditor={(view) => {
           viewRef.current = view;
+          view.requestMeasure();
           emitViewportRange(view);
         }}
         editable={editable}
