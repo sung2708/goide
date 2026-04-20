@@ -29,22 +29,22 @@ function CommandPalette({
       id="command-palette"
       dataTestId="command-palette"
       ariaLabel="Command palette"
-      className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-start justify-center bg-[rgba(8,11,16,0.72)] px-4 pt-24"
+      className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-start justify-center bg-[rgba(35,38,52,0.7)] px-4 pt-24"
       style={{
         paddingTop: "max(6rem, env(safe-area-inset-top))",
         paddingBottom: "env(safe-area-inset-bottom)",
       }}
-      panelClassName="utilitarian-noise w-full max-w-xl overflow-hidden rounded-lg border border-[rgba(113,125,144,0.25)] bg-[var(--mantle)] shadow-lg"
+      panelClassName="w-full max-w-xl overflow-hidden rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] shadow-[var(--panel-shadow)]"
       closeOnBackdrop={true}
     >
       <div>
-        <div className="flex items-center justify-between border-b border-[rgba(113,125,144,0.2)] px-4 py-3">
-          <p className="text-[11px] font-semibold uppercase text-[var(--subtext0)] text-balance">
+        <div className="flex items-center justify-between border-b border-[var(--border-subtle)] px-5 py-3.5">
+          <p className="text-[13px] font-semibold text-[var(--lavender)]">
             Command Palette
           </p>
           <button
             type="button"
-            className="cursor-pointer rounded border border-[rgba(113,125,144,0.25)] px-2 py-1 text-[10px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.1)]"
+            className="cursor-pointer rounded border border-[var(--border-subtle)] px-2.5 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
             onMouseDown={(event) => event.preventDefault()}
             onClick={onClose}
             title="Close the command palette."
@@ -52,11 +52,11 @@ function CommandPalette({
             Close
           </button>
         </div>
-        <div className="px-4 py-4 text-xs text-[var(--overlay2)]">
+        <div className="px-5 py-4">
           <div className="flex flex-col gap-2">
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(113,125,144,0.28)] px-3 py-2 text-left text-[11px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="cursor-pointer rounded border border-[var(--border-subtle)] px-4 py-2.5 text-left text-[13px] font-medium text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canRun || isRunning}
               onClick={() => {
                 onRun();
@@ -68,7 +68,7 @@ function CommandPalette({
             </button>
             <button
               type="button"
-              className="cursor-pointer rounded border border-[rgba(113,125,144,0.28)] px-3 py-2 text-left text-[11px] text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] disabled:cursor-not-allowed disabled:opacity-50"
+              className="cursor-pointer rounded border border-[var(--border-subtle)] px-4 py-2.5 text-left text-[13px] font-medium text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-40"
               disabled={!canRunWithRace || isRunning}
               onClick={() => {
                 onRunWithRace();

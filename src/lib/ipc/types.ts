@@ -166,3 +166,71 @@ export type RuntimeSignal = {
   counterpartColumn?: number | null;
   counterpartConfidence?: ConcurrencyConfidence | null;
 };
+
+export type RuntimePanelSnapshot = {
+  sessionActive: boolean;
+  signalCount: number;
+  blockedCount: number;
+  goroutineCount: number;
+};
+
+export type RuntimeTopologyInteraction = {
+  threadId: number;
+  kind: string;
+  waitReason: string;
+  source: string;
+  target?: string | null;
+  confidence: ConcurrencyConfidence;
+};
+
+export type RuntimeTopologySnapshot = {
+  sessionActive: boolean;
+  interactions: RuntimeTopologyInteraction[];
+};
+
+export type DebuggerBreakpoint = {
+  relativePath: string;
+  line: number;
+};
+
+export type DebuggerState = {
+  sessionActive: boolean;
+  paused: boolean;
+  activeRelativePath?: string | null;
+  activeLine?: number | null;
+  activeColumn?: number | null;
+  breakpoints: DebuggerBreakpoint[];
+};
+
+export type ToggleBreakpointRequest = {
+  relativePath: string;
+  line: number;
+};
+
+export type WorkspaceSearchMatch = {
+  line: number;
+  preview: string;
+};
+
+export type WorkspaceSearchFile = {
+  relativePath: string;
+  matches: WorkspaceSearchMatch[];
+};
+
+export type WorkspaceGitChangedFile = {
+  path: string;
+  status: string;
+};
+
+export type WorkspaceGitCommit = {
+  hash: string;
+  author: string;
+  relativeTime: string;
+  subject: string;
+};
+
+export type WorkspaceGitSnapshot = {
+  branch: string;
+  changedFiles: WorkspaceGitChangedFile[];
+  commits: WorkspaceGitCommit[];
+};
