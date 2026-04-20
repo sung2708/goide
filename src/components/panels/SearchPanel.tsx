@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { WorkspaceSearchFile } from "../../lib/ipc/types";
 
 type SearchPanelProps = {
@@ -26,6 +26,16 @@ function SearchPanel({
     setLastSubmittedQuery(trimmedQuery);
     onSearch(trimmedQuery);
   };
+
+  useEffect(() => {
+    const trimmedQuery = query.trim();
+    const handle = window.setTimeout(() => {
+      setLastSubmittedQuery(trimmedQuery);
+      onSearch(trimmedQuery);
+    }, 180);
+
+    return () => window.clearTimeout(handle);
+  }, [query, onSearch]);
 
   const clearSearch = () => {
     setQuery("");
@@ -57,7 +67,7 @@ function SearchPanel({
               type="search"
               aria-describedby={`${inputId}-hint`}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search..."
+              placeholder="Search workspace"
               className="w-full rounded border border-[var(--surface1)] bg-[var(--crust)] py-1.5 pl-8 pr-3 text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--overlay0)] transition-colors focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)]"
             />
           </div>
@@ -83,7 +93,7 @@ function SearchPanel({
           className="mt-2 flex items-center justify-between text-[11px] text-[var(--overlay1)]"
         >
           <span>{flatResultCount} match{flatResultCount === 1 ? "" : "es"}</span>
-          {query.length > 0 && <span className="font-code opacity-70">Submit to search</span>}
+          {query.length > 0 && <span className="font-code opacity-70">Searching as you type</span>}
         </div>
       </div>
       <div className="flex-1 overflow-auto p-2" role="region" aria-label="Workspace search results">

@@ -1,5 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const searchPanelOpenMock = vi.fn(() => false);
+const findNextMock = vi.fn(() => true);
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
@@ -126,6 +129,15 @@ vi.mock("@codemirror/autocomplete", () => ({
   acceptCompletion: (view: unknown) => acceptCompletionMock(view),
 }));
 
+vi.mock("@codemirror/search", async () => {
+  const actual = await vi.importActual<typeof import("@codemirror/search")>("@codemirror/search");
+  return {
+    ...actual,
+    searchPanelOpen: () => searchPanelOpenMock(),
+    findNext: () => findNextMock(),
+  };
+});
+
 vi.mock("@codemirror/view", async () => {
   const actual = await vi.importActual<typeof import("@codemirror/view")>("@codemirror/view");
   return {
@@ -150,6 +162,8 @@ vi.mock("@uiw/react-codemirror", () => ({
 describe("CodeEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    searchPanelOpenMock.mockReturnValue(false);
+    findNextMock.mockReturnValue(true);
     hasNextSnippetFieldMock.mockReturnValue(false);
     hasPrevSnippetFieldMock.mockReturnValue(false);
     nextSnippetFieldMock.mockReturnValue(true);
@@ -262,6 +276,20 @@ describe("CodeEditor", () => {
     const handled = tabBinding?.run?.({} as any);
     expect(handled).toBe(true);
     expect(acceptCompletionMock).toHaveBeenCalled();
+  });
+
+  it("uses Enter to jump to the next match when the search panel is open", () => {
+    searchPanelOpenMock.mockReturnValue(true);
+    findNextMock.mockReturnValue(true);
+
+    render(<CodeEditor value={"package main\n"} />);
+    const enterBinding = latestKeyBindings.find((binding) => binding.key === "Enter");
+    expect(enterBinding?.run).toBeDefined();
+
+    const handled = enterBinding?.run?.({ state: {} } as any);
+    expect(handled).toBe(true);
+    expect(findNextMock).toHaveBeenCalled();
+    expect(acceptCompletionMock).not.toHaveBeenCalled();
   });
 
   it("does not accept completion on Enter while editing package declaration context", () => {
