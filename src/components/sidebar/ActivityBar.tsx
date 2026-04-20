@@ -1,9 +1,8 @@
 import { cn } from "../../lib/utils/cn";
 import React from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
-import { 
-  faBug, 
-  faMagnifyingGlass, 
+import {
+  faMagnifyingGlass,
   faCodeBranch,
   faShareNodes,
 } from "@fortawesome/free-solid-svg-icons";
@@ -14,7 +13,6 @@ import {
 // Map the icons to the names the user requested
 const byPrefixAndName = {
   fas: {
-    'bug': faBug,
     'magnifying-glass': faMagnifyingGlass,
     'code-branch': faCodeBranch,
     'share-nodes': faShareNodes,
@@ -24,7 +22,7 @@ const byPrefixAndName = {
   },
 };
 
-export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency" | "debug";
+export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency";
 
 interface ActivityBarProps {
   activeTab: ActivityBarTab;
@@ -60,14 +58,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signa
         title="Concurrency Signals"
         badge={signalCount > 0 ? signalCount : undefined}
       />
-      <div className="mt-auto">
-        <ActivityItem 
-          icon={<FontAwesomeIcon icon={byPrefixAndName.fas['bug']} />} 
-          active={activeTab === "debug"} 
-          onClick={() => onTabChange("debug")} 
-          title="Runtime Debug"
-        />
-      </div>
+      <div className="mt-auto" />
     </div>
   );
 };

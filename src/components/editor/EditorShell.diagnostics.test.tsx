@@ -1,6 +1,6 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 import type { DiagnosticsResponse, EditorDiagnostic } from "../../lib/ipc/types";
 
@@ -63,13 +63,18 @@ vi.mock("./CodeEditor", () => ({
   default: ({
     diagnostics,
     onSave,
+    onChange,
   }: {
     diagnostics?: EditorDiagnostic[];
     onSave?: (content: string) => void;
+    onChange?: (content: string) => void;
   }) => (
     <div data-testid="mock-code-editor">
       <button type="button" onClick={() => onSave?.("package main\nfunc main() {}\n")}>
         Save File
+      </button>
+      <button type="button" onClick={() => onChange?.("package main\nfunc main() {\n") }>
+        Type Invalid Content
       </button>
       <output data-testid="diagnostic-message">
         {diagnostics?.[0]?.message ?? "no diagnostics"}
@@ -81,10 +86,15 @@ vi.mock("./CodeEditor", () => ({
 describe("EditorShell diagnostics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useRealTimers();
     getRuntimeAvailabilityMock.mockResolvedValue({
       ok: true,
       data: { runtimeAvailability: "available" },
     });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("fetches diagnostics after successful save", async () => {
@@ -298,4 +308,97 @@ describe("EditorShell diagnostics", () => {
       screen.getByTitle(/diagnostics have not been checked/i)
     ).toBeInTheDocument();
   });
+
+  it("autosaves after five seconds of typing inactivity", async () => {
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({
+      ok: true,
+      data: { diagnostics: [], toolingAvailability: "available" },
+    });
+
+    render(<EditorShell />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /open main/i }));
+    const typeInvalidButton = await screen.findByRole("button", { name: /type invalid content/i });
+
+    vi.useFakeTimers();
+    fireEvent.click(typeInvalidButton);
+
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith(
+      "C:/workspace",
+      "main.go",
+      "package main\nfunc main() {\n"
+    );
+  }, 15000);
+
+  it("rechecks diagnostics until errors clear", async () => {
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { diagnostics: [], toolingAvailability: "available" },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          diagnostics: [
+            {
+              severity: "error",
+              message: "expected expression",
+              source: "gopls",
+              code: "parse",
+              range: {
+                startLine: 1,
+                startColumn: 1,
+                endLine: 1,
+                endColumn: 2,
+              },
+            },
+          ],
+          toolingAvailability: "available",
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { diagnostics: [], toolingAvailability: "available" },
+      });
+
+    render(<EditorShell />);
+
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: /open main/i }));
+    const typeInvalidButton = await screen.findByRole("button", { name: /type invalid content/i });
+
+    vi.useFakeTimers();
+    fireEvent.click(typeInvalidButton);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1200);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledTimes(3);
+    expect(screen.getByTestId("diagnostic-message")).toHaveTextContent("no diagnostics");
+  }, 15000);
 });
