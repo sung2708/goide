@@ -1,7 +1,7 @@
 {
   "name": "goide",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.1",
   "description": "A desktop IDE for Go editing, runtime inspection, and concurrency workflows.",
   "license": "MIT",
   "homepage": "https://github.com/sung2708/goide",
