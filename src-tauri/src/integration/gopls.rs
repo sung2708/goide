@@ -1,12 +1,15 @@
 use anyhow::{anyhow, Context, Result};
+use crate::integration::command::std_command;
 use serde_json::{json, Value};
+use std::collections::HashSet;
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Output, Stdio};
-use std::sync::mpsc;
+use std::process::{Child, ChildStdin, Output, Stdio};
+use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use crate::integration::fs;
+use crate::integration::lsp_manager;
 
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -764,7 +767,7 @@ pub fn analyze_file_diagnostics(
         ));
     }
 
-    let output = Command::new("gopls")
+    let output = std_command("gopls")
         .arg("check")
         .arg(relative_path)
         .current_dir(workspace_root)
@@ -918,106 +921,59 @@ fn get_file_completions_via_lsp(
     column: usize,
     file_content: &str,
 ) -> Result<Vec<CompletionItem>> {
-    let mut child = Command::new("gopls")
-        .arg("serve")
-        .current_dir(workspace_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to start gopls language server")?;
-
-    let mut stdin = child
-        .stdin
-        .take()
-        .ok_or_else(|| anyhow!("gopls stdin unavailable"))?;
-    let stdout = child
-        .stdout
-        .take()
-        .ok_or_else(|| anyhow!("gopls stdout unavailable"))?;
-    let mut child_guard = ChildGuard { child };
-    let (tx, rx) = mpsc::channel::<Value>();
-
-    std::thread::spawn(move || {
-        let mut reader = BufReader::new(stdout);
-        while let Ok(message) = read_lsp_message(&mut reader) {
-            if tx.send(message).is_err() {
-                break;
-            }
+    let session_handle = lsp_manager::get_lsp_session();
+    let mut guard = session_handle.lock().map_err(|_| anyhow!("LSP session lock poisoned"))?;
+    
+    let session = if let Some(s) = guard.as_mut() {
+        if s.workspace_root == workspace_root {
+            s
+        } else {
+            *guard = None;
+            lsp_manager::start_new_lsp_session(workspace_root, &mut *guard)?
         }
-    });
+    } else {
+        lsp_manager::start_new_lsp_session(workspace_root, &mut *guard)?
+    };
 
-    let root_uri = path_to_file_uri(workspace_root);
     let target_uri = path_to_file_uri(target_path);
-
-    write_lsp_request(
-        &mut stdin,
-        1,
-        "initialize",
-        json!({
-            "processId": null,
-            "rootPath": workspace_root.to_string_lossy().to_string(),
-            "rootUri": root_uri,
-            "workspaceFolders": [
-                {
-                    "uri": root_uri,
-                    "name": workspace_root
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .unwrap_or("workspace")
-                }
-            ],
-            "capabilities": {
-                "workspace": {
-                    "workspaceFolders": true
-                },
+    
+    if !session.open_files.contains(&target_uri) {
+        lsp_manager::write_lsp_notification_sync(
+            &mut session.stdin,
+            "textDocument/didOpen",
+            json!({
                 "textDocument": {
-                    "completion": {
-                        "completionItem": {
-                            "documentationFormat": ["markdown", "plaintext"],
-                            "labelDetailsSupport": true,
-                            "snippetSupport": false
-                        }
-                    }
+                    "uri": target_uri,
+                    "languageId": "go",
+                    "version": 1,
+                    "text": file_content
                 }
-            }
-        }),
-    )?;
-    ensure_lsp_response_success(wait_lsp_response(&rx, 1)?)?;
+            }),
+        )?;
+        session.open_files.insert(target_uri.clone());
+    } else {
+        lsp_manager::write_lsp_notification_sync(
+            &mut session.stdin,
+            "textDocument/didChange",
+            json!({
+                "textDocument": {
+                    "uri": target_uri,
+                    "version": session.next_id,
+                },
+                "contentChanges": [
+                    { "text": file_content }
+                ]
+            }),
+        )?;
+    }
 
-    write_lsp_notification(&mut stdin, "initialized", json!({}))?;
-    write_lsp_notification(
-        &mut stdin,
-        "workspace/didChangeConfiguration",
-        json!({
-            "settings": {
-                "gopls": {
-                    "completeFunctionCalls": true,
-                    "hoverKind": "SynopsisDocumentation",
-                    "matcher": "Fuzzy",
-                    "symbolScope": "all",
-                    "usePlaceholders": true
-                }
-            }
-        }),
-    )?;
-    write_lsp_notification(
-        &mut stdin,
-        "textDocument/didOpen",
-        json!({
-            "textDocument": {
-                "uri": target_uri,
-                "languageId": "go",
-                "version": 1,
-                "text": file_content
-            }
-        }),
-    )?;
     let mut completion_response: Option<Value> = None;
     for attempt in 0..20 {
-        let request_id = 2 + attempt;
+        let request_id = session.next_id;
+        session.next_id += 1;
+
         write_lsp_request(
-            &mut stdin,
+            &mut session.stdin,
             request_id,
             "textDocument/completion",
             json!({
@@ -1031,9 +987,9 @@ fn get_file_completions_via_lsp(
             }),
         )?;
 
-        let response = wait_lsp_response(&rx, request_id)?;
-        if lsp_error_message(&response) == Some("no views") {
-            std::thread::sleep(Duration::from_millis(500));
+        let response = lsp_manager::wait_lsp_response_sync(&session.rx, request_id)?;
+        if lsp_manager::lsp_error_message_sync(&response) == Some("no views") {
+            std::thread::sleep(Duration::from_millis(100));
             continue;
         }
         completion_response = Some(response);
@@ -1041,17 +997,9 @@ fn get_file_completions_via_lsp(
     }
 
     let completion_response =
-        completion_response.ok_or_else(|| anyhow!("gopls did not create a workspace view"))?;
-    ensure_lsp_response_success(completion_response.clone())?;
-    let items = parse_lsp_completion_response(&completion_response);
-
-    let shutdown_request_id = 10_000;
-    let _ = write_lsp_request(&mut stdin, shutdown_request_id, "shutdown", json!(null));
-    let _ = wait_lsp_response(&rx, shutdown_request_id);
-    let _ = write_lsp_notification(&mut stdin, "exit", json!(null));
-    let _ = child_guard.child.kill();
-
-    Ok(items)
+        completion_response.ok_or_else(|| anyhow!("gopls completion failed after retries"))?;
+    lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
+    Ok(parse_lsp_completion_response(&completion_response))
 }
 
 fn wait_lsp_response(rx: &mpsc::Receiver<Value>, id: i64) -> Result<Value> {
@@ -1385,7 +1333,7 @@ fn run_gopls_completion_without_overlay(
     workspace_root: &str,
     location: &str,
 ) -> io::Result<Output> {
-    Command::new("gopls")
+    std_command("gopls")
         .arg("completion")
         .arg(location)
         .current_dir(workspace_root)
@@ -1397,7 +1345,7 @@ fn run_gopls_completion_with_overlay(
     location: &str,
     file_content: &str,
 ) -> io::Result<Output> {
-    let mut child = Command::new("gopls")
+    let mut child = std_command("gopls")
         .arg("completion")
         .arg("-modified")
         .arg(location)
@@ -1420,7 +1368,7 @@ fn is_unsupported_modified_flag(stderr: &[u8]) -> bool {
 }
 
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
-    let output = Command::new("gopls")
+    let output = std_command("gopls")
         .arg("symbols")
         .arg(relative_path)
         .current_dir(workspace_root)
@@ -2476,7 +2424,7 @@ completion candidates:
     #[test]
     #[ignore = "requires unsandboxed gopls workspace access"]
     fn gets_completions_from_gopls_lsp_when_available() {
-        if Command::new("gopls").arg("version").output().is_err() {
+        if std_command("gopls").arg("version").output().is_err() {
             return;
         }
 

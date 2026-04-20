@@ -21,6 +21,14 @@ type UseLensSignalsResult = {
   analysisError: string | null;
 };
 
+function buildAnalysisCacheKey(
+  workspacePath: string,
+  filePath: string,
+  revision: number
+) {
+  return `${workspacePath}::${filePath}::${revision}`;
+}
+
 function isGoFile(path: string | null): path is string {
   return typeof path === "string" && path.toLowerCase().endsWith(".go");
 }
@@ -36,6 +44,7 @@ export function useLensSignals({
   );
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analysisCache] = useState(() => new Map<string, LensConstruct[]>());
 
   useEffect(() => {
     if (!workspacePath || !isGoFile(activeFilePath)) {
@@ -46,6 +55,18 @@ export function useLensSignals({
     }
 
     const startingPath = workspacePath;
+    const cacheKey = buildAnalysisCacheKey(
+      workspacePath,
+      activeFilePath,
+      analysisRevision
+    );
+    const cached = analysisCache.get(cacheKey);
+    if (cached) {
+      setDetectedConstructs(cached);
+      setAnalysisError(null);
+      setIsAnalyzing(false);
+      return;
+    }
     let canceled = false;
     setIsAnalyzing(true);
     setAnalysisError(null);
@@ -67,9 +88,15 @@ export function useLensSignals({
           return;
         }
 
-        setDetectedConstructs(
-          response.data.map((item) => mapApiConstructToLensConstruct(item))
-        );
+        const mapped = response.data.map((item) => mapApiConstructToLensConstruct(item));
+        if (analysisCache.size >= 120) {
+          const firstKey = analysisCache.keys().next().value;
+          if (firstKey) {
+            analysisCache.delete(firstKey);
+          }
+        }
+        analysisCache.set(cacheKey, mapped);
+        setDetectedConstructs(mapped);
       } catch (_error) {
         if (!canceled && workspacePathRef.current === startingPath) {
           setDetectedConstructs([]);
@@ -87,7 +114,7 @@ export function useLensSignals({
     return () => {
       canceled = true;
     };
-  }, [activeFilePath, analysisRevision, workspacePath, workspacePathRef]);
+  }, [activeFilePath, analysisCache, analysisRevision, workspacePath, workspacePathRef]);
 
   const counterpartMappings = useMemo(
     () => buildCounterpartMappings(detectedConstructs),

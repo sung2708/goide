@@ -29,3 +29,4 @@ _uv-cache
 _bmad-output/code-review.diff
 .codex
 .gemini/
+.tools/

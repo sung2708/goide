@@ -13,8 +13,11 @@
     "windows": [
       {
         "title": "goide",
-        "width": 800,
-        "height": 600
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1200,
+        "minHeight": 760,
+        "center": true
       }
     ],
     "security": {

@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use crate::integration::command::tokio_command;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -7,7 +8,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::process::{Child, Command};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -177,11 +178,11 @@ impl DapClient {
             .parent()
             .ok_or_else(|| anyhow!("target file has no parent directory"))?;
         let launch_program = match mode {
-            // Debug mode expects a runnable package. Point at workspace root to
-            // avoid failing when the selected file sits in a non-main package.
-            LaunchMode::Debug => canonical_root.clone(),
-            // Test mode should continue to scope execution to the selected file's package.
-            LaunchMode::Test => target_package_dir.to_path_buf(),
+            // Delve accepts either a package directory or any Go file within it.
+            // Using the selected file is more resilient for single-file workspaces
+            // that do not have a go.mod at the workspace root.
+            LaunchMode::Debug => canonical_target.clone(),
+            LaunchMode::Test => canonical_target.clone(),
         };
 
         let response = self
@@ -190,7 +191,7 @@ impl DapClient {
                 json!({
                     "mode": mode_text,
                     "program": serialize_dap_path(&launch_program),
-                    "cwd": serialize_dap_path(&canonical_root),
+                    "cwd": serialize_dap_path(target_package_dir),
                     "stopOnEntry": false
                 }),
             )
@@ -228,6 +229,64 @@ impl DapClient {
         }
 
         Ok(items)
+    }
+
+    pub async fn continue_thread(&mut self, thread_id: i64) -> Result<()> {
+        let response = self
+            .request("continue", json!({ "threadId": thread_id }))
+            .await?;
+        ensure_success("continue", &response)?;
+        Ok(())
+    }
+
+    pub async fn pause_thread(&mut self, thread_id: i64) -> Result<()> {
+        let response = self.request("pause", json!({ "threadId": thread_id })).await?;
+        ensure_success("pause", &response)?;
+        Ok(())
+    }
+
+    pub async fn next(&mut self, thread_id: i64) -> Result<()> {
+        let response = self.request("next", json!({ "threadId": thread_id })).await?;
+        ensure_success("next", &response)?;
+        Ok(())
+    }
+
+    pub async fn step_in(&mut self, thread_id: i64) -> Result<()> {
+        let response = self
+            .request("stepIn", json!({ "threadId": thread_id }))
+            .await?;
+        ensure_success("stepIn", &response)?;
+        Ok(())
+    }
+
+    pub async fn step_out(&mut self, thread_id: i64) -> Result<()> {
+        let response = self
+            .request("stepOut", json!({ "threadId": thread_id }))
+            .await?;
+        ensure_success("stepOut", &response)?;
+        Ok(())
+    }
+
+    pub async fn set_breakpoints(
+        &mut self,
+        absolute_file_path: &Path,
+        lines: &[usize],
+    ) -> Result<()> {
+        let breakpoints = lines
+            .iter()
+            .map(|line| json!({ "line": line }))
+            .collect::<Vec<_>>();
+        let response = self
+            .request(
+                "setBreakpoints",
+                json!({
+                    "source": { "path": serialize_dap_path(absolute_file_path) },
+                    "breakpoints": breakpoints
+                }),
+            )
+            .await?;
+        ensure_success("setBreakpoints", &response)?;
+        Ok(())
     }
 
     pub async fn stack_trace(&mut self, thread_id: i64) -> Result<Option<DapStackFrame>> {
@@ -295,6 +354,7 @@ impl DapClient {
     async fn request(&mut self, command: &str, arguments: Value) -> Result<Value> {
         let seq = self.next_seq;
         self.next_seq += 1;
+        let mut output_messages: Vec<String> = Vec::new();
 
         let payload = json!({
             "seq": seq,
@@ -305,11 +365,31 @@ impl DapClient {
         write_dap_message(&mut self.writer, &payload).await?;
 
         loop {
-            let message = read_dap_message(&mut self.reader).await?;
+            let mut message = read_dap_message(&mut self.reader).await?;
             let message_type = message
                 .get("type")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
+            if message_type == "event" {
+                let event_name = message
+                    .get("event")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                if event_name == "output" {
+                    if let Some(output) = message
+                        .get("body")
+                        .and_then(Value::as_object)
+                        .and_then(|body| body.get("output"))
+                        .and_then(Value::as_str)
+                    {
+                        let trimmed = output.trim();
+                        if !trimmed.is_empty() {
+                            output_messages.push(trimmed.to_string());
+                        }
+                    }
+                }
+                continue;
+            }
             if message_type != "response" {
                 continue;
             }
@@ -322,6 +402,14 @@ impl DapClient {
                 continue;
             }
 
+            if !output_messages.is_empty() {
+                if let Some(object) = message.as_object_mut() {
+                    object.insert(
+                        "__goide_output".to_string(),
+                        Value::String(output_messages.join("\n")),
+                    );
+                }
+            }
             return Ok(message);
         }
     }
@@ -396,11 +484,40 @@ fn ensure_success(command: &str, response: &Value) -> Result<()> {
         return Ok(());
     }
 
-    let message = response
+    let top_level_message = response
         .get("message")
         .and_then(Value::as_str)
-        .unwrap_or("unknown DAP failure");
-    Err(anyhow!("DAP command `{command}` failed: {message}"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let body_message = response
+        .get("body")
+        .and_then(Value::as_object)
+        .and_then(|body| body.get("error"))
+        .and_then(|error| {
+            error
+                .get("format")
+                .and_then(Value::as_str)
+                .or_else(|| error.get("message").and_then(Value::as_str))
+        })
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let output_message = response
+        .get("__goide_output")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let message = match (top_level_message, body_message) {
+        (Some(top), Some(body)) if top.eq_ignore_ascii_case(body) => top.to_string(),
+        (Some(top), Some(body)) => format!("{top} ({body})"),
+        (Some(top), None) => top.to_string(),
+        (None, Some(body)) => body.to_string(),
+        (None, None) => "unknown DAP failure".to_string(),
+    };
+    let combined = match output_message {
+        Some(output) if !message.contains(output) => format!("{message}\n{output}"),
+        _ => message,
+    };
+    Err(anyhow!("DAP command `{command}` failed: {combined}"))
 }
 
 async fn spawn_dlv_dap_with(
@@ -415,7 +532,7 @@ async fn spawn_dlv_dap_with(
         )
     })?;
 
-    let mut child = Command::new(command)
+    let mut child = tokio_command(command)
         .args(args)
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())
@@ -604,7 +721,7 @@ mod tests {
         fs::create_dir_all(&package_dir).expect("create package dir");
         let main_go = package_dir.join("main.go");
         fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
-        let expected_program = temp_workspace.to_string_lossy().to_string();
+        let expected_program = main_go.to_string_lossy().to_string();
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");
@@ -695,7 +812,7 @@ mod tests {
         let test_file = package_dir.join("worker_test.go");
         fs::write(&test_file, "package workers\nfunc TestX(t *testing.T){}\n")
             .expect("write go test file");
-        let expected_program = package_dir.to_string_lossy().to_string();
+        let expected_program = test_file.to_string_lossy().to_string();
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");
@@ -751,6 +868,86 @@ mod tests {
             .await
             .expect("launch test mode");
         client.disconnect().await.expect("disconnect");
+        server_task.await.expect("server task");
+    }
+
+    #[tokio::test]
+    async fn dap_client_launch_surfaces_output_event_details_on_failure() {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind mock dap listener: {error}"),
+        };
+        let addr = listener.local_addr().expect("local addr");
+        let temp_workspace = create_temp_workspace("dap_launch_failure_workspace");
+        let main_go = temp_workspace.join("main.go");
+        fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            let initialize_request = read_raw_dap_message(&mut socket)
+                .await
+                .expect("read initialize request");
+            let initialize_seq = initialize_request
+                .get("seq")
+                .and_then(Value::as_i64)
+                .expect("initialize seq");
+            write_raw_dap_message(
+                &mut socket,
+                &json!({
+                    "seq": 100 + initialize_seq,
+                    "type": "response",
+                    "request_seq": initialize_seq,
+                    "success": true,
+                    "command": "initialize"
+                }),
+            )
+            .await
+            .expect("write initialize response");
+
+            let launch_request = read_raw_dap_message(&mut socket)
+                .await
+                .expect("read launch request");
+            let launch_seq = launch_request
+                .get("seq")
+                .and_then(Value::as_i64)
+                .expect("launch seq");
+            write_raw_dap_message(
+                &mut socket,
+                &json!({
+                    "seq": 200 + launch_seq,
+                    "type": "event",
+                    "event": "output",
+                    "body": {
+                        "category": "stderr",
+                        "output": "go: go.mod file not found\n"
+                    }
+                }),
+            )
+            .await
+            .expect("write output event");
+            write_raw_dap_message(
+                &mut socket,
+                &json!({
+                    "seq": 300 + launch_seq,
+                    "type": "response",
+                    "request_seq": launch_seq,
+                    "success": false,
+                    "command": "launch",
+                    "message": "Failed to launch"
+                }),
+            )
+            .await
+            .expect("write launch failure");
+        });
+
+        let mut client = DapClient::connect(addr).await.expect("connect");
+        client.initialize().await.expect("initialize");
+        let error = client
+            .launch(LaunchMode::Debug, &temp_workspace, &main_go)
+            .await
+            .expect_err("launch should fail");
+        assert!(error.to_string().contains("go.mod file not found"));
         server_task.await.expect("server task");
     }
 

@@ -1,66 +1,97 @@
-@import url("https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@300..700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@200..700,0..1&display=swap");
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════
+   Catppuccin Frappé — IDE Token System
+   ═══════════════════════════════════════════════ */
 :root {
-  font-family: "Space Grotesk", "Geist", "Inter", "Segoe UI", system-ui, sans-serif;
-  font-size: 13px;
+  font-family: "Inter", "Segoe UI", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 
-  /* Graphite + steel-blue minimalist IDE palette */
-  --rosewater: #f2f4f8;
-  --flamingo: #dce6f6;
-  --pink: #89a5db;
-  --mauve: #7f96c5;
-  --red: #de7d88;
-  --maroon: #cd7180;
-  --peach: #db9a74;
-  --yellow: #d5bd75;
-  --green: #7fb08e;
-  --teal: #78aea8;
-  --sky: #7db6c7;
-  --sapphire: #71a9c7;
-  --blue: #7ea2dc;
-  --lavender: #8b9ccc;
-  --text: #dce3ee;
-  --subtext1: #c2ccda;
-  --subtext0: #a4afc0;
-  --overlay2: #8895a8;
-  --overlay1: #717d90;
-  --overlay0: #5f6a7c;
-  --surface2: #4d5666;
-  --surface1: #343c49;
-  --surface0: #2a303d;
-  --base: #171c24;
-  --mantle: #11161e;
-  --crust: #0c1118;
+  /* ── Catppuccin Frappé palette ── */
+  --rosewater: #f2d5cf;
+  --flamingo: #eebebe;
+  --pink: #f4b8e4;
+  --mauve: #ca9ee6;
+  --red: #e78284;
+  --maroon: #ea999c;
+  --peach: #ef9f76;
+  --yellow: #e5c890;
+  --green: #a6d189;
+  --teal: #81c8be;
+  --sky: #99d1db;
+  --sapphire: #85c1dc;
+  --blue: #8caaee;
+  --lavender: #babbf1;
 
-  /* Semantic layers */
+  --text: #c6d0f5;
+  --subtext1: #b5bfe2;
+  --subtext0: #a5adce;
+  --overlay2: #949cbb;
+  --overlay1: #838ba7;
+  --overlay0: #737994;
+
+  --surface2: #626880;
+  --surface1: #51576d;
+  --surface0: #414559;
+  --base: #303446;
+  --mantle: #292c3c;
+  --crust: #232634;
+
+  /* ── Semantic surface tokens ── */
   --bg-editor: var(--base);
   --bg-sidebar: var(--mantle);
   --bg-chrome: var(--crust);
-  --border-muted: var(--surface0);
-  --focus-ring: rgba(126, 162, 220, 0.4);
-  --panel-shadow: 0 8px 28px rgba(2, 6, 12, 0.28);
-  --panel-shadow-soft: 0 4px 16px rgba(2, 6, 12, 0.22);
+  --bg-elevated: var(--surface0);
+  --bg-hover: rgba(65, 69, 89, 0.5);
+  --bg-active: rgba(140, 170, 238, 0.12);
 
-  /* Concurrency lens signals */
+  /* ── Border tokens ── */
+  --border-muted: rgba(81, 87, 109, 0.45);
+  --border-subtle: rgba(81, 87, 109, 0.25);
+  --border-active: rgba(140, 170, 238, 0.35);
+
+  /* ── Focus & interaction ── */
+  --focus-ring: rgba(140, 170, 238, 0.5);
+  --selection-bg: rgba(140, 170, 238, 0.18);
+  --selection-bg-strong: rgba(140, 170, 238, 0.28);
+
+  /* ── Shadow tokens (subtle only) ── */
+  --panel-shadow: 0 4px 16px rgba(35, 38, 52, 0.5);
+  --panel-shadow-soft: 0 2px 8px rgba(35, 38, 52, 0.4);
+
+  /* ── Concurrency lens signals ── */
   --signal-predicted: var(--overlay0);
-  --signal-predicted-bg: rgba(95, 106, 124, 0.16);
+  --signal-predicted-bg: rgba(115, 121, 148, 0.16);
   --signal-likely: var(--yellow);
-  --signal-likely-bg: rgba(213, 189, 117, 0.16);
+  --signal-likely-bg: rgba(229, 200, 144, 0.12);
   --signal-confirmed: var(--green);
-  --signal-confirmed-bg: rgba(127, 176, 142, 0.16);
+  --signal-confirmed-bg: rgba(166, 209, 137, 0.12);
   --signal-blocked: var(--red);
-  --signal-blocked-bg: rgba(222, 125, 136, 0.16);
+  --signal-blocked-bg: rgba(231, 130, 132, 0.12);
   --signal-flow: var(--blue);
+
+  /* ── File decoration indicators ── */
+  --decoration-untracked: #a8c8a0;
+  --decoration-modified: #d4a76a;
+  --decoration-error: #ec7c8a;
+  --decoration-warning: #d2c36a;
+  --decoration-staged: #90baff;
 }
 
+/* ── Monospace font ── */
 code,
 pre,
 .font-code {
-  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace,
-    monospace;
+  font-family: "JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
+/* ── Root layout ── */
 html,
 body,
 #root {
@@ -71,7 +102,7 @@ body,
   overflow: hidden;
 }
 
-/* Atmospheric effects */
+/* ── Noise overlay (ultra-subtle) ── */
 .utilitarian-noise {
   position: relative;
 }
@@ -81,64 +112,50 @@ body,
   position: absolute;
   inset: 0;
   pointer-events: none;
-  opacity: 0.018;
+  opacity: 0.012;
   z-index: 50;
   background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)'/%3E%3C/svg%3E");
 }
 
-.scanline-effect {
-  position: relative;
-  overflow: hidden;
-}
-
-.scanline-effect::after {
-  content: none;
-}
-
-.phosphor-text {
-  text-shadow: none;
-}
-
+/* ── Surface classes ── */
 .glass-morphism {
-  background-color: rgba(18, 23, 31, 0.9);
-  border: 1px solid rgba(128, 146, 174, 0.18);
-  box-shadow: var(--panel-shadow-soft);
+  background-color: var(--bg-chrome);
+  border: 1px solid var(--border-subtle);
 }
 
 .beveled-edge {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02);
 }
 
-/* Animations */
+/* ── Disabled effects ── */
+.scanline-effect { position: relative; overflow: hidden; }
+.scanline-effect::after { content: none; }
+.phosphor-text { text-shadow: none; }
+
+/* ── Animations ── */
 @keyframes fadeInSlideUp {
-  from { opacity: 0; transform: translateY(8px); }
+  from { opacity: 0; transform: translateY(6px); }
   to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes fadeInSlideRight {
-  from { opacity: 0; transform: translateX(-12px); }
+  from { opacity: 0; transform: translateX(-8px); }
   to { opacity: 1; transform: translateX(0); }
 }
 
-@keyframes phosphorPulse {
-  0% { text-shadow: 0 0 2px rgba(166, 227, 161, 0.4); }
-  50% { text-shadow: 0 0 6px rgba(166, 227, 161, 0.6); }
-  100% { text-shadow: 0 0 2px rgba(166, 227, 161, 0.4); }
-}
-
 .animate-reveal-up {
-  animation: fadeInSlideUp 180ms ease-out forwards;
+  animation: fadeInSlideUp 160ms ease-out forwards;
 }
 
 .animate-reveal-right {
-  animation: fadeInSlideRight 180ms ease-out forwards;
+  animation: fadeInSlideRight 160ms ease-out forwards;
 }
 
 .animate-phosphor {
   animation: none;
 }
 
-/* Shared utility classes */
+/* ── Shared utility classes ── */
 .premium-border { border: 1px solid var(--border-muted); }
 .premium-border-t { border-top: 1px solid var(--border-muted); }
 .premium-border-r { border-right: 1px solid var(--border-muted); }
@@ -148,8 +165,49 @@ body,
 .scrollbar-hide::-webkit-scrollbar { display: none; }
 .scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
 
+/* ── Material icons ── */
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined", sans-serif;
+  font-weight: 400;
+  font-style: normal;
+  font-size: 18px;
+  line-height: 1;
+  letter-spacing: normal;
+  text-transform: none;
+  display: inline-block;
+  white-space: nowrap;
+  word-wrap: normal;
+  direction: ltr;
+  font-variation-settings: "FILL" 0, "wght" 400, "GRAD" 0, "opsz" 20;
+}
+
+/* ── Focus ring ── */
 button:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 1px;
+}
+
+/* ── Scrollbar styling ── */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--surface1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--surface2);
+}
+
+/* ── Selection ── */
+::selection {
+  background: var(--selection-bg-strong);
 }

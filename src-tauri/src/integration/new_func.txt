@@ -1,0 +1,87 @@
+fn get_file_completions_via_lsp(
+    workspace_root: &Path,
+    target_path: &Path,
+    line: usize,
+    column: usize,
+    file_content: &str,
+) -> Result<Vec<CompletionItem>> {
+    let session_handle = lsp_manager::get_lsp_session();
+    let mut guard = session_handle.lock().map_err(|_| anyhow!("LSP session lock poisoned"))?;
+    
+    let session = if let Some(s) = guard.as_mut() {
+        if s.workspace_root == workspace_root {
+            s
+        } else {
+            *guard = None;
+            lsp_manager::start_new_lsp_session(workspace_root, guard)?
+        }
+    } else {
+        lsp_manager::start_new_lsp_session(workspace_root, guard)?
+    };
+
+    let target_uri = path_to_file_uri(target_path);
+    
+    if !session.open_files.contains(&target_uri) {
+        lsp_manager::write_lsp_notification_sync(
+            &mut session.stdin,
+            "textDocument/didOpen",
+            json!({
+                "textDocument": {
+                    "uri": target_uri,
+                    "languageId": "go",
+                    "version": 1,
+                    "text": file_content
+                }
+            }),
+        )?;
+        session.open_files.insert(target_uri.clone());
+    } else {
+        lsp_manager::write_lsp_notification_sync(
+            &mut session.stdin,
+            "textDocument/didChange",
+            json!({
+                "textDocument": {
+                    "uri": target_uri,
+                    "version": session.next_id,
+                },
+                "contentChanges": [
+                    { "text": file_content }
+                ]
+            }),
+        )?;
+    }
+
+    let mut completion_response: Option<Value> = None;
+    for attempt in 0..20 {
+        let request_id = session.next_id;
+        session.next_id += 1;
+
+        write_lsp_request(
+            &mut session.stdin,
+            request_id,
+            "textDocument/completion",
+            json!({
+                "textDocument": {
+                    "uri": target_uri
+                },
+                "position": {
+                    "line": line.saturating_sub(1),
+                    "character": column.saturating_sub(1)
+                }
+            }),
+        )?;
+
+        let response = lsp_manager::wait_lsp_response_sync(&session.rx, request_id)?;
+        if lsp_manager::lsp_error_message_sync(&response) == Some("no views") {
+            std::thread::sleep(Duration::from_millis(100));
+            continue;
+        }
+        completion_response = Some(response);
+        break;
+    }
+
+    let completion_response =
+        completion_response.ok_or_else(|| anyhow!("gopls completion failed after retries"))?;
+    lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
+    Ok(parse_lsp_completion_response(&completion_response))
+}
