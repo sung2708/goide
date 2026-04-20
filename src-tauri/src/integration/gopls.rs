@@ -1,17 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use crate::integration::command::std_command;
 use serde_json::{json, Value};
-use std::collections::HashSet;
-use std::io::{self, BufRead, BufReader, Write};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Output, Stdio};
-use std::sync::{mpsc, Arc, Mutex, OnceLock};
+use std::process::{Output, Stdio};
 use std::time::Duration;
 
 use crate::integration::fs;
 use crate::integration::lsp_manager;
-
-const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ConstructKind {
@@ -903,17 +899,6 @@ pub fn get_file_completions(
     Ok(parse_gopls_completion_output(output_bytes))
 }
 
-struct ChildGuard {
-    child: Child,
-}
-
-impl Drop for ChildGuard {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
 fn get_file_completions_via_lsp(
     workspace_root: &Path,
     target_path: &Path,
@@ -968,15 +953,15 @@ fn get_file_completions_via_lsp(
     }
 
     let mut completion_response: Option<Value> = None;
-    for attempt in 0..20 {
+    for _attempt in 0..20 {
         let request_id = session.next_id;
         session.next_id += 1;
 
-        write_lsp_request(
-            &mut session.stdin,
-            request_id,
-            "textDocument/completion",
-            json!({
+        let message = json!({
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": "textDocument/completion",
+            "params": {
                 "textDocument": {
                     "uri": target_uri
                 },
@@ -984,8 +969,12 @@ fn get_file_completions_via_lsp(
                     "line": line.saturating_sub(1),
                     "character": column.saturating_sub(1)
                 }
-            }),
-        )?;
+            }
+        });
+        let body = serde_json::to_vec(&message)?;
+        write!(&mut session.stdin, "Content-Length: {}\r\n\r\n", body.len())?;
+        session.stdin.write_all(&body)?;
+        session.stdin.flush()?;
 
         let response = lsp_manager::wait_lsp_response_sync(&session.rx, request_id)?;
         if lsp_manager::lsp_error_message_sync(&response) == Some("no views") {
@@ -1000,93 +989,6 @@ fn get_file_completions_via_lsp(
         completion_response.ok_or_else(|| anyhow!("gopls completion failed after retries"))?;
     lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
     Ok(parse_lsp_completion_response(&completion_response))
-}
-
-fn wait_lsp_response(rx: &mpsc::Receiver<Value>, id: i64) -> Result<Value> {
-    loop {
-        let message = rx
-            .recv_timeout(LSP_REQUEST_TIMEOUT)
-            .context("timed out waiting for gopls response")?;
-        if message.get("id").and_then(Value::as_i64) == Some(id) {
-            return Ok(message);
-        }
-    }
-}
-
-fn ensure_lsp_response_success(response: Value) -> Result<()> {
-    if let Some(message) = lsp_error_message(&response) {
-        return Err(anyhow!(message.to_string()));
-    }
-    Ok(())
-}
-
-fn lsp_error_message(response: &Value) -> Option<&str> {
-    response
-        .get("error")?
-        .get("message")
-        .and_then(Value::as_str)
-        .or(Some("unknown gopls LSP error"))
-}
-
-fn write_lsp_request<W: Write>(
-    writer: &mut W,
-    id: i64,
-    method: &str,
-    params: Value,
-) -> io::Result<()> {
-    write_lsp_message(
-        writer,
-        &json!({
-            "jsonrpc": "2.0",
-            "id": id,
-            "method": method,
-            "params": params
-        }),
-    )
-}
-
-fn write_lsp_notification<W: Write>(writer: &mut W, method: &str, params: Value) -> io::Result<()> {
-    write_lsp_message(
-        writer,
-        &json!({
-            "jsonrpc": "2.0",
-            "method": method,
-            "params": params
-        }),
-    )
-}
-
-fn write_lsp_message<W: Write>(writer: &mut W, value: &Value) -> io::Result<()> {
-    let body = serde_json::to_vec(value)?;
-    write!(writer, "Content-Length: {}\r\n\r\n", body.len())?;
-    writer.write_all(&body)?;
-    writer.flush()
-}
-
-fn read_lsp_message<R: BufRead>(reader: &mut R) -> Result<Value> {
-    let mut content_length: Option<usize> = None;
-
-    loop {
-        let mut line = String::new();
-        let read = reader.read_line(&mut line)?;
-        if read == 0 {
-            return Err(anyhow!("gopls LSP stream closed"));
-        }
-        let trimmed = line.trim_end_matches(['\r', '\n']);
-        if trimmed.is_empty() {
-            break;
-        }
-        if let Some((name, value)) = trimmed.split_once(':') {
-            if name.eq_ignore_ascii_case("content-length") {
-                content_length = Some(value.trim().parse::<usize>()?);
-            }
-        }
-    }
-
-    let length = content_length.ok_or_else(|| anyhow!("LSP message missing Content-Length"))?;
-    let mut body = vec![0u8; length];
-    reader.read_exact(&mut body)?;
-    Ok(serde_json::from_slice(&body)?)
 }
 
 fn path_to_file_uri(path: &Path) -> String {

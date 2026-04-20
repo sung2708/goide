@@ -39,10 +39,10 @@ function StatusBar({
   const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
   const runtimeLabel =
     runtimeAvailability === "available"
-      ? "Active"
+      ? "Runtime OK"
       : runtimeAvailability === "degraded"
-        ? "Degraded"
-        : "Static";
+        ? "Runtime Retry"
+        : "Runtime Off";
   const diagnosticsLabel =
     diagnosticsAvailability === "available"
       ? "Diag OK"
@@ -75,7 +75,7 @@ function StatusBar({
       ? "Toolchain preflight has not run yet."
       : missingTools.length === 0
         ? "Go, gopls, and Delve are available."
-        : `Missing ${missingTools.join(", ")}. Install missing tools to enable run, diagnostics, completions, and Deep Trace.`;
+        : `Missing ${missingTools.join(", ")}. Install missing tools to enable run, diagnostics, completions, and runtime sessions.`;
 
   const pillOk = "border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] text-[var(--green)]";
   const pillWarn = "border-[rgba(229,200,144,0.3)] bg-[rgba(229,200,144,0.08)] text-[var(--yellow)]";
@@ -149,8 +149,8 @@ function StatusBar({
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            aria-label={isCommandPaletteOpen ? "Hide commands palette" : "Show commands palette"}
-            title="Open the command palette for quick run commands."
+            aria-label={isCommandPaletteOpen ? "Hide command palette" : "Show command palette"}
+            title="Open run commands for the active Go file."
             className={cn(
               "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isCommandPaletteOpen
@@ -164,7 +164,7 @@ function StatusBar({
           <button
             type="button"
             aria-label={isSummaryOpen ? "Hide summary panel" : "Show summary panel"}
-            title="Show or hide the concurrency signal summary."
+            title="Show or hide the current file's concurrency summary."
             className={cn(
               "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isSummaryOpen
@@ -178,7 +178,7 @@ function StatusBar({
           <button
             type="button"
             aria-label={isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"}
-            title="Show or hide run output for the active Go file."
+            title="Show or hide run and debug output for the active Go file."
             className={cn(
               "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isBottomPanelOpen

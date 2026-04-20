@@ -1,4 +1,5 @@
 type TraceBubbleConfidence = "predicted" | "likely" | "confirmed";
+type TraceBubbleSource = "runtime" | "race-detector";
 
 type TraceBubbleProps = {
   visible: boolean;
@@ -7,6 +8,7 @@ type TraceBubbleProps = {
   anchorTop?: number | null;
   anchorLeft?: number | null;
   blocked?: boolean;
+  source?: TraceBubbleSource;
 };
 
 const CONFIDENCE_CONFIG: Record<
@@ -37,6 +39,7 @@ function TraceBubble({
   anchorTop = null,
   anchorLeft = null,
   blocked = false,
+  source = "runtime",
 }: TraceBubbleProps) {
   if (!visible) {
     return null;
@@ -73,7 +76,7 @@ function TraceBubble({
           className="uppercase"
           style={{ color: config.color }}
         >
-          {config.chip}
+          {source === "race-detector" ? "Race CLI" : config.chip}
         </span>
         {blocked ? (
           <>

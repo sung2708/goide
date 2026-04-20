@@ -106,7 +106,7 @@ function SummaryPeek({
             {mode === "deep-trace" ? "Deep Trace Active" : "Quick Insight"}
           </p>
           <p className="mt-1 max-w-[220px] text-[11px] leading-relaxed text-[var(--overlay1)] text-pretty">
-            Summarizes in-file concurrency hints and live runtime state when a debug session is open.
+            Summarizes in-file concurrency hints and sampled runtime state during an active debug session.
           </p>
         </div>
         {onClose && (
@@ -160,10 +160,10 @@ function SummaryPeek({
           </div>
         ) : (
           <div className="rounded border border-[var(--surface1)] bg-[var(--surface0)] px-3 py-3 text-[13px] text-[var(--overlay0)]">
-            No active race/deadlock alerts.
+            No active race or blocking alerts.
             {!hasItems && (
               <p className="mt-2 italic">
-                No concurrency signals detected in current scope.
+                No concurrency signals detected in the current file.
               </p>
             )}
           </div>
@@ -258,15 +258,15 @@ function SummaryPeek({
               <svg className="mb-2 text-[var(--overlay0)] opacity-70" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
               <p className="text-[12px] leading-relaxed text-[var(--overlay1)] text-pretty">
                 {hasDebugSession
-                  ? "Pause or continue debugging to populate the runtime graph and inspect goroutine relationships."
-                  : "Start Debug to see which goroutines are blocked, what they are waiting on, and what can unblock them."}
+                  ? "Pause or continue debugging to collect more runtime samples and inspect goroutine wait relationships."
+                  : "Start a debug session to see blocked goroutines and sampled wait reasons."}
               </p>
             </div>
           ) : topologyInteractions.length === 0 ? (
             <div className="mt-3 flex flex-col items-center justify-center py-4 text-center">
               <svg className="mb-2 text-[var(--blue)] motion-safe:animate-pulse motion-reduce:animate-none" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2v4"/><path d="m16.2 7.8 2.9-2.9"/><path d="M18 12h4"/><path d="m16.2 16.2 2.9 2.9"/><path d="M12 18v4"/><path d="m4.9 19.1 2.9-2.9"/><path d="M2 12h4"/><path d="m4.9 4.9 2.9 2.9"/></svg>
               <p className="text-[12px] leading-relaxed text-[var(--overlay1)] text-pretty">
-                Debug session active. Waiting for more runtime samples to resolve flow and contention.
+                Debug session active. Waiting for more runtime samples to clarify blocking and wait relationships.
               </p>
             </div>
           ) : (
