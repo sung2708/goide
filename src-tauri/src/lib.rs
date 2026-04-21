@@ -37,7 +37,8 @@ pub fn run() {
             ui_bridge::commands::debugger_step_out,
             ui_bridge::commands::debugger_toggle_breakpoint,
             ui_bridge::commands::search_workspace_text,
-            ui_bridge::commands::get_workspace_git_snapshot
+            ui_bridge::commands::get_workspace_git_snapshot,
+            ui_bridge::commands::get_workspace_branches
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

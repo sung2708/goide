@@ -17,6 +17,7 @@ import type {
   RuntimeSignal,
   ToolchainStatus,
   ToggleBreakpointRequest,
+  WorkspaceBranchSnapshot,
   WorkspaceGitSnapshot,
   WorkspaceSearchFile,
 } from "./types";
@@ -355,4 +356,12 @@ export async function getWorkspaceGitSnapshot(
       workspaceRoot,
     }
   );
+}
+
+export async function getWorkspaceBranches(
+  workspaceRoot: string,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("get_workspace_branches", {
+    workspaceRoot,
+  });
 }
