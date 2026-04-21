@@ -280,6 +280,31 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
 }
 
 #[tauri::command]
+pub async fn stop_current_run() -> ApiResponse<()> {
+    let handle = get_process_handle();
+    let mut guard = handle.lock().await;
+    if let Some(child) = guard.as_mut() {
+        #[cfg(windows)]
+        {
+            if let Some(pid) = child.id() {
+                let _ = std::process::Command::new("taskkill")
+                    .arg("/F")
+                    .arg("/T")
+                    .arg("/PID")
+                    .arg(pid.to_string())
+                    .output();
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            let _ = child.kill().await;
+        }
+        *guard = None;
+    }
+    ApiResponse::ok(())
+}
+
+#[tauri::command]
 pub async fn analyze_active_file_concurrency(
     request: AnalyzeConcurrencyRequest,
 ) -> ApiResponse<Vec<ConcurrencyConstructDto>> {
@@ -2041,12 +2066,16 @@ mod tests {
         validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
     };
+    use crate::integration::delve::{DapClient, LaunchMode};
     use crate::ui_bridge::types::{SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto};
+    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
     use std::sync::OnceLock;
     use std::time::{SystemTime, UNIX_EPOCH};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
     use tokio::sync::Mutex;
 
     fn unique_suffix() -> u128 {
@@ -2417,6 +2446,133 @@ mod tests {
 
         validate_workspace_scoped_go_path(root.to_str().unwrap_or(""), "main.go")
             .expect("must accept in-workspace go file");
+    }
+
+    async fn read_raw_dap_message(stream: &mut tokio::net::TcpStream) -> anyhow::Result<Value> {
+        let mut header = Vec::new();
+        let mut last_four = [0u8; 4];
+        let mut idx = 0usize;
+        loop {
+            let mut byte = [0u8; 1];
+            stream.read_exact(&mut byte).await?;
+            header.push(byte[0]);
+            last_four[idx % 4] = byte[0];
+            idx += 1;
+            if idx >= 4
+                && last_four[(idx - 4) % 4] == b'\r'
+                && last_four[(idx - 3) % 4] == b'\n'
+                && last_four[(idx - 2) % 4] == b'\r'
+                && last_four[(idx - 1) % 4] == b'\n'
+            {
+                break;
+            }
+        }
+
+        let header_text = String::from_utf8(header)?;
+        let content_length = header_text
+            .lines()
+            .find_map(|line| {
+                line.strip_prefix("Content-Length:")
+                    .map(str::trim)
+                    .and_then(|value| value.parse::<usize>().ok())
+            })
+            .expect("content length header");
+
+        let mut body = vec![0u8; content_length];
+        stream.read_exact(&mut body).await?;
+        Ok(serde_json::from_slice(&body)?)
+    }
+
+    async fn write_raw_dap_message(
+        stream: &mut tokio::net::TcpStream,
+        payload: &Value,
+    ) -> anyhow::Result<()> {
+        let body = serde_json::to_vec(payload)?;
+        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        stream.write_all(header.as_bytes()).await?;
+        stream.write_all(&body).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_root_package_target() {
+        let listener = match TcpListener::bind("127.0.0.1:0").await {
+            Ok(listener) => listener,
+            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
+            Err(error) => panic!("bind mock dap listener: {error}"),
+        };
+        let addr = listener.local_addr().expect("local addr");
+        let workspace = create_temp_workspace("debug_root_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("main.go"),
+            "package main\nfunc main() {}\n",
+        );
+        let expected_program = workspace.join("main.go").to_string_lossy().to_string();
+        let expected_cwd = workspace.to_string_lossy().to_string();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept client");
+            for expected_command in ["initialize", "launch", "disconnect"] {
+                let request = read_raw_dap_message(&mut socket)
+                    .await
+                    .expect("read request");
+                let request_seq = request
+                    .get("seq")
+                    .and_then(Value::as_i64)
+                    .expect("request seq");
+                let command = request
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .expect("command");
+                assert_eq!(command, expected_command);
+                if expected_command == "launch" {
+                    let args = request
+                        .get("arguments")
+                        .and_then(Value::as_object)
+                        .expect("launch arguments");
+                    assert_eq!(
+                        args.get("mode")
+                            .and_then(Value::as_str)
+                            .expect("launch mode"),
+                        "debug"
+                    );
+                    assert_eq!(
+                        args.get("program")
+                            .and_then(Value::as_str)
+                            .expect("launch program"),
+                        expected_program
+                    );
+                    assert_eq!(
+                        args.get("cwd")
+                            .and_then(Value::as_str)
+                            .expect("launch cwd"),
+                        expected_cwd
+                    );
+                }
+
+                let response = json!({
+                    "seq": 100 + request_seq,
+                    "type": "response",
+                    "request_seq": request_seq,
+                    "success": true,
+                    "command": expected_command
+                });
+                write_raw_dap_message(&mut socket, &response)
+                    .await
+                    .expect("write response");
+            }
+        });
+
+        let mut client = DapClient::connect(addr).await.expect("connect");
+        client.initialize().await.expect("initialize");
+        client
+            .launch(LaunchMode::Debug, &workspace, &workspace.join("main.go"))
+            .await
+            .expect("launch debug session");
+        client.disconnect().await.expect("disconnect");
+        server_task.await.expect("server task");
     }
 
     #[tokio::test]
