@@ -24,4 +24,24 @@ describe("BranchPicker", () => {
     expect(screen.getByText("main")).toBeInTheDocument();
     expect(screen.getByText("release/next")).toBeInTheDocument();
   });
+
+  it("filters branch entries by query", () => {
+    render(
+      <BranchPicker
+        open
+        currentBranch="develop"
+        branches={[
+          { name: "develop", kind: "current", isCurrent: true, upstream: "origin/develop", isRemoteTrackingCandidate: false },
+          { name: "feature/search", kind: "local", isCurrent: false, upstream: null, isRemoteTrackingCandidate: false },
+        ]}
+        query="search"
+        onQueryChange={() => {}}
+        onSelectBranch={() => {}}
+        onClose={() => {}}
+      />
+    );
+
+    expect(screen.getByText("feature/search")).toBeInTheDocument();
+    expect(screen.queryByText("develop")).toBeNull();
+  });
 });
