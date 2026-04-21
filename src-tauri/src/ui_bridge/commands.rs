@@ -1467,7 +1467,7 @@ pub async fn search_workspace_text(
     }
 }
 
-fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
+fn git_command_output(root: &Path, args: &[&str], trim_stdout: bool) -> Result<String, String> {
     let output = std_command("git")
         .args(args)
         .current_dir(root)
@@ -1481,7 +1481,16 @@ fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
             stderr
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(if trim_stdout {
+        stdout.trim().to_string()
+    } else {
+        stdout
+    })
+}
+
+fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
+    git_command_output(root, args, false)
 }
 
 #[tauri::command]
@@ -1557,17 +1566,7 @@ pub async fn get_workspace_git_snapshot(
 }
 
 fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
-    let output = std_command("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|error| error.to_string())?;
-
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    git_command_output(root, args, true)
 }
 
 fn normalize_remote_branch_name(name: &str) -> Option<String> {
@@ -1804,8 +1803,7 @@ fn stash_dirty_changes(root: &Path) -> Result<(), String> {
 }
 
 fn discard_dirty_changes(root: &Path) -> Result<(), String> {
-    git_output(root, &["checkout", "--", "."])?;
-    // Remove untracked files
+    git_output(root, &["reset", "--hard", "HEAD"])?;
     git_output(root, &["clean", "-fd"])?;
     Ok(())
 }
@@ -2084,6 +2082,18 @@ mod tests {
         // Leave a dirty file in the working tree
         write_file(repo_dir.join("dirty.txt"), "dirty content\n");
         repo_dir
+    }
+
+    fn assert_head_branch(dir: &std::path::PathBuf, expected: &str) {
+        let current = git_output_in_test(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("head branch should be readable");
+        assert_eq!(current, expected);
+    }
+
+    fn assert_clean_worktree(dir: &std::path::PathBuf) {
+        let status = git_output_in_test(dir, &["status", "--porcelain"])
+            .expect("status should be readable");
+        assert!(status.is_empty(), "expected clean worktree, got: {status}");
     }
 
     #[tokio::test]
@@ -2467,6 +2477,111 @@ mod tests {
         assert_eq!(
             response.error.expect("error").code,
             "git_branch_dirty_action_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_switches_to_existing_local_branch_on_clean_tree() {
+        let repo_dir = create_temp_workspace("branch_switch_clean_local");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "clean local branch switch should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_commit_action_commits_changes_before_switching() {
+        let repo_dir = create_temp_workspace("branch_switch_commit_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            pre_switch_action: "commit".to_string(),
+            commit_message: Some("save branch switch work".to_string()),
+        })
+        .await;
+
+        assert!(response.ok, "commit action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let commit_subject = git_output_in_test(&repo_dir, &["log", "-1", "--pretty=%s"])
+            .expect("latest commit subject");
+        assert_eq!(commit_subject, "save branch switch work");
+        let committed_files = git_output_in_test(&repo_dir, &["show", "--pretty=", "--name-only", "HEAD"])
+            .expect("latest commit files");
+        assert!(committed_files.lines().any(|line| line == "README.md"));
+        assert!(committed_files.lines().any(|line| line == "notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_stash_action_stashes_changes_before_switching() {
+        let repo_dir = create_temp_workspace("branch_switch_stash_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            pre_switch_action: "stash".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "stash action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let stash_list = git_output_in_test(&repo_dir, &["stash", "list"]).expect("stash list");
+        assert!(
+            stash_list.lines().any(|line| line.contains("WIP on main")),
+            "stash action should create a stash entry, got: {stash_list}"
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching() {
+        let repo_dir = create_temp_workspace("branch_switch_discard_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        git(&repo_dir, &["add", "README.md"]);
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            pre_switch_action: "discard".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "discard action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let readme_contents = fs::read_to_string(repo_dir.join("README.md")).expect("read README");
+        assert_eq!(readme_contents, "initial\n");
+        assert!(
+            !repo_dir.join("notes.txt").exists(),
+            "discard action should remove untracked files"
         );
     }
 }
