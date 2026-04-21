@@ -2520,11 +2520,13 @@ mod tests {
         assert!(response.ok, "commit action should succeed");
         assert_head_branch(&repo_dir, "feature");
         assert_clean_worktree(&repo_dir);
-        let commit_subject = git_output_in_test(&repo_dir, &["log", "-1", "--pretty=%s"])
-            .expect("latest commit subject");
-        assert_eq!(commit_subject, "save branch switch work");
-        let committed_files = git_output_in_test(&repo_dir, &["show", "--pretty=", "--name-only", "HEAD"])
-            .expect("latest commit files");
+        let original_branch_commit_subject =
+            git_output_in_test(&repo_dir, &["log", "main", "-1", "--pretty=%s"])
+                .expect("original branch latest commit subject");
+        assert_eq!(original_branch_commit_subject, "save branch switch work");
+        let committed_files =
+            git_output_in_test(&repo_dir, &["show", "--pretty=", "--name-only", "main"])
+                .expect("original branch latest commit files");
         assert!(committed_files.lines().any(|line| line == "README.md"));
         assert!(committed_files.lines().any(|line| line == "notes.txt"));
     }
@@ -2578,7 +2580,7 @@ mod tests {
         assert_head_branch(&repo_dir, "feature");
         assert_clean_worktree(&repo_dir);
         let readme_contents = fs::read_to_string(repo_dir.join("README.md")).expect("read README");
-        assert_eq!(readme_contents, "initial\n");
+        assert_eq!(readme_contents.replace("\r\n", "\n"), "initial\n");
         assert!(
             !repo_dir.join("notes.txt").exists(),
             "discard action should remove untracked files"
