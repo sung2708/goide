@@ -15,10 +15,10 @@ use crate::ui_bridge::types::{
     DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
     RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
-    ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
-    WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto, WorkspaceGitChangedFileSummaryDto,
-    WorkspaceGitChangedFileDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
-    WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
+    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto,
+    WorkspaceGitChangedFileSummaryDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
+    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -1757,6 +1757,120 @@ pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     ApiResponse::ok(())
 }
 
+fn collect_dirty_files(root: &Path) -> Result<Vec<String>, String> {
+    let output = git_output(root, &["status", "--porcelain"])?;
+    let files = output
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let path = line[3..].trim().to_string();
+            if path.is_empty() {
+                None
+            } else {
+                Some(path)
+            }
+        })
+        .collect();
+    Ok(files)
+}
+
+fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
+    let output = git_output(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    Ok(!output.trim().is_empty())
+}
+
+fn commit_dirty_changes(root: &Path, message: Option<&str>) -> Result<(), String> {
+    git_output(root, &["add", "-A"])?;
+    let commit_message = message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("WIP: auto-commit before branch switch");
+    git_output(root, &["commit", "-m", commit_message])?;
+    Ok(())
+}
+
+fn stash_dirty_changes(root: &Path) -> Result<(), String> {
+    git_output(root, &["stash", "push", "--include-untracked"])?;
+    Ok(())
+}
+
+fn discard_dirty_changes(root: &Path) -> Result<(), String> {
+    git_output(root, &["checkout", "--", "."])?;
+    // Remove untracked files
+    git_output(root, &["clean", "-fd"])?;
+    Ok(())
+}
+
+fn execute_branch_switch(
+    root: &Path,
+    request: SwitchWorkspaceBranchRequestDto,
+) -> Result<(), String> {
+    let dirty_files = collect_dirty_files(root)?;
+    if !dirty_files.is_empty() {
+        match request.pre_switch_action.as_str() {
+            "commit" => commit_dirty_changes(root, request.commit_message.as_deref())?,
+            "stash" => stash_dirty_changes(root)?,
+            "discard" => discard_dirty_changes(root)?,
+            "none" => {
+                return Err(
+                    "git_branch_dirty_action_required::working tree has uncommitted changes"
+                        .to_string(),
+                )
+            }
+            other => return Err(format!("unsupported pre-switch action: {other}")),
+        }
+    }
+
+    if local_branch_exists(root, &request.target_branch)? {
+        git_output(root, &["switch", &request.target_branch])?;
+    } else {
+        git_output(
+            root,
+            &[
+                "switch",
+                "-c",
+                &request.target_branch,
+                "--track",
+                &format!("origin/{}", request.target_branch),
+            ],
+        )?;
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn switch_workspace_branch(
+    request: SwitchWorkspaceBranchRequestDto,
+) -> ApiResponse<WorkspaceBranchSnapshotDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_branch_switch_failed::{error}"))?;
+        execute_branch_switch(&root, request)?;
+        build_workspace_branch_snapshot(&root)
+            .map_err(|error| format!("git_branch_switch_failed::{error}"))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
+        Ok(Err(message)) if message.starts_with("git_branch_dirty_action_required::") => {
+            ApiResponse::err("git_branch_dirty_action_required", &message)
+        }
+        Ok(Err(message)) => ApiResponse::err("git_branch_switch_failed", &message),
+        Err(error) => ApiResponse::err("git_branch_switch_failed", &error.to_string()),
+    }
+}
+
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
     let normalized = relative_path.trim();
     if normalized.is_empty() {
@@ -1843,10 +1957,11 @@ mod tests {
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
-        validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
-        validate_go_diagnostics_path, validate_workspace_scoped_go_path,
+        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
+        validate_go_completion_path, validate_go_diagnostics_path,
+        validate_workspace_scoped_go_path,
     };
-    use crate::ui_bridge::types::ToggleBreakpointRequestDto;
+    use crate::ui_bridge::types::{SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto};
     use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
@@ -1914,6 +2029,61 @@ mod tests {
         git(&remote_dir, &["init", "--bare"]);
         git(dir, &["remote", "add", name, remote_dir.to_str().expect("remote path")]);
         remote_dir
+    }
+
+    fn init_bare_git_repo(dir: &std::path::PathBuf) {
+        git(dir, &["init", "--bare"]);
+    }
+
+    fn clone_git_repo(remote: &std::path::PathBuf, local: &std::path::PathBuf) {
+        let output = Command::new("git")
+            .args([
+                "clone",
+                remote.to_str().expect("remote path"),
+                local.to_str().expect("local path"),
+            ])
+            .output()
+            .expect("git clone should spawn");
+        if !output.status.success() {
+            panic!(
+                "git clone failed:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        git(local, &["config", "user.email", "test@goide.test"]);
+        git(local, &["config", "user.name", "GoIDE Test"]);
+    }
+
+    fn git_output_in_test(
+        dir: &std::path::PathBuf,
+        args: &[&str],
+    ) -> Result<String, String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(
+                String::from_utf8_lossy(&output.stderr)
+                    .trim()
+                    .to_string(),
+            );
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string())
+    }
+
+    fn create_dirty_git_repo(label: &str) -> std::path::PathBuf {
+        let repo_dir = create_temp_workspace(label);
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        // Leave a dirty file in the working tree
+        write_file(repo_dir.join("dirty.txt"), "dirty content\n");
+        repo_dir
     }
 
     #[tokio::test]
@@ -2246,5 +2416,57 @@ mod tests {
         let store = signals_handle.lock().await;
         assert_eq!(store.breakpoints.get("main.go"), Some(&vec![7, 9]));
         assert!(!store.healthy);
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_creates_tracking_branch_for_remote_only_target() {
+        let remote_dir = create_temp_workspace("branch_switch_remote");
+        init_bare_git_repo(&remote_dir);
+
+        let local_dir = create_temp_workspace("branch_switch_local");
+        clone_git_repo(&remote_dir, &local_dir);
+        // The clone starts with no commits on main; create an initial commit first
+        add_commit(&local_dir, "README.md", "main\n", "init");
+        git(&local_dir, &["push", "-u", "origin", "main"]);
+        git(&local_dir, &["switch", "-c", "develop"]);
+        write_file(local_dir.join("README.md"), "dev\n");
+        git(&local_dir, &["add", "README.md"]);
+        git(&local_dir, &["commit", "-m", "dev"]);
+        git(&local_dir, &["push", "-u", "origin", "develop"]);
+        git(&local_dir, &["switch", "main"]);
+        git(&local_dir, &["branch", "-D", "develop"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: local_dir.to_string_lossy().to_string(),
+            target_branch: "develop".to_string(),
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "switch to remote-only branch should succeed");
+        let current =
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .expect("head");
+        assert_eq!(current, "develop");
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_requires_user_action_when_worktree_is_dirty() {
+        let repo_dir = create_dirty_git_repo("branch_switch_dirty");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(!response.ok, "dirty worktree with 'none' action should fail");
+        assert_eq!(
+            response.error.expect("error").code,
+            "git_branch_dirty_action_required"
+        );
     }
 }
