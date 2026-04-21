@@ -1570,80 +1570,21 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapshotDto, String> {
-    // Determine current branch or detached HEAD state
-    let head_ref = git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .map_err(|error| format!("git_unavailable::{error}"))?;
-
-    let is_detached_head = head_ref.trim() == "HEAD";
-    let current_branch = if is_detached_head {
-        None
-    } else {
-        Some(head_ref.trim().to_string())
-    };
-    let detached_head_ref = if is_detached_head {
-        git_output(root, &["rev-parse", "--short", "HEAD"]).ok()
-    } else {
-        None
-    };
-
-    // List all local branches with upstream info
-    // Format: <refname:short> <upstream:short> <HEAD>
-    let local_raw = git_output(root, &[
-        "for-each-ref",
-        "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)",
-        "refs/heads/",
-    ])
-    .unwrap_or_default();
-
-    let mut branches: Vec<WorkspaceGitBranchDto> = Vec::new();
-
-    for line in local_raw.lines() {
-        let parts: Vec<&str> = line.splitn(3, '\t').collect();
-        let name = parts.first().map(|s| s.trim()).unwrap_or("").to_string();
-        if name.is_empty() {
-            continue;
-        }
-        let upstream = parts.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
-        let is_current = parts.get(2).map(|s| s.trim()) == Some("*");
-        // A branch is a remote-tracking candidate if it has an upstream or shares a name with a remote branch
-        let is_remote_tracking_candidate = upstream.is_some();
-        let kind = if is_current { "current".to_string() } else { "local".to_string() };
-
-        branches.push(WorkspaceGitBranchDto {
-            name,
-            kind,
-            is_current,
-            upstream,
-            is_remote_tracking_candidate,
-        });
+fn normalize_remote_branch_name(name: &str) -> Option<String> {
+    let normalized = name.trim();
+    if normalized.is_empty() || normalized.ends_with("/HEAD") {
+        return None;
     }
 
-    // List remote-tracking branches
-    let remote_raw = git_output(root, &[
-        "for-each-ref",
-        "--format=%(refname:short)",
-        "refs/remotes/",
-    ])
-    .unwrap_or_default();
+    normalized
+        .split_once('/')
+        .map(|(_, branch_name)| branch_name.trim())
+        .filter(|branch_name| !branch_name.is_empty())
+        .map(str::to_string)
+}
 
-    for line in remote_raw.lines() {
-        let name = line.trim();
-        if name.is_empty() || name.ends_with("/HEAD") {
-            continue;
-        }
-        branches.push(WorkspaceGitBranchDto {
-            name: name.to_string(),
-            kind: "remote".to_string(),
-            is_current: false,
-            upstream: None,
-            is_remote_tracking_candidate: true,
-        });
-    }
-
-    // Check for uncommitted changes via git status --porcelain
-    let status_output = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
-    let changed_files_summary: Vec<WorkspaceGitChangedFileSummaryDto> = status_output
+fn parse_changed_files_summary(status_output: &str) -> Vec<WorkspaceGitChangedFileSummaryDto> {
+    status_output
         .lines()
         .filter_map(|line| {
             if line.len() < 4 {
@@ -1656,7 +1597,107 @@ fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapsho
             }
             Some(WorkspaceGitChangedFileSummaryDto { path, status })
         })
-        .collect();
+        .collect()
+}
+
+fn build_workspace_branch_snapshot_with_git_runner<F>(
+    root: &Path,
+    git_runner: F,
+) -> Result<WorkspaceBranchSnapshotDto, String>
+where
+    F: Fn(&Path, &[&str]) -> Result<String, String>,
+{
+    // Determine current branch or detached HEAD state
+    let head_ref = git_runner(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map_err(|error| format!("git_unavailable::{error}"))?;
+
+    let is_detached_head = head_ref.trim() == "HEAD";
+    let current_branch = if is_detached_head {
+        None
+    } else {
+        Some(head_ref.trim().to_string())
+    };
+    let detached_head_ref = if is_detached_head {
+        git_runner(root, &["rev-parse", "--short", "HEAD"]).ok()
+    } else {
+        None
+    };
+
+    let local_raw = git_runner(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)",
+            "refs/heads/",
+        ],
+    )
+    .map_err(|error| format!("git_local_branches_failed::{error}"))?;
+
+    let remote_raw = git_runner(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/",
+        ],
+    )
+    .map_err(|error| format!("git_remote_branches_failed::{error}"))?;
+
+    let remote_branch_names = remote_raw
+        .lines()
+        .filter_map(normalize_remote_branch_name)
+        .collect::<HashSet<_>>();
+
+    let mut branches: Vec<WorkspaceGitBranchDto> = Vec::new();
+    let mut local_branch_names = HashSet::new();
+
+    for line in local_raw.lines() {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        let name = parts.first().map(|s| s.trim()).unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let upstream = parts
+            .get(1)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let is_current = parts.get(2).map(|s| s.trim()) == Some("*");
+        let is_remote_tracking_candidate =
+            upstream.is_some() || remote_branch_names.contains(name.as_str());
+        let kind = if is_current {
+            "current".to_string()
+        } else {
+            "local".to_string()
+        };
+
+        local_branch_names.insert(name.clone());
+        branches.push(WorkspaceGitBranchDto {
+            name,
+            kind,
+            is_current,
+            upstream,
+            is_remote_tracking_candidate,
+        });
+    }
+
+    for name in remote_branch_names {
+        if local_branch_names.contains(&name) {
+            continue;
+        }
+
+        branches.push(WorkspaceGitBranchDto {
+            name,
+            kind: "remote".to_string(),
+            is_current: false,
+            upstream: None,
+            is_remote_tracking_candidate: true,
+        });
+    }
+
+    let status_output = git_runner(root, &["status", "--porcelain"])
+        .map_err(|error| format!("git_status_failed::{error}"))?;
+    let changed_files_summary = parse_changed_files_summary(&status_output);
     let has_uncommitted_changes = !changed_files_summary.is_empty();
 
     Ok(WorkspaceBranchSnapshotDto {
@@ -1667,6 +1708,10 @@ fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapsho
         has_uncommitted_changes,
         changed_files_summary,
     })
+}
+
+fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapshotDto, String> {
+    build_workspace_branch_snapshot_with_git_runner(root, git_output)
 }
 
 #[tauri::command]
@@ -1795,15 +1840,17 @@ fn validate_workspace_scoped_go_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        deactivate_deep_trace, debugger_toggle_breakpoint, get_dap_session_handle,
-        get_runtime_signals, get_runtime_signals_handle, get_workspace_branches,
+        build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
+        debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
+        get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
         validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
         validate_go_diagnostics_path, validate_workspace_scoped_go_path,
     };
-    use std::sync::OnceLock;
     use crate::ui_bridge::types::ToggleBreakpointRequestDto;
+    use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
+    use std::sync::OnceLock;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
 
@@ -1821,19 +1868,34 @@ mod tests {
     }
 
     fn init_git_repo(dir: &std::path::PathBuf) {
-        git(dir, &["init", "-b", "main"]);
+        let init_result = Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(dir)
+            .output()
+            .expect("git init should spawn");
+
+        if !init_result.status.success() {
+            git(dir, &["init"]);
+            git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        }
+
         git(dir, &["config", "user.email", "test@goide.test"]);
         git(dir, &["config", "user.name", "GoIDE Test"]);
     }
 
     fn git(dir: &std::path::PathBuf, args: &[&str]) {
-        let status = Command::new("git")
+        let output = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
             .expect("git command failed to spawn");
-        if !status.status.success() {
-            // Ignore errors for optional git config / init variants (e.g. older git without -b)
+        if !output.status.success() {
+            panic!(
+                "git command failed: git {}\nstdout: {}\nstderr: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
         }
     }
 
@@ -1841,50 +1903,142 @@ mod tests {
         fs::write(path, content).expect("write temp file");
     }
 
+    fn add_commit(dir: &std::path::PathBuf, path: &str, content: &str, message: &str) {
+        write_file(dir.join(path), content);
+        git(dir, &["add", path]);
+        git(dir, &["commit", "-m", message]);
+    }
+
+    fn add_remote(dir: &std::path::PathBuf, name: &str) -> std::path::PathBuf {
+        let remote_dir = create_temp_workspace(&format!("remote_{name}"));
+        git(&remote_dir, &["init", "--bare"]);
+        git(dir, &["remote", "add", name, remote_dir.to_str().expect("remote path")]);
+        remote_dir
+    }
+
     #[tokio::test]
-    async fn get_workspace_branches_lists_current_local_and_remote_candidates() {
+    async fn get_workspace_branches_lists_current_local_remote_and_dirty_state_details() {
         let repo_dir = create_temp_workspace("branch_snapshot_repo");
-        // Try with -b flag first; fall back to renaming master -> main
-        let init_result = Command::new("git")
-            .args(&["init", "-b", "main"])
-            .current_dir(&repo_dir)
-            .output();
-        let use_rename = match init_result {
-            Ok(output) if output.status.success() => false,
-            _ => {
-                // git version without -b support; rename default branch
-                Command::new("git")
-                    .args(&["init"])
-                    .current_dir(&repo_dir)
-                    .output()
-                    .ok();
-                true
-            }
-        };
-        git(&repo_dir, &["config", "user.email", "test@goide.test"]);
-        git(&repo_dir, &["config", "user.name", "GoIDE Test"]);
-        write_file(repo_dir.join("README.md"), "hello\n");
-        git(&repo_dir, &["add", "README.md"]);
-        git(&repo_dir, &["commit", "-m", "init"]);
-        if use_rename {
-            git(&repo_dir, &["branch", "-m", "master", "main"]);
-        }
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "hello\n", "init");
         git(&repo_dir, &["branch", "develop"]);
+
+        let _remote_dir = add_remote(&repo_dir, "origin");
+        git(&repo_dir, &["push", "-u", "origin", "main"]);
+
+        let feature_branch_name = "feature/remote-only";
+        git(&repo_dir, &["checkout", "-b", feature_branch_name]);
+        add_commit(&repo_dir, "feature.txt", "remote feature\n", "add remote feature");
+        git(&repo_dir, &["push", "-u", "origin", feature_branch_name]);
+        git(&repo_dir, &["checkout", "main"]);
+        git(&repo_dir, &["branch", "-D", feature_branch_name]);
+        write_file(repo_dir.join("dirty.txt"), "dirty\n");
 
         let response = get_workspace_branches(repo_dir.to_string_lossy().to_string()).await;
 
         assert!(response.ok, "get_workspace_branches should succeed");
         let snapshot = response.data.expect("snapshot should be present");
-        let current = snapshot.current_branch.as_deref();
+        assert_eq!(snapshot.current_branch.as_deref(), Some("main"));
         assert!(
-            current == Some("main") || current == Some("master"),
-            "current branch should be main or master, got: {:?}",
-            current
+            snapshot.has_uncommitted_changes,
+            "working tree changes should be reflected in snapshot"
         );
         assert!(
-            snapshot.branches.iter().any(|branch| branch.name == "develop"),
-            "branches should include 'develop'"
+            snapshot
+                .changed_files_summary
+                .iter()
+                .any(|file| file.path == "dirty.txt" && file.status == "??"),
+            "dirty state summary should include untracked file"
         );
+
+        let branch_map: HashMap<&str, (&str, bool, Option<&str>)> = snapshot
+            .branches
+            .iter()
+            .map(|branch| {
+                (
+                    branch.name.as_str(),
+                    (
+                        branch.kind.as_str(),
+                        branch.is_remote_tracking_candidate,
+                        branch.upstream.as_deref(),
+                    ),
+                )
+            })
+            .collect();
+
+        assert_eq!(branch_map.get("main"), Some(&("current", true, Some("origin/main"))));
+        assert_eq!(branch_map.get("develop"), Some(&("local", false, None)));
+        assert_eq!(
+            branch_map.get("feature/remote-only"),
+            Some(&("remote", true, None)),
+            "remote branch should be present with normalized name and remote kind"
+        );
+        assert!(
+            !branch_map.contains_key("origin/feature/remote-only"),
+            "remote branch DTO name should not include remote prefix"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_branch_name_removes_remote_prefix() {
+        assert_eq!(
+            normalize_remote_branch_name("origin/feature/demo"),
+            Some("feature/demo".to_string())
+        );
+        assert_eq!(normalize_remote_branch_name("origin/HEAD"), None);
+        assert_eq!(normalize_remote_branch_name(""), None);
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_local_branch_listing_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-local-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Err("local refs failed".to_string())
+            }
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("local branch enumeration errors should propagate");
+
+        assert!(error.contains("git_local_branches_failed::local refs failed"));
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_remote_branch_listing_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-remote-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Ok("main\torigin/main\t*\n".to_string())
+            }
+            ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                Err("remote refs failed".to_string())
+            }
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("remote branch enumeration errors should propagate");
+
+        assert!(error.contains("git_remote_branches_failed::remote refs failed"));
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_status_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-status-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Ok("main\torigin/main\t*\n".to_string())
+            }
+            ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                Ok("origin/main\n".to_string())
+            }
+            ["status", "--porcelain"] => Err("status failed".to_string()),
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("git status errors should propagate");
+
+        assert!(error.contains("git_status_failed::status failed"));
     }
 
     fn shared_state_test_lock() -> &'static Mutex<()> {
