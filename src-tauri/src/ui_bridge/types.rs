@@ -268,6 +268,13 @@ pub struct WorkspaceGitBranchDto {
     pub is_current: bool,
     pub upstream: Option<String>,
     pub is_remote_tracking_candidate: bool,
+    /// For remote-tracking branches: the remote name (e.g. "origin", "upstream").
+    /// None for local branches.
+    pub remote_name: Option<String>,
+    /// For remote-tracking branches: the full ref as returned by git
+    /// (e.g. "origin/develop"). Used as the --track argument when creating a
+    /// local tracking branch. None for local branches.
+    pub remote_ref: Option<String>,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -293,6 +300,10 @@ pub struct WorkspaceBranchSnapshotDto {
 pub struct SwitchWorkspaceBranchRequestDto {
     pub workspace_root: String,
     pub target_branch: String,
+    /// Full remote ref to use as the tracking source when creating a new local
+    /// branch (e.g. "upstream/develop"). When None the backend falls back to
+    /// checking whether any remote ref named `<remote>/<target_branch>` exists.
+    pub remote_ref: Option<String>,
     pub pre_switch_action: String,
     pub commit_message: Option<String>,
 }
