@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceGitChangedFileSummary } from "../../lib/ipc/types";
 
 type BranchSwitchDialogProps = {
@@ -12,6 +12,13 @@ type BranchSwitchDialogProps = {
 export default function BranchSwitchDialog({ open, targetBranch, changedFiles: _changedFiles, onConfirm, onCancel }: BranchSwitchDialogProps) {
   const [action, setAction] = useState<"commit" | "stash" | "discard">("stash");
   const [commitMessage, setCommitMessage] = useState("");
+
+  useEffect(() => {
+    if (!open) return;
+    setAction("stash");
+    setCommitMessage("");
+  }, [open]);
+
   const canConfirm = useMemo(() => action !== "commit" || commitMessage.trim().length > 0, [action, commitMessage]);
 
   if (!open) return null;
