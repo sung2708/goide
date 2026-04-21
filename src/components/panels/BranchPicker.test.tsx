@@ -70,6 +70,95 @@ describe("BranchPicker", () => {
     expect(screen.queryByText("develop")).toBeNull();
   });
 
+  it("distinguishes duplicate remote branch names from different remotes", () => {
+    const duplicateRemotes = [
+      {
+        name: "develop",
+        kind: "remote" as const,
+        isCurrent: false,
+        upstream: null,
+        isRemoteTrackingCandidate: true,
+        remoteName: "origin",
+        remoteRef: "origin/develop",
+      },
+      {
+        name: "develop",
+        kind: "remote" as const,
+        isCurrent: false,
+        upstream: null,
+        isRemoteTrackingCandidate: true,
+        remoteName: "upstream",
+        remoteRef: "upstream/develop",
+      },
+    ];
+
+    render(
+      <BranchPicker
+        open
+        currentBranch={null}
+        branches={duplicateRemotes}
+        query=""
+        onQueryChange={() => {}}
+        onSelectBranch={() => {}}
+        onClose={() => {}}
+      />
+    );
+
+    // Both rows render with the shared branch name
+    const nameEls = screen.getAllByText("develop");
+    expect(nameEls).toHaveLength(2);
+
+    // Remote labels are present and distinct
+    expect(screen.getByText("origin")).toBeInTheDocument();
+    expect(screen.getByText("upstream")).toBeInTheDocument();
+  });
+
+  it("passes the correct branch object when a duplicate-named remote branch is selected", () => {
+    const onSelectBranch = vi.fn();
+
+    const duplicateRemotes = [
+      {
+        name: "develop",
+        kind: "remote" as const,
+        isCurrent: false,
+        upstream: null,
+        isRemoteTrackingCandidate: true,
+        remoteName: "origin",
+        remoteRef: "origin/develop",
+      },
+      {
+        name: "develop",
+        kind: "remote" as const,
+        isCurrent: false,
+        upstream: null,
+        isRemoteTrackingCandidate: true,
+        remoteName: "upstream",
+        remoteRef: "upstream/develop",
+      },
+    ];
+
+    render(
+      <BranchPicker
+        open
+        currentBranch={null}
+        branches={duplicateRemotes}
+        query=""
+        onQueryChange={() => {}}
+        onSelectBranch={onSelectBranch}
+        onClose={() => {}}
+      />
+    );
+
+    // Click the row that shows "upstream" as secondary label
+    // Each row is a button; find the one whose accessible label contains "upstream"
+    const buttons = screen.getAllByRole("button");
+    // buttons[0] = origin/develop row, buttons[1] = upstream/develop row, buttons[2] = Close
+    fireEvent.click(buttons[1]);
+
+    expect(onSelectBranch).toHaveBeenCalledTimes(1);
+    expect(onSelectBranch).toHaveBeenCalledWith(duplicateRemotes[1]);
+  });
+
   it("calls onClose when Close is clicked", () => {
     const onClose = vi.fn();
 
