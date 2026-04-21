@@ -260,6 +260,43 @@ pub struct WorkspaceGitSnapshotDto {
     pub commits: Vec<WorkspaceGitCommitDto>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitBranchDto {
+    pub name: String,
+    pub kind: String,
+    pub is_current: bool,
+    pub upstream: Option<String>,
+    pub is_remote_tracking_candidate: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitChangedFileSummaryDto {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchSnapshotDto {
+    pub current_branch: Option<String>,
+    pub is_detached_head: bool,
+    pub detached_head_ref: Option<String>,
+    pub branches: Vec<WorkspaceGitBranchDto>,
+    pub has_uncommitted_changes: bool,
+    pub changed_files_summary: Vec<WorkspaceGitChangedFileSummaryDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchWorkspaceBranchRequestDto {
+    pub workspace_root: String,
+    pub target_branch: String,
+    pub pre_switch_action: String,
+    pub commit_message: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionRequestDto {
