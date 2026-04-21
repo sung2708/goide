@@ -40,17 +40,26 @@ export default function BranchPicker({
         className="mb-3 h-9 w-full rounded-md border border-[var(--border-muted)] bg-[var(--crust)] px-3 text-sm text-[var(--text)]"
       />
       <div className="max-h-80 overflow-auto space-y-1">
-        {visibleBranches.map((branch) => (
-          <button
-            key={`${branch.kind}:${branch.name}`}
-            type="button"
-            onClick={() => onSelectBranch(branch)}
-            className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
-          >
-            <span>{branch.name}</span>
-            <span className="text-xs uppercase text-[var(--overlay1)]">{branch.kind}</span>
-          </button>
-        ))}
+        {visibleBranches.map((branch) => {
+          const rowKey = branch.remoteRef
+            ? `remote:${branch.remoteRef}`
+            : `${branch.kind}:${branch.name}`;
+          const primaryLabel = branch.name;
+          const secondaryLabel = branch.remoteRef
+            ? branch.remoteName ?? branch.kind
+            : branch.kind;
+          return (
+            <button
+              key={rowKey}
+              type="button"
+              onClick={() => onSelectBranch(branch)}
+              className="flex w-full items-center justify-between rounded-md px-3 py-2 text-left text-sm text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+            >
+              <span>{primaryLabel}</span>
+              <span className="text-xs uppercase text-[var(--overlay1)]">{secondaryLabel}</span>
+            </button>
+          );
+        })}
       </div>
       <button type="button" onClick={onClose} className="mt-3 text-xs text-[var(--overlay1)] hover:text-[var(--text)]">
         Close
