@@ -432,6 +432,18 @@ function EditorShell() {
   const [isBranchDialogOpen, setIsBranchDialogOpen] = useState(false);
   const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
   const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
+
+  const refreshBranchSnapshot = useCallback(async (workspaceRoot: string) => {
+    try {
+      const res = await getWorkspaceBranches(workspaceRoot);
+      if (res.ok && res.data) {
+        return res.data;
+      }
+      return null;
+    } catch (_error) {
+      return null;
+    }
+  }, []);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
   const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
     useState<RuntimePanelSnapshot | null>(null);
@@ -754,14 +766,20 @@ function EditorShell() {
         if (!isCancelled && res.ok && res.data) {
           setGitSnapshot(res.data);
           setGitError(null);
+          const latestBranchSnapshot = await refreshBranchSnapshot(workspacePath);
+          if (!isCancelled) {
+            setBranchSnapshot(latestBranchSnapshot);
+          }
         } else if (!isCancelled) {
           setGitSnapshot(null);
           setGitError(res.error?.message ?? "Git data unavailable");
+          setBranchSnapshot(null);
         }
       } catch (err) {
         if (!isCancelled) {
           setGitSnapshot(null);
           setGitError("Git data unavailable");
+          setBranchSnapshot(null);
         }
       }
       if (!isCancelled) {
@@ -772,7 +790,7 @@ function EditorShell() {
     return () => {
       isCancelled = true;
     };
-  }, [workspacePath]);
+  }, [refreshBranchSnapshot, workspacePath]);
 
   useEffect(() => {
     if (!workspacePath) {
@@ -780,15 +798,16 @@ function EditorShell() {
       return;
     }
     let isCancelled = false;
-    void getWorkspaceBranches(workspacePath).then((res) => {
-      if (!isCancelled && res.ok && res.data) {
-        setBranchSnapshot(res.data);
+    void refreshBranchSnapshot(workspacePath).then((snapshot) => {
+      if (isCancelled) {
+        return;
       }
+      setBranchSnapshot(snapshot);
     });
     return () => {
       isCancelled = true;
     };
-  }, [workspacePath]);
+  }, [refreshBranchSnapshot, workspacePath]);
 
   useEffect(() => {
     if (runMode !== "debug" || runStatus !== "running") {
@@ -2081,7 +2100,11 @@ function EditorShell() {
     ]);
 
     if (gitRes.ok && gitRes.data) setGitSnapshot(gitRes.data);
-    if (branchRes.ok && branchRes.data) setBranchSnapshot(branchRes.data);
+    if (branchRes.ok && branchRes.data) {
+      setBranchSnapshot(branchRes.data);
+    } else {
+      setBranchSnapshot(null);
+    }
 
     setDiagnostics([]);
     setDebuggerState(null);
@@ -2093,11 +2116,31 @@ function EditorShell() {
     }
   }, [handleOpenFile]);
 
-  const handleBranchSelect = useCallback((branch: WorkspaceGitBranch) => {
-    if (!branchSnapshot) return;
+  const handleBranchSelect = useCallback(async (branch: WorkspaceGitBranch) => {
+    if (!workspacePathRef.current || !branchSnapshot) return;
+    if (branch.name === branchSnapshot.currentBranch) {
+      setIsBranchPickerOpen(false);
+      setBranchQuery("");
+      return;
+    }
+
+    const latestBranchSnapshot = await refreshBranchSnapshot(workspacePathRef.current);
+
     setIsBranchPickerOpen(false);
     setBranchQuery("");
-    if (branchSnapshot.hasUncommittedChanges) {
+
+    if (!latestBranchSnapshot) {
+      setBranchSnapshot(null);
+      setBranchSwitchError("Branch data unavailable");
+      return;
+    }
+
+    setBranchSnapshot(latestBranchSnapshot);
+
+    if (branch.name === latestBranchSnapshot.currentBranch) {
+      return;
+    }
+    if (latestBranchSnapshot.hasUncommittedChanges) {
       setPendingTargetBranch(branch);
       setIsBranchDialogOpen(true);
     } else {
@@ -2105,7 +2148,7 @@ function EditorShell() {
       setBranchSwitchError(null);
       setBranchSwitchLoading(true);
       void switchWorkspaceBranch({
-        workspaceRoot: workspacePathRef.current!,
+        workspaceRoot: workspacePathRef.current,
         targetBranch: branch.name,
         preSwitchAction: "none",
       }).then((res) => {
@@ -2119,7 +2162,7 @@ function EditorShell() {
         }
       });
     }
-  }, [branchSnapshot, reloadWorkspaceState]);
+  }, [branchSnapshot, refreshBranchSnapshot, reloadWorkspaceState]);
 
   const handleBranchSwitchConfirm = useCallback(
     (payload: { action: "commit" | "stash" | "discard"; commitMessage?: string }) => {

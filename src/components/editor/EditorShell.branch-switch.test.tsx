@@ -173,12 +173,21 @@ describe("EditorShell branch switching", () => {
     // Select the "main" branch (accessible name includes kind label, e.g. "main local")
     await user.click(await screen.findByRole("button", { name: /main/i }));
 
-    // After a clean switch (no uncommitted changes), reloadWorkspaceState is
-    // called which triggers a second round of getWorkspaceGitSnapshot and
-    // getWorkspaceBranches.
+    await waitFor(() => {
+      expect(switchWorkspaceBranchMock).toHaveBeenCalledWith({
+        workspaceRoot: "C:/workspace",
+        targetBranch: "main",
+        preSwitchAction: "none",
+      });
+    });
+
+    // The initial workspace load fetches branch state directly and via the git
+    // polling refresh. Selecting a branch refreshes branch state again before
+    // switching, then reloadWorkspaceState fetches both snapshots after a
+    // successful switch.
     await waitFor(() => {
       expect(getWorkspaceGitSnapshotMock).toHaveBeenCalledTimes(2);
-      expect(getWorkspaceBranchesMock).toHaveBeenCalledTimes(2);
+      expect(getWorkspaceBranchesMock).toHaveBeenCalledTimes(4);
     });
   });
 });
