@@ -1,6 +1,27 @@
 import { useEffect, useMemo, useState } from "react";
 import type { WorkspaceGitChangedFileSummary } from "../../lib/ipc/types";
 
+const MAX_VISIBLE_FILES = 5;
+
+function statusLabel(status: string): string {
+  // Git status codes are positional: first char = index (staging area),
+  // second char = worktree. Do not trim — preserve positional meaning.
+  if (status.startsWith("??")) return "U";
+  const indexChar = status[0] ?? " ";
+  const worktreeChar = status[1] ?? " ";
+  if (indexChar !== " " && indexChar !== "?") return "S";
+  if (worktreeChar !== " " && worktreeChar !== "?") return "M";
+  return "M";
+}
+
+function statusTitle(label: string): string {
+  switch (label) {
+    case "U": return "untracked";
+    case "S": return "staged";
+    default: return "modified";
+  }
+}
+
 type BranchSwitchDialogProps = {
   open: boolean;
   targetBranch: string;
@@ -9,7 +30,7 @@ type BranchSwitchDialogProps = {
   onCancel: () => void;
 };
 
-export default function BranchSwitchDialog({ open, targetBranch, changedFiles: _changedFiles, onConfirm, onCancel }: BranchSwitchDialogProps) {
+export default function BranchSwitchDialog({ open, targetBranch, changedFiles, onConfirm, onCancel }: BranchSwitchDialogProps) {
   const [action, setAction] = useState<"commit" | "stash" | "discard">("stash");
   const [commitMessage, setCommitMessage] = useState("");
 
@@ -21,12 +42,47 @@ export default function BranchSwitchDialog({ open, targetBranch, changedFiles: _
 
   const canConfirm = useMemo(() => action !== "commit" || commitMessage.trim().length > 0, [action, commitMessage]);
 
+  const visibleFiles = changedFiles.slice(0, MAX_VISIBLE_FILES);
+  const hiddenCount = changedFiles.length - visibleFiles.length;
+
   if (!open) return null;
 
   return (
     <div role="dialog" aria-label="Branch switch confirmation" className="rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] p-4 shadow-[var(--panel-shadow)]">
       <h3 className="text-sm font-semibold text-[var(--text)]">Switch to {targetBranch}</h3>
       <p className="mt-2 text-sm text-[var(--subtext0)]">You have uncommitted changes that must be handled before switching.</p>
+
+      {changedFiles.length > 0 && (
+        <div className="mt-3 rounded border border-[var(--border-subtle)] bg-[var(--crust)] px-2 py-1.5" aria-label="Changed files summary">
+          <ul className="space-y-0.5">
+            {visibleFiles.map((file) => {
+              const badge = statusLabel(file.status);
+              const title = statusTitle(badge);
+              return (
+                <li key={file.path} className="flex items-center gap-2 text-[12px]">
+                  <span
+                    className={
+                      badge === "U"
+                        ? "font-bold text-[var(--decoration-untracked)]"
+                        : badge === "S"
+                          ? "font-bold text-[var(--decoration-staged)]"
+                          : "font-bold text-[var(--decoration-modified)]"
+                    }
+                    title={title}
+                  >
+                    {badge}
+                  </span>
+                  <span className="truncate text-[var(--subtext0)]">{file.path}</span>
+                </li>
+              );
+            })}
+          </ul>
+          {hiddenCount > 0 && (
+            <p className="mt-1 text-[11px] text-[var(--overlay1)]">+{hiddenCount} more file{hiddenCount !== 1 ? "s" : ""}</p>
+          )}
+        </div>
+      )}
+
       <div className="mt-3 space-y-2">
         <button type="button" onClick={() => setAction("commit")}>Commit changes</button>
         <button type="button" onClick={() => setAction("stash")}>Stash changes</button>

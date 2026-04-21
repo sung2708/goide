@@ -72,7 +72,9 @@ vi.mock("../../features/concurrency/useLensSignals", () => ({
 }));
 
 vi.mock("../sidebar/Explorer", () => ({
-  default: () => <div />,
+  default: ({ explorerRevision }: { explorerRevision?: number }) => (
+    <div data-testid="mock-explorer" data-explorer-revision={explorerRevision ?? 0} />
+  ),
 }));
 
 vi.mock("./CodeEditor", () => ({
@@ -312,6 +314,85 @@ describe("EditorShell branch switching", () => {
 
     // switchWorkspaceBranch must NOT have been called.
     expect(switchWorkspaceBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("increments explorerRevision passed to Explorer after a successful branch switch", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+
+    getWorkspaceBranchesMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "develop",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: false,
+        changedFilesSummary: [],
+        branches: [
+          {
+            name: "develop",
+            kind: "current" as const,
+            isCurrent: true,
+            upstream: "origin/develop",
+            isRemoteTrackingCandidate: true,
+          },
+          {
+            name: "main",
+            kind: "local" as const,
+            isCurrent: false,
+            upstream: "origin/main",
+            isRemoteTrackingCandidate: false,
+          },
+        ],
+      },
+    });
+    switchWorkspaceBranchMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "main",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: false,
+        changedFilesSummary: [],
+        branches: [
+          {
+            name: "develop",
+            kind: "local" as const,
+            isCurrent: false,
+            upstream: "origin/develop",
+            isRemoteTrackingCandidate: false,
+          },
+        ],
+      },
+    });
+
+    render(<EditorShell />);
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /switch branch/i })).toBeInTheDocument();
+    });
+
+    const explorerBefore = Number(
+      screen.getByTestId("mock-explorer").getAttribute("data-explorer-revision")
+    );
+
+    // Open picker and select main
+    await user.click(screen.getByRole("button", { name: /switch branch/i }));
+    await screen.findByRole("dialog", { name: /branch picker/i });
+    await user.click(await screen.findByRole("button", { name: /main/i }));
+
+    await waitFor(() => {
+      expect(switchWorkspaceBranchMock).toHaveBeenCalled();
+    });
+
+    // After the switch completes, explorerRevision must have increased
+    await waitFor(() => {
+      const explorerAfter = Number(
+        screen.getByTestId("mock-explorer").getAttribute("data-explorer-revision")
+      );
+      expect(explorerAfter).toBeGreaterThan(explorerBefore);
+    });
   });
 
   it("does not render internal error prefix in branch switch error display", async () => {
