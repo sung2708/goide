@@ -215,6 +215,27 @@ pub struct DebuggerStateDto {
     pub breakpoints: Vec<DebuggerBreakpointDto>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugFailureDto {
+    pub code: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSessionSnapshotDto {
+    pub status: String,
+    pub paused: bool,
+    pub active_relative_path: Option<String>,
+    pub active_line: Option<usize>,
+    pub active_column: Option<usize>,
+    pub breakpoints: Vec<DebuggerBreakpointDto>,
+    pub failure: Option<DebugFailureDto>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToggleBreakpointRequestDto {

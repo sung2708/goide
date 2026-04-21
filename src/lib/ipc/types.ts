@@ -207,6 +207,23 @@ export type DebuggerState = {
   breakpoints: DebuggerBreakpoint[];
 };
 
+export type DebugFailure = {
+  code: string;
+  title: string;
+  message: string;
+  details: string | null;
+};
+
+export type DebugSessionSnapshot = {
+  status: "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+  paused: boolean;
+  activeRelativePath: string | null;
+  activeLine: number | null;
+  activeColumn: number | null;
+  breakpoints: DebuggerBreakpoint[];
+  failure: DebugFailure | null;
+};
+
 export type ToggleBreakpointRequest = {
   relativePath: string;
   line: number;
