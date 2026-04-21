@@ -1493,6 +1493,17 @@ fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
     git_command_output(root, args, false)
 }
 
+/// Strip internal `<code>::` prefixes from error messages before surfacing
+/// them to users.  Internal errors use the pattern `some_code::human message`
+/// so that the command handler can inspect the code programmatically.  Only
+/// the human portion after `::` should reach the UI.
+fn strip_error_prefix(message: &str) -> &str {
+    match message.split_once("::") {
+        Some((_, human)) if !human.is_empty() => human,
+        _ => message,
+    }
+}
+
 #[tauri::command]
 pub async fn get_workspace_git_snapshot(
     workspace_root: String,
@@ -1569,17 +1580,21 @@ fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     git_command_output(root, args, true)
 }
 
-fn normalize_remote_branch_name(name: &str) -> Option<String> {
+/// Parse a full remote ref (e.g. "origin/feature/demo") into its (remote, branch) components.
+/// Returns None if the ref is empty, has no slash, or ends with "/HEAD".
+fn parse_remote_ref(name: &str) -> Option<(&str, &str)> {
     let normalized = name.trim();
     if normalized.is_empty() || normalized.ends_with("/HEAD") {
         return None;
     }
-
     normalized
         .split_once('/')
-        .map(|(_, branch_name)| branch_name.trim())
-        .filter(|branch_name| !branch_name.is_empty())
-        .map(str::to_string)
+        .filter(|(remote, branch)| !remote.is_empty() && !branch.is_empty())
+}
+
+// Keep the original helper for callers that only need the branch name.
+fn normalize_remote_branch_name(name: &str) -> Option<String> {
+    parse_remote_ref(name).map(|(_, branch)| branch.to_string())
 }
 
 fn parse_changed_files_summary(status_output: &str) -> Vec<WorkspaceGitChangedFileSummaryDto> {
@@ -1642,10 +1657,17 @@ where
     )
     .map_err(|error| format!("git_remote_branches_failed::{error}"))?;
 
-    let remote_branch_names = remote_raw
-        .lines()
-        .filter_map(normalize_remote_branch_name)
-        .collect::<HashSet<_>>();
+    // Parse remote refs preserving full identity: (branch_name, remote_name, full_ref).
+    // Multiple remotes may have the same branch name (e.g. "origin/develop" and
+    // "upstream/develop"), so we keep all of them keyed by branch_name.
+    let mut remote_refs: Vec<(String, String, String)> = Vec::new(); // (branch_name, remote_name, full_ref)
+    let mut remote_branch_names = HashSet::new();
+    for line in remote_raw.lines() {
+        if let Some((remote, branch)) = parse_remote_ref(line.trim()) {
+            remote_branch_names.insert(branch.to_string());
+            remote_refs.push((branch.to_string(), remote.to_string(), line.trim().to_string()));
+        }
+    }
 
     let mut branches: Vec<WorkspaceGitBranchDto> = Vec::new();
     let mut local_branch_names = HashSet::new();
@@ -1677,20 +1699,30 @@ where
             is_current,
             upstream,
             is_remote_tracking_candidate,
+            remote_name: None,
+            remote_ref: None,
         });
     }
 
-    for name in remote_branch_names {
-        if local_branch_names.contains(&name) {
+    // Emit one DTO per remote ref.  If two remotes have the same branch name
+    // we emit both — each carries its own remote_name and remote_ref so the
+    // frontend and backend can always refer to the exact tracking source.
+    for (branch_name, remote_name, full_ref) in remote_refs {
+        // Skip if a local branch with the same name already exists; that local
+        // branch takes precedence and the upstream field already records the
+        // remote ref.
+        if local_branch_names.contains(&branch_name) {
             continue;
         }
 
         branches.push(WorkspaceGitBranchDto {
-            name,
+            name: branch_name,
             kind: "remote".to_string(),
             is_current: false,
             upstream: None,
             is_remote_tracking_candidate: true,
+            remote_name: Some(remote_name),
+            remote_ref: Some(full_ref),
         });
     }
 
@@ -1721,13 +1753,19 @@ pub async fn get_workspace_branches(
         let root = resolve_workspace_root(&workspace_root)
             .map_err(|error| format!("git_branches_failed::{error}"))?;
         build_workspace_branch_snapshot(&root)
-            .map_err(|error| format!("git_branches_failed::{error}"))
     })
     .await;
 
     match result {
         Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
-        Ok(Err(message)) => ApiResponse::err("git_branches_failed", &message),
+        Ok(Err(message)) => {
+            // Internal errors use `<code>::<human>` format; extract both parts.
+            let (code, user_message) = match message.split_once("::") {
+                Some((code, human)) if !code.is_empty() && !human.is_empty() => (code, human),
+                _ => ("git_branches_failed", message.as_str()),
+            };
+            ApiResponse::err(code, user_message)
+        }
         Err(error) => ApiResponse::err("git_branches_failed", &error.to_string()),
     }
 }
@@ -1808,6 +1846,28 @@ fn discard_dirty_changes(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn find_remote_ref_for_branch(root: &Path, branch: &str) -> Option<String> {
+    // Ask git for all remote refs that match this branch name.
+    // We take the first one (typically "origin/<branch>") when no explicit ref
+    // was supplied by the caller.
+    let output = git_output(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/",
+        ],
+    )
+    .ok()?;
+    output
+        .lines()
+        .find_map(|line| {
+            parse_remote_ref(line.trim())
+                .filter(|(_, b)| *b == branch)
+                .map(|_| line.trim().to_string())
+        })
+}
+
 fn execute_branch_switch(
     root: &Path,
     request: SwitchWorkspaceBranchRequestDto,
@@ -1819,10 +1879,7 @@ fn execute_branch_switch(
             "stash" => stash_dirty_changes(root)?,
             "discard" => discard_dirty_changes(root)?,
             "none" => {
-                return Err(
-                    "git_branch_dirty_action_required::working tree has uncommitted changes"
-                        .to_string(),
-                )
+                return Err("git_branch_dirty_action_required".to_string());
             }
             other => return Err(format!("unsupported pre-switch action: {other}")),
         }
@@ -1831,16 +1888,33 @@ fn execute_branch_switch(
     if local_branch_exists(root, &request.target_branch)? {
         git_output(root, &["switch", &request.target_branch])?;
     } else {
-        git_output(
-            root,
-            &[
-                "switch",
-                "-c",
-                &request.target_branch,
-                "--track",
-                &format!("origin/{}", request.target_branch),
-            ],
-        )?;
+        // Determine the remote ref to track.  Prefer the explicit ref carried
+        // in the request (set by the frontend when the user picked a remote
+        // branch DTO that has a remote_ref field).  Fall back to scanning the
+        // remote refs ourselves so that callers which don't supply it still
+        // work for simple single-remote repos.
+        let tracking = request
+            .remote_ref
+            .as_deref()
+            .filter(|r| !r.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| find_remote_ref_for_branch(root, &request.target_branch));
+
+        if let Some(remote_ref) = tracking {
+            git_output(
+                root,
+                &[
+                    "switch",
+                    "-c",
+                    &request.target_branch,
+                    "--track",
+                    &remote_ref,
+                ],
+            )?;
+        } else {
+            // No remote ref found: create a plain local branch.
+            git_output(root, &["switch", "-c", &request.target_branch])?;
+        }
     }
 
     Ok(())
@@ -1861,10 +1935,17 @@ pub async fn switch_workspace_branch(
 
     match result {
         Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
-        Ok(Err(message)) if message.starts_with("git_branch_dirty_action_required::") => {
-            ApiResponse::err("git_branch_dirty_action_required", &message)
+        Ok(Err(message)) if message == "git_branch_dirty_action_required" => {
+            ApiResponse::err(
+                "git_branch_dirty_action_required",
+                "Working tree has uncommitted changes. Please commit, stash, or discard them before switching branches.",
+            )
         }
-        Ok(Err(message)) => ApiResponse::err("git_branch_switch_failed", &message),
+        Ok(Err(message)) => {
+            // Strip any internal protocol prefix before surfacing to the UI.
+            let user_message = strip_error_prefix(&message);
+            ApiResponse::err("git_branch_switch_failed", user_message)
+        }
         Err(error) => ApiResponse::err("git_branch_switch_failed", &error.to_string()),
     }
 }
@@ -1955,6 +2036,7 @@ mod tests {
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
+        parse_remote_ref, strip_error_prefix,
         switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
         validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
@@ -2449,6 +2531,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: local_dir.to_string_lossy().to_string(),
             target_branch: "develop".to_string(),
+            remote_ref: None,
             pre_switch_action: "none".to_string(),
             commit_message: None,
         })
@@ -2468,6 +2551,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: repo_dir.to_string_lossy().to_string(),
             target_branch: "feature".to_string(),
+            remote_ref: None,
             pre_switch_action: "none".to_string(),
             commit_message: None,
         })
@@ -2490,6 +2574,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: repo_dir.to_string_lossy().to_string(),
             target_branch: "feature".to_string(),
+            remote_ref: None,
             pre_switch_action: "none".to_string(),
             commit_message: None,
         })
@@ -2512,6 +2597,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: repo_dir.to_string_lossy().to_string(),
             target_branch: "feature".to_string(),
+            remote_ref: None,
             pre_switch_action: "commit".to_string(),
             commit_message: Some("save branch switch work".to_string()),
         })
@@ -2543,6 +2629,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: repo_dir.to_string_lossy().to_string(),
             target_branch: "feature".to_string(),
+            remote_ref: None,
             pre_switch_action: "stash".to_string(),
             commit_message: None,
         })
@@ -2571,6 +2658,7 @@ mod tests {
         let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
             workspace_root: repo_dir.to_string_lossy().to_string(),
             target_branch: "feature".to_string(),
+            remote_ref: None,
             pre_switch_action: "discard".to_string(),
             commit_message: None,
         })
@@ -2584,6 +2672,213 @@ mod tests {
         assert!(
             !repo_dir.join("notes.txt").exists(),
             "discard action should remove untracked files"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocker 1: Remote branch identity – non-origin remote and duplicate names
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn switch_workspace_branch_uses_explicit_remote_ref_for_non_origin_remote() {
+        // Set up a repo with an "upstream" remote (not "origin") that has a
+        // "develop" branch.  The caller passes remote_ref = "upstream/develop".
+        let upstream_bare = create_temp_workspace("upstream_bare");
+        init_bare_git_repo(&upstream_bare);
+
+        let local_dir = create_temp_workspace("non_origin_local");
+        init_git_repo(&local_dir);
+        add_commit(&local_dir, "README.md", "main\n", "init");
+
+        // Add "upstream" as the remote (not "origin").
+        let upstream_path = upstream_bare.to_str().expect("upstream path");
+        git(&local_dir, &["remote", "add", "upstream", upstream_path]);
+        git(&local_dir, &["push", "upstream", "main:main"]);
+
+        // Create the "develop" branch on the upstream remote directly.
+        git(&local_dir, &["switch", "-c", "develop"]);
+        add_commit(&local_dir, "dev.txt", "dev\n", "dev commit");
+        git(&local_dir, &["push", "upstream", "develop:develop"]);
+        git(&local_dir, &["switch", "main"]);
+        git(&local_dir, &["branch", "-D", "develop"]);
+        git(&local_dir, &["fetch", "upstream"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: local_dir.to_string_lossy().to_string(),
+            target_branch: "develop".to_string(),
+            // Explicitly tell the backend which remote ref to track.
+            remote_ref: Some("upstream/develop".to_string()),
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "switch using explicit non-origin remote_ref should succeed");
+        let current = git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("head");
+        assert_eq!(current, "develop");
+        // Verify that the new local branch tracks the upstream remote.
+        let tracking = git_output_in_test(
+            &local_dir,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .expect("upstream tracking ref");
+        assert_eq!(tracking, "upstream/develop");
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_emits_full_remote_identity_per_ref() {
+        // A repo with two remotes both having a "develop" branch should produce
+        // two remote DTOs – one per remote – each carrying the correct
+        // remote_name and remote_ref.
+        let root = std::path::Path::new("/tmp/multi-remote-snapshot");
+
+        let snapshot = build_workspace_branch_snapshot_with_git_runner(root, |_, args| {
+            match args {
+                ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+                ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                    Ok("main\torigin/main\t*\n".to_string())
+                }
+                ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                    // Two remotes both expose "develop".
+                    Ok("origin/main\norigin/develop\nupstream/develop\n".to_string())
+                }
+                ["status", "--porcelain"] => Ok(String::new()),
+                _ => panic!("unexpected git args: {args:?}"),
+            }
+        })
+        .expect("snapshot should succeed");
+
+        // Collect the two remote "develop" DTOs.
+        let develop_remotes: Vec<_> = snapshot
+            .branches
+            .iter()
+            .filter(|b| b.name == "develop" && b.kind == "remote")
+            .collect();
+
+        assert_eq!(
+            develop_remotes.len(),
+            2,
+            "both origin/develop and upstream/develop should produce separate DTOs"
+        );
+
+        let origin_dto = develop_remotes
+            .iter()
+            .find(|b| b.remote_name.as_deref() == Some("origin"))
+            .expect("origin/develop DTO should be present");
+        assert_eq!(origin_dto.remote_ref.as_deref(), Some("origin/develop"));
+
+        let upstream_dto = develop_remotes
+            .iter()
+            .find(|b| b.remote_name.as_deref() == Some("upstream"))
+            .expect("upstream/develop DTO should be present");
+        assert_eq!(upstream_dto.remote_ref.as_deref(), Some("upstream/develop"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocker 2: Error message sanitization
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn strip_error_prefix_removes_code_prefix_from_message() {
+        assert_eq!(
+            strip_error_prefix("git_branches_failed::workspace root does not exist: No such file or directory"),
+            "workspace root does not exist: No such file or directory"
+        );
+    }
+
+    #[test]
+    fn strip_error_prefix_returns_message_unchanged_when_no_prefix() {
+        assert_eq!(
+            strip_error_prefix("git command failed"),
+            "git command failed"
+        );
+    }
+
+    #[test]
+    fn strip_error_prefix_returns_message_unchanged_for_empty_human_part() {
+        // A bare "::" with nothing after should be returned as-is.
+        let raw = "git_failed::";
+        let result = strip_error_prefix(raw);
+        // The human part is empty so the original string is returned.
+        assert_eq!(result, raw);
+    }
+
+    #[test]
+    fn parse_remote_ref_returns_remote_and_branch() {
+        assert_eq!(parse_remote_ref("origin/develop"), Some(("origin", "develop")));
+        assert_eq!(
+            parse_remote_ref("upstream/feature/my-feat"),
+            Some(("upstream", "feature/my-feat"))
+        );
+    }
+
+    #[test]
+    fn parse_remote_ref_rejects_head_and_empty() {
+        assert_eq!(parse_remote_ref("origin/HEAD"), None);
+        assert_eq!(parse_remote_ref(""), None);
+        assert_eq!(parse_remote_ref("  "), None);
+    }
+
+    #[tokio::test]
+    async fn dirty_dialog_cancel_path_does_not_switch_branch() {
+        // When the user cancels the dirty-tree dialog the frontend should simply
+        // not call switchWorkspaceBranch.  On the backend side, calling switch
+        // with pre_switch_action="none" on a dirty repo must return the
+        // structured error code and a human-readable message without any
+        // internal protocol prefix.
+        let repo_dir = create_dirty_git_repo("dirty_cancel_no_switch");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(!response.ok, "canceling the dirty dialog should not switch");
+        let error = response.error.expect("error payload must be present");
+        assert_eq!(error.code, "git_branch_dirty_action_required");
+
+        // The user-facing message must not start with an internal prefix.
+        assert!(
+            !error.message.starts_with("git_"),
+            "user-facing message must not start with internal prefix, got: {}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("::"),
+            "user-facing message must not contain internal '::' separator, got: {}",
+            error.message
+        );
+
+        // The branch must not have changed.
+        assert_head_branch(&repo_dir, "main");
+    }
+
+    #[tokio::test]
+    async fn get_workspace_branches_error_message_is_sanitized() {
+        // Supplying a non-existent workspace root should surface a clean error
+        // without the internal "git_branches_failed::" prefix in the message.
+        let response = get_workspace_branches(
+            "/this/path/does/absolutely/not/exist/anywhere".to_string(),
+        )
+        .await;
+
+        assert!(!response.ok, "non-existent workspace should fail");
+        let error = response.error.expect("error payload must be present");
+
+        assert!(
+            !error.message.starts_with("git_"),
+            "user-facing message must not start with internal prefix, got: {}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("::"),
+            "user-facing message must not contain '::' separator, got: {}",
+            error.message
         );
     }
 }
