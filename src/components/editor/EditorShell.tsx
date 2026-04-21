@@ -19,6 +19,8 @@ import {
   fetchWorkspaceCompletions,
   fetchWorkspaceDiagnostics,
   getWorkspaceGitSnapshot,
+  getWorkspaceBranches,
+  switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
   debuggerPause,
@@ -40,7 +42,9 @@ import type {
   RuntimeTopologySnapshot,
   RunOutputPayload,
   ToolchainStatus,
+  WorkspaceGitBranch,
   WorkspaceGitSnapshot,
+  WorkspaceBranchSnapshot,
   WorkspaceSearchFile,
   DebuggerState,
 } from "../../lib/ipc/types";
@@ -65,6 +69,8 @@ import CodeEditor, {
 } from "./CodeEditor";
 import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
+import BranchPicker from "../panels/BranchPicker";
+import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 
 const DEBUG_UI_ENABLED = false;
@@ -419,6 +425,25 @@ function EditorShell() {
     useState<DiagnosticsIndicatorState>("idle");
   const [gitSnapshot, setGitSnapshot] = useState<WorkspaceGitSnapshot | null>(null);
   const [gitError, setGitError] = useState<string | null>(null);
+  const [branchSnapshot, setBranchSnapshot] = useState<WorkspaceBranchSnapshot | null>(null);
+  const [isBranchPickerOpen, setIsBranchPickerOpen] = useState(false);
+  const [branchQuery, setBranchQuery] = useState("");
+  const [pendingTargetBranch, setPendingTargetBranch] = useState<WorkspaceGitBranch | null>(null);
+  const [isBranchDialogOpen, setIsBranchDialogOpen] = useState(false);
+  const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
+  const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
+
+  const refreshBranchSnapshot = useCallback(async (workspaceRoot: string) => {
+    try {
+      const res = await getWorkspaceBranches(workspaceRoot);
+      if (res.ok && res.data) {
+        return res.data;
+      }
+      return null;
+    } catch (_error) {
+      return null;
+    }
+  }, []);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
   const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
     useState<RuntimePanelSnapshot | null>(null);
@@ -434,6 +459,7 @@ function EditorShell() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
   const [analysisRevision, setAnalysisRevision] = useState(0);
+  const [explorerRevision, setExplorerRevision] = useState(0);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
@@ -741,14 +767,20 @@ function EditorShell() {
         if (!isCancelled && res.ok && res.data) {
           setGitSnapshot(res.data);
           setGitError(null);
+          const latestBranchSnapshot = await refreshBranchSnapshot(workspacePath);
+          if (!isCancelled) {
+            setBranchSnapshot(latestBranchSnapshot);
+          }
         } else if (!isCancelled) {
           setGitSnapshot(null);
           setGitError(res.error?.message ?? "Git data unavailable");
+          setBranchSnapshot(null);
         }
       } catch (err) {
         if (!isCancelled) {
           setGitSnapshot(null);
           setGitError("Git data unavailable");
+          setBranchSnapshot(null);
         }
       }
       if (!isCancelled) {
@@ -759,7 +791,24 @@ function EditorShell() {
     return () => {
       isCancelled = true;
     };
-  }, [workspacePath]);
+  }, [refreshBranchSnapshot, workspacePath]);
+
+  useEffect(() => {
+    if (!workspacePath) {
+      setBranchSnapshot(null);
+      return;
+    }
+    let isCancelled = false;
+    void refreshBranchSnapshot(workspacePath).then((snapshot) => {
+      if (isCancelled) {
+        return;
+      }
+      setBranchSnapshot(snapshot);
+    });
+    return () => {
+      isCancelled = true;
+    };
+  }, [refreshBranchSnapshot, workspacePath]);
 
   useEffect(() => {
     if (runMode !== "debug" || runStatus !== "running") {
@@ -2043,6 +2092,109 @@ function EditorShell() {
     [isReading, refreshDiagnosticsForFile, workspacePath]
   );
 
+  const reloadWorkspaceState = useCallback(async () => {
+    if (!workspacePathRef.current) return;
+
+    const [gitRes, branchRes] = await Promise.all([
+      getWorkspaceGitSnapshot(workspacePathRef.current),
+      getWorkspaceBranches(workspacePathRef.current),
+    ]);
+
+    if (gitRes.ok && gitRes.data) setGitSnapshot(gitRes.data);
+    if (branchRes.ok && branchRes.data) {
+      setBranchSnapshot(branchRes.data);
+    } else {
+      setBranchSnapshot(null);
+    }
+
+    setDiagnostics([]);
+    setDebuggerState(null);
+    setRunOutput([]);
+    setWorkspaceSearchResults([]);
+
+    // Explicitly refresh the Explorer tree so branch-switched file layout is reflected.
+    setExplorerRevision((prev) => prev + 1);
+
+    if (activeFilePathRef.current) {
+      await handleOpenFile(activeFilePathRef.current);
+    }
+  }, [handleOpenFile]);
+
+  const handleBranchSelect = useCallback(async (branch: WorkspaceGitBranch) => {
+    if (!workspacePathRef.current || !branchSnapshot) return;
+    if (branch.name === branchSnapshot.currentBranch) {
+      setIsBranchPickerOpen(false);
+      setBranchQuery("");
+      return;
+    }
+
+    const latestBranchSnapshot = await refreshBranchSnapshot(workspacePathRef.current);
+
+    setIsBranchPickerOpen(false);
+    setBranchQuery("");
+
+    if (!latestBranchSnapshot) {
+      setBranchSnapshot(null);
+      setBranchSwitchError("Branch data unavailable");
+      return;
+    }
+
+    setBranchSnapshot(latestBranchSnapshot);
+
+    if (branch.name === latestBranchSnapshot.currentBranch) {
+      return;
+    }
+    if (latestBranchSnapshot.hasUncommittedChanges) {
+      setPendingTargetBranch(branch);
+      setIsBranchDialogOpen(true);
+    } else {
+      setPendingTargetBranch(branch);
+      setBranchSwitchError(null);
+      setBranchSwitchLoading(true);
+      void switchWorkspaceBranch({
+        workspaceRoot: workspacePathRef.current,
+        targetBranch: branch.name,
+        remoteRef: branch.remoteRef ?? null,
+        preSwitchAction: "none",
+      }).then((res) => {
+        setBranchSwitchLoading(false);
+        if (res.ok && res.data) {
+          setBranchSnapshot(res.data);
+          setPendingTargetBranch(null);
+          void reloadWorkspaceState();
+        } else {
+          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
+        }
+      });
+    }
+  }, [branchSnapshot, refreshBranchSnapshot, reloadWorkspaceState]);
+
+  const handleBranchSwitchConfirm = useCallback(
+    (payload: { action: "commit" | "stash" | "discard"; commitMessage?: string }) => {
+      if (!pendingTargetBranch || !workspacePathRef.current) return;
+      setIsBranchDialogOpen(false);
+      setBranchSwitchError(null);
+      setBranchSwitchLoading(true);
+      void switchWorkspaceBranch({
+        workspaceRoot: workspacePathRef.current,
+        targetBranch: pendingTargetBranch.name,
+        remoteRef: pendingTargetBranch.remoteRef ?? null,
+        preSwitchAction: payload.action,
+        commitMessage: payload.commitMessage ?? null,
+      }).then((res) => {
+        setBranchSwitchLoading(false);
+        if (res.ok && res.data) {
+          setBranchSnapshot(res.data);
+          setPendingTargetBranch(null);
+          void reloadWorkspaceState();
+        } else {
+          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
+        }
+      });
+    },
+    [pendingTargetBranch, reloadWorkspaceState]
+  );
+
   const editorTitle = useMemo(() => {
     if (!activeFilePath) {
       return "Editor";
@@ -2070,6 +2222,7 @@ function EditorShell() {
               activeFilePath={activeFilePath}
               onOpenFile={handleOpenFile}
               fileDecorations={fileDecorations}
+              explorerRevision={explorerRevision}
             />
           )}
           {activeTab === "search" && (
@@ -2089,7 +2242,9 @@ function EditorShell() {
             <GitPanel
               loading={!gitSnapshot && Boolean(workspacePath)}
               snapshot={gitSnapshot}
+              branchSnapshot={branchSnapshot}
               error={gitError}
+              onOpenBranchPicker={() => setIsBranchPickerOpen(true)}
             />
           )}
           {activeTab === "concurrency" && (
@@ -2424,6 +2579,8 @@ function EditorShell() {
         toolchainStatus={toolchainStatus}
         saveStatus={saveStatus}
         runStatus={runStatus}
+        branchName={branchSnapshot?.currentBranch ?? null}
+        onToggleBranchPicker={() => setIsBranchPickerOpen((prev) => !prev)}
         isSummaryOpen={isSummaryOpen}
         isBottomPanelOpen={isBottomPanelOpen}
         isCommandPaletteOpen={isCommandPaletteOpen}
@@ -2446,6 +2603,53 @@ function EditorShell() {
           onRun={handleRunFileStandard}
           onRunWithRace={handleRunFileWithRace}
         />
+      )}
+
+      {isBranchPickerOpen && branchSnapshot && (
+        <div className="absolute bottom-10 left-[240px] z-50 w-72">
+          <BranchPicker
+            open={isBranchPickerOpen}
+            currentBranch={branchSnapshot.currentBranch}
+            branches={branchSnapshot.branches}
+            query={branchQuery}
+            onQueryChange={setBranchQuery}
+            onSelectBranch={handleBranchSelect}
+            onClose={() => {
+              setIsBranchPickerOpen(false);
+              setBranchQuery("");
+            }}
+          />
+        </div>
+      )}
+
+      {isBranchDialogOpen && pendingTargetBranch && branchSnapshot && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-96">
+            <BranchSwitchDialog
+              open={isBranchDialogOpen}
+              targetBranch={pendingTargetBranch.name}
+              changedFiles={branchSnapshot.changedFilesSummary}
+              onConfirm={handleBranchSwitchConfirm}
+              onCancel={() => {
+                setIsBranchDialogOpen(false);
+                setPendingTargetBranch(null);
+                setBranchSwitchError(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {branchSwitchLoading && (
+        <div className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--border-muted)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--subtext1)]">
+          Switching branch…
+        </div>
+      )}
+
+      {branchSwitchError && (
+        <div className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--red)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--red)]">
+          {branchSwitchError}
+        </div>
       )}
     </div>
   );

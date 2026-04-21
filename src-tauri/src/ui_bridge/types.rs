@@ -260,6 +260,54 @@ pub struct WorkspaceGitSnapshotDto {
     pub commits: Vec<WorkspaceGitCommitDto>,
 }
 
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitBranchDto {
+    pub name: String,
+    pub kind: String,
+    pub is_current: bool,
+    pub upstream: Option<String>,
+    pub is_remote_tracking_candidate: bool,
+    /// For remote-tracking branches: the remote name (e.g. "origin", "upstream").
+    /// None for local branches.
+    pub remote_name: Option<String>,
+    /// For remote-tracking branches: the full ref as returned by git
+    /// (e.g. "origin/develop"). Used as the --track argument when creating a
+    /// local tracking branch. None for local branches.
+    pub remote_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitChangedFileSummaryDto {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchSnapshotDto {
+    pub current_branch: Option<String>,
+    pub is_detached_head: bool,
+    pub detached_head_ref: Option<String>,
+    pub branches: Vec<WorkspaceGitBranchDto>,
+    pub has_uncommitted_changes: bool,
+    pub changed_files_summary: Vec<WorkspaceGitChangedFileSummaryDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchWorkspaceBranchRequestDto {
+    pub workspace_root: String,
+    pub target_branch: String,
+    /// Full remote ref to use as the tracking source when creating a new local
+    /// branch (e.g. "upstream/develop"). When None the backend falls back to
+    /// checking whether any remote ref named `<remote>/<target_branch>` exists.
+    pub remote_ref: Option<String>,
+    pub pre_switch_action: String,
+    pub commit_message: Option<String>,
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionRequestDto {
