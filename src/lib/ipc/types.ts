@@ -239,3 +239,32 @@ export type WorkspaceGitSnapshot = {
   changedFiles: WorkspaceGitChangedFile[];
   commits: WorkspaceGitCommit[];
 };
+
+export type WorkspaceGitBranch = {
+  name: string;
+  kind: "current" | "local" | "remote";
+  isCurrent: boolean;
+  upstream?: string | null;
+  isRemoteTrackingCandidate: boolean;
+};
+
+export type WorkspaceGitChangedFileSummary = {
+  path: string;
+  status: string;
+};
+
+export type WorkspaceBranchSnapshot = {
+  currentBranch: string | null;
+  isDetachedHead: boolean;
+  detachedHeadRef: string | null;
+  branches: WorkspaceGitBranch[];
+  hasUncommittedChanges: boolean;
+  changedFilesSummary: WorkspaceGitChangedFileSummary[];
+};
+
+export type SwitchWorkspaceBranchRequest = {
+  workspaceRoot: string;
+  targetBranch: string;
+  preSwitchAction: "none" | "commit" | "stash" | "discard";
+  commitMessage?: string | null;
+};
