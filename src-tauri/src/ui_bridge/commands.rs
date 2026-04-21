@@ -500,24 +500,46 @@ async fn start_debug_session_internal(
     );
 
     let workspace_root = std::path::PathBuf::from(&request.workspace_root);
-    let target_file = workspace_root.join(&request.relative_path);
 
-    if !target_file.exists() {
-        return ApiResponse::err(
-            "deep_trace_file_not_found",
-            &format!("Target file not found: {}", target_file.display()),
-        );
-    }
-    let launch_mode = if request.relative_path.ends_with("_test.go") {
+    // Resolve the active file to its Go package and validate that the package
+    // is runnable (has a `package main` declaration). Test files bypass this
+    // check and use the legacy file-based launch path.
+    let is_test_file = request.relative_path.ends_with("_test.go");
+    let launch_mode = if is_test_file {
+        // Test files use the legacy file-based launch so that the test runner
+        // can discover individual test functions correctly.
+        let target_file = workspace_root.join(&request.relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
         LaunchMode::Test
     } else {
-        LaunchMode::Debug
+        // For non-test files, resolve to a Go package pattern so that Delve
+        // receives the correct package context (e.g. `./cmd/app`) instead of
+        // a raw file path.
+        let target = match resolve_debug_target(&workspace_root, &request.relative_path) {
+            Ok(target) => target,
+            Err(message) => {
+                return ApiResponse::err("debug_target_invalid", &message);
+            }
+        };
+        LaunchMode::Package {
+            package: target.package_pattern,
+            cwd: workspace_root.to_string_lossy().to_string(),
+        }
     };
+
+    // For the test-file path we still need a concrete target_file for the
+    // legacy launch; for package launches target_file is unused.
+    let target_file = workspace_root.join(&request.relative_path);
 
     let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
-            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+            return ApiResponse::err("debug_session_start_failed", &error.to_string());
         }
     };
 
@@ -2001,6 +2023,103 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
     Ok(())
 }
 
+/// Checks that a directory contains at least one `.go` file with `package main`.
+/// Returns an error if the directory has no Go files, or all Go files declare a
+/// non-`main` package — i.e. the package is a library and cannot be run or
+/// debugged directly.
+fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
+    let entries = std_fs::read_dir(package_dir)
+        .map_err(|error| format!("cannot read package directory: {error}"))?;
+
+    let mut found_go_file = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("go") {
+            continue;
+        }
+        // Skip test files — they always declare `package X` or `package X_test`
+        // but we still want to allow debugging a package that only has tests.
+        found_go_file = true;
+        let content = match std_fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.starts_with("package ") {
+                let package_name = trimmed
+                    .trim_start_matches("package ")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if package_name == "main" {
+                    return Ok(());
+                }
+                break;
+            }
+        }
+    }
+
+    if !found_go_file {
+        return Err("not a runnable Go package: directory contains no .go files".to_string());
+    }
+
+    Err("not a runnable Go package: package is a library (no 'package main' declaration found)"
+        .to_string())
+}
+
+/// Resolved debug target, holding the package directory and the Go package
+/// pattern suitable for use with `dlv dap` launch arguments (e.g. `./cmd/app`).
+#[derive(Debug)]
+pub struct DebugTarget {
+    pub package_dir: PathBuf,
+    pub package_pattern: String,
+}
+
+/// Resolves a workspace-relative file path to a runnable Go package target.
+///
+/// Returns an error if:
+/// - the file does not exist
+/// - the resolved directory escapes the workspace root
+/// - the package is not runnable (no `package main`)
+pub fn resolve_debug_target(
+    workspace_root: &Path,
+    active_relative_path: &str,
+) -> Result<DebugTarget, String> {
+    let canonical_root = workspace_root
+        .canonicalize()
+        .map_err(|error| format!("workspace root does not exist: {error}"))?;
+    let absolute = canonical_root.join(active_relative_path);
+    let canonical = absolute
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let package_dir = canonical
+        .parent()
+        .ok_or_else(|| "active file has no parent directory".to_string())?;
+    let relative_dir = package_dir
+        .strip_prefix(&canonical_root)
+        .map_err(|_| "debug target escapes workspace root".to_string())?;
+
+    let package_pattern = if relative_dir.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        format!(
+            "./{}",
+            relative_dir.to_string_lossy().replace('\\', "/")
+        )
+    };
+
+    validate_runnable_go_package(package_dir)?;
+
+    Ok(DebugTarget {
+        package_dir: package_dir.to_path_buf(),
+        package_pattern,
+    })
+}
+
 fn validate_workspace_scoped_go_path(
     workspace_root: &str,
     relative_path: &str,
@@ -2036,7 +2155,7 @@ mod tests {
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
-        parse_remote_ref, strip_error_prefix,
+        parse_remote_ref, resolve_debug_target, strip_error_prefix,
         switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
         validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
@@ -2880,5 +2999,41 @@ mod tests {
             "user-facing message must not contain '::' separator, got: {}",
             error.message
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug target resolution — package-aware
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_cmd_package_target() {
+        let workspace = create_temp_workspace("debug_cmd_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        std::fs::create_dir_all(workspace.join("cmd/app")).unwrap();
+        write_file(
+            workspace.join("cmd/app/main.go"),
+            "package main\nfunc main() {}\n",
+        );
+
+        let resolved = resolve_debug_target(&workspace, "cmd/app/main.go").expect("target");
+
+        assert_eq!(resolved.package_dir, workspace.join("cmd/app").canonicalize().unwrap());
+        assert_eq!(resolved.package_pattern, "./cmd/app");
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_rejects_non_runnable_target() {
+        let workspace = create_temp_workspace("debug_invalid_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        std::fs::create_dir_all(workspace.join("internal/logger")).unwrap();
+        write_file(
+            workspace.join("internal/logger/logger.go"),
+            "package logger\nfunc New() string { return \"ok\" }\n",
+        );
+
+        let error = resolve_debug_target(&workspace, "internal/logger/logger.go").unwrap_err();
+        assert!(error.contains("not a runnable Go package"));
     }
 }
