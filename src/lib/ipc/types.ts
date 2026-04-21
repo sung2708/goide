@@ -135,6 +135,15 @@ export type StartDebugSessionRequest = {
   relativePath: string;
 };
 
+/**
+ * Frontend-facing lifecycle snapshot for the rebuilt debug flow.
+ * Keep this aligned with the existing lower-level `DebuggerState`, which
+ * remains the active debugger session state used by current debugger controls.
+ */
+export type DebugSessionSnapshot = {
+  status: "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+};
+
 export type RuntimeAvailabilityResponse = {
   runtimeAvailability: "available" | "unavailable";
 };
@@ -198,6 +207,11 @@ export type DebuggerBreakpoint = {
   line: number;
 };
 
+/**
+ * Lower-level debugger session state already used by current debugger
+ * controls. Keep this aligned with `DebugSessionSnapshot`, which is the
+ * higher-level frontend lifecycle wrapper for the rebuilt debug flow.
+ */
 export type DebuggerState = {
   sessionActive: boolean;
   paused: boolean;
