@@ -1,12 +1,14 @@
-import type { WorkspaceGitSnapshot } from "../../lib/ipc/types";
+import type { WorkspaceBranchSnapshot, WorkspaceGitSnapshot } from "../../lib/ipc/types";
 
 type GitPanelProps = {
   loading?: boolean;
   snapshot: WorkspaceGitSnapshot | null;
+  branchSnapshot?: WorkspaceBranchSnapshot | null;
   error?: string | null;
+  onOpenBranchPicker?: () => void;
 };
 
-function GitPanel({ loading = false, snapshot, error = null }: GitPanelProps) {
+function GitPanel({ loading = false, snapshot, branchSnapshot, error = null, onOpenBranchPicker }: GitPanelProps) {
   const isGitUnavailable = Boolean(error);
 
   return (
@@ -20,6 +22,17 @@ function GitPanel({ loading = false, snapshot, error = null }: GitPanelProps) {
         </p>
       </div>
       <div className="flex-1 overflow-auto p-2">
+        {branchSnapshot && onOpenBranchPicker && (
+          <div className="mb-2 px-2 pt-1">
+            <button
+              type="button"
+              onClick={onOpenBranchPicker}
+              className="rounded border border-[var(--border-subtle)] px-3 py-1 text-xs text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+            >
+              Switch branch
+            </button>
+          </div>
+        )}
         {loading && <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Loading Git...</p>}
         {error && <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Git data is unavailable for this folder.</p>}
         {snapshot && !isGitUnavailable && (
