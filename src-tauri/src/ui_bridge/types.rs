@@ -118,14 +118,34 @@ pub struct ActivateDeepTraceResponseDto {
     pub scope_key: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartDebugSessionRequestDto {
     pub workspace_root: String,
     pub relative_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+/// Frontend-facing lifecycle snapshot for the rebuilt debug flow.
+/// Keep this aligned with the existing lower-level `DebuggerStateDto`, which
+/// remains the active debugger session state used by current debugger controls.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSessionSnapshotDto {
+    pub status: DebugSessionStatusDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum DebugSessionStatusDto {
+    Idle,
+    Starting,
+    Running,
+    Paused,
+    Stopping,
+    Failed,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
@@ -204,6 +224,9 @@ pub struct DebuggerBreakpointDto {
     pub line: usize,
 }
 
+/// Lower-level debugger session state already used by current debugger
+/// controls. Keep this aligned with `DebugSessionSnapshotDto`, which is the
+/// higher-level frontend lifecycle wrapper for the rebuilt debug flow.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerStateDto {
