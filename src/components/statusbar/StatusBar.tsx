@@ -11,6 +11,8 @@ type StatusBarProps = {
   toolchainStatus?: ToolchainStatus | null;
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
+  branchName?: string | null;
+  onToggleBranchPicker?: () => void;
   isSummaryOpen: boolean;
   isBottomPanelOpen: boolean;
   isCommandPaletteOpen: boolean;
@@ -29,6 +31,8 @@ function StatusBar({
   toolchainStatus = null,
   saveStatus = "idle",
   runStatus = "idle",
+  branchName,
+  onToggleBranchPicker,
   isSummaryOpen,
   isBottomPanelOpen,
   isCommandPaletteOpen,
@@ -94,6 +98,16 @@ function StatusBar({
           <span className="text-[var(--surface2)]">/</span>
           <span className="max-w-[200px] truncate">{activeFilePath ?? "IDLE"}</span>
         </div>
+        {branchName && onToggleBranchPicker && (
+          <button
+            type="button"
+            aria-label="Switch branch"
+            className="rounded border px-2 py-0.5 font-semibold border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)]"
+            onClick={onToggleBranchPicker}
+          >
+            {branchName}
+          </button>
+        )}
       </div>
 
       <div className="flex items-center gap-4">

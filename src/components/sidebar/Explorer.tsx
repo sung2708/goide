@@ -33,6 +33,8 @@ type ExplorerProps = {
   onEntryPathChanged?: (previousPath: string, nextPath: string, isDir: boolean) => void;
   onEntryDeleted?: (deletedPath: string, isDir: boolean) => void;
   fileDecorations?: Map<string, FileDecoration>;
+  /** Incrementing this value from outside forces the tree to reload from disk. */
+  explorerRevision?: number;
 };
 
 type EntryState = {
@@ -301,13 +303,15 @@ function Explorer({
   onEntryPathChanged,
   onEntryDeleted,
   fileDecorations,
+  explorerRevision = 0,
 }: ExplorerProps) {
   const [rootState, setRootState] = useState<EntryState>(emptyState);
   const [childrenByPath, setChildrenByPath] = useState<Record<string, EntryState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [treeRevision, setTreeRevision] = useState(0);
+  const [internalTreeRevision, setInternalTreeRevision] = useState(0);
+  const treeRevision = internalTreeRevision + explorerRevision;
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [createState, setCreateState] = useState<CreateState | null>(null);
@@ -357,7 +361,7 @@ function Explorer({
   }, []);
 
   const refreshTree = useCallback(() => {
-    setTreeRevision((prev) => prev + 1);
+    setInternalTreeRevision((prev) => prev + 1);
   }, []);
 
   const hydrateExpandedPaths = useCallback(

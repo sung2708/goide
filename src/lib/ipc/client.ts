@@ -17,8 +17,10 @@ import type {
   RuntimeSignal,
   ToolchainStatus,
   ToggleBreakpointRequest,
+  WorkspaceBranchSnapshot,
   WorkspaceGitSnapshot,
   WorkspaceSearchFile,
+  SwitchWorkspaceBranchRequest,
 } from "./types";
 
 function hasTauriInternals(): boolean {
@@ -355,4 +357,20 @@ export async function getWorkspaceGitSnapshot(
       workspaceRoot,
     }
   );
+}
+
+export async function getWorkspaceBranches(
+  workspaceRoot: string,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("get_workspace_branches", {
+    workspaceRoot,
+  });
+}
+
+export async function switchWorkspaceBranch(
+  request: SwitchWorkspaceBranchRequest,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
+    request,
+  });
 }
