@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import StatusBar from "./StatusBar";
 
@@ -158,5 +159,34 @@ describe("StatusBar branch trigger", () => {
     );
 
     expect(screen.getByRole("button", { name: /switch branch/i })).toHaveTextContent("develop");
+  });
+
+  it("calls onToggleBranchPicker when the branch button is clicked", async () => {
+    const user = userEvent.setup();
+    const onToggleBranchPicker = vi.fn();
+
+    render(
+      <StatusBar
+        workspacePath="C:/workspace"
+        activeFilePath="main.go"
+        mode="quick-insight"
+        runtimeAvailability="available"
+        diagnosticsAvailability="available"
+        completionAvailability="available"
+        toolchainStatus={null}
+        branchName="develop"
+        onToggleBranchPicker={onToggleBranchPicker}
+        isSummaryOpen={false}
+        isBottomPanelOpen={false}
+        isCommandPaletteOpen={false}
+        onToggleSummary={() => {}}
+        onToggleBottomPanel={() => {}}
+        onToggleCommandPalette={() => {}}
+      />
+    );
+
+    await user.click(screen.getByRole("button", { name: /switch branch/i }));
+
+    expect(onToggleBranchPicker).toHaveBeenCalledTimes(1);
   });
 });
