@@ -16,6 +16,7 @@ use crate::ui_bridge::types::{
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
     RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
     ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
+    WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto, WorkspaceGitChangedFileSummaryDto,
     WorkspaceGitChangedFileDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
     WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
@@ -1555,6 +1556,138 @@ pub async fn get_workspace_git_snapshot(
     }
 }
 
+fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std_command("git")
+        .args(args)
+        .current_dir(root)
+        .output()
+        .map_err(|error| error.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapshotDto, String> {
+    // Determine current branch or detached HEAD state
+    let head_ref = git_output(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map_err(|error| format!("git_unavailable::{error}"))?;
+
+    let is_detached_head = head_ref.trim() == "HEAD";
+    let current_branch = if is_detached_head {
+        None
+    } else {
+        Some(head_ref.trim().to_string())
+    };
+    let detached_head_ref = if is_detached_head {
+        git_output(root, &["rev-parse", "--short", "HEAD"]).ok()
+    } else {
+        None
+    };
+
+    // List all local branches with upstream info
+    // Format: <refname:short> <upstream:short> <HEAD>
+    let local_raw = git_output(root, &[
+        "for-each-ref",
+        "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)",
+        "refs/heads/",
+    ])
+    .unwrap_or_default();
+
+    let mut branches: Vec<WorkspaceGitBranchDto> = Vec::new();
+
+    for line in local_raw.lines() {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        let name = parts.first().map(|s| s.trim()).unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let upstream = parts.get(1).map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+        let is_current = parts.get(2).map(|s| s.trim()) == Some("*");
+        // A branch is a remote-tracking candidate if it has an upstream or shares a name with a remote branch
+        let is_remote_tracking_candidate = upstream.is_some();
+        let kind = if is_current { "current".to_string() } else { "local".to_string() };
+
+        branches.push(WorkspaceGitBranchDto {
+            name,
+            kind,
+            is_current,
+            upstream,
+            is_remote_tracking_candidate,
+        });
+    }
+
+    // List remote-tracking branches
+    let remote_raw = git_output(root, &[
+        "for-each-ref",
+        "--format=%(refname:short)",
+        "refs/remotes/",
+    ])
+    .unwrap_or_default();
+
+    for line in remote_raw.lines() {
+        let name = line.trim();
+        if name.is_empty() || name.ends_with("/HEAD") {
+            continue;
+        }
+        branches.push(WorkspaceGitBranchDto {
+            name: name.to_string(),
+            kind: "remote".to_string(),
+            is_current: false,
+            upstream: None,
+            is_remote_tracking_candidate: true,
+        });
+    }
+
+    // Check for uncommitted changes via git status --porcelain
+    let status_output = git_output(root, &["status", "--porcelain"]).unwrap_or_default();
+    let changed_files_summary: Vec<WorkspaceGitChangedFileSummaryDto> = status_output
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let status = line[..2].trim().to_string();
+            let path = line[3..].trim().replace('\\', "/");
+            if path.is_empty() {
+                return None;
+            }
+            Some(WorkspaceGitChangedFileSummaryDto { path, status })
+        })
+        .collect();
+    let has_uncommitted_changes = !changed_files_summary.is_empty();
+
+    Ok(WorkspaceBranchSnapshotDto {
+        current_branch,
+        is_detached_head,
+        detached_head_ref,
+        branches,
+        has_uncommitted_changes,
+        changed_files_summary,
+    })
+}
+
+#[tauri::command]
+pub async fn get_workspace_branches(
+    workspace_root: String,
+) -> ApiResponse<WorkspaceBranchSnapshotDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_branches_failed::{error}"))?;
+        build_workspace_branch_snapshot(&root)
+            .map_err(|error| format!("git_branches_failed::{error}"))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
+        Ok(Err(message)) => ApiResponse::err("git_branches_failed", &message),
+        Err(error) => ApiResponse::err("git_branches_failed", &error.to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     let session_handle = get_dap_session_handle();
@@ -1663,15 +1796,96 @@ fn validate_workspace_scoped_go_path(
 mod tests {
     use super::{
         deactivate_deep_trace, debugger_toggle_breakpoint, get_dap_session_handle,
-        get_runtime_signals, get_runtime_signals_handle, validate_completion_cursor,
-        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
-        validate_workspace_scoped_go_path,
+        get_runtime_signals, get_runtime_signals_handle, get_workspace_branches,
+        validate_completion_cursor, validate_go_analysis_path, validate_go_completion_path,
+        validate_go_diagnostics_path, validate_workspace_scoped_go_path,
     };
     use std::sync::OnceLock;
     use crate::ui_bridge::types::ToggleBreakpointRequestDto;
     use std::fs;
+    use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
+
+    fn unique_suffix() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after unix epoch")
+            .as_nanos()
+    }
+
+    fn create_temp_workspace(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("goide_{label}_{}", unique_suffix()));
+        fs::create_dir_all(&dir).expect("create temp workspace dir");
+        dir
+    }
+
+    fn init_git_repo(dir: &std::path::PathBuf) {
+        git(dir, &["init", "-b", "main"]);
+        git(dir, &["config", "user.email", "test@goide.test"]);
+        git(dir, &["config", "user.name", "GoIDE Test"]);
+    }
+
+    fn git(dir: &std::path::PathBuf, args: &[&str]) {
+        let status = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git command failed to spawn");
+        if !status.status.success() {
+            // Ignore errors for optional git config / init variants (e.g. older git without -b)
+        }
+    }
+
+    fn write_file(path: std::path::PathBuf, content: &str) {
+        fs::write(path, content).expect("write temp file");
+    }
+
+    #[tokio::test]
+    async fn get_workspace_branches_lists_current_local_and_remote_candidates() {
+        let repo_dir = create_temp_workspace("branch_snapshot_repo");
+        // Try with -b flag first; fall back to renaming master -> main
+        let init_result = Command::new("git")
+            .args(&["init", "-b", "main"])
+            .current_dir(&repo_dir)
+            .output();
+        let use_rename = match init_result {
+            Ok(output) if output.status.success() => false,
+            _ => {
+                // git version without -b support; rename default branch
+                Command::new("git")
+                    .args(&["init"])
+                    .current_dir(&repo_dir)
+                    .output()
+                    .ok();
+                true
+            }
+        };
+        git(&repo_dir, &["config", "user.email", "test@goide.test"]);
+        git(&repo_dir, &["config", "user.name", "GoIDE Test"]);
+        write_file(repo_dir.join("README.md"), "hello\n");
+        git(&repo_dir, &["add", "README.md"]);
+        git(&repo_dir, &["commit", "-m", "init"]);
+        if use_rename {
+            git(&repo_dir, &["branch", "-m", "master", "main"]);
+        }
+        git(&repo_dir, &["branch", "develop"]);
+
+        let response = get_workspace_branches(repo_dir.to_string_lossy().to_string()).await;
+
+        assert!(response.ok, "get_workspace_branches should succeed");
+        let snapshot = response.data.expect("snapshot should be present");
+        let current = snapshot.current_branch.as_deref();
+        assert!(
+            current == Some("main") || current == Some("master"),
+            "current branch should be main or master, got: {:?}",
+            current
+        );
+        assert!(
+            snapshot.branches.iter().any(|branch| branch.name == "develop"),
+            "branches should include 'develop'"
+        );
+    }
 
     fn shared_state_test_lock() -> &'static Mutex<()> {
         static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
