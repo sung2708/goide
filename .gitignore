@@ -40,3 +40,4 @@ _bmad-output/
 skills-lock.json
 full_diff.patch
 .tools/
+.worktrees/
