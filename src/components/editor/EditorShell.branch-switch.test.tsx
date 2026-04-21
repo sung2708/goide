@@ -177,6 +177,7 @@ describe("EditorShell branch switching", () => {
       expect(switchWorkspaceBranchMock).toHaveBeenCalledWith({
         workspaceRoot: "C:/workspace",
         targetBranch: "main",
+        remoteRef: null,
         preSwitchAction: "none",
       });
     });
@@ -189,5 +190,187 @@ describe("EditorShell branch switching", () => {
       expect(getWorkspaceGitSnapshotMock).toHaveBeenCalledTimes(2);
       expect(getWorkspaceBranchesMock).toHaveBeenCalledTimes(4);
     });
+  });
+
+  it("passes remoteRef when switching to a remote branch from a non-origin remote", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+
+    // Simulate a repo with an "upstream" remote exposing a "feature" branch.
+    getWorkspaceBranchesMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "main",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: false,
+        changedFilesSummary: [],
+        branches: [
+          {
+            name: "main",
+            kind: "current" as const,
+            isCurrent: true,
+            upstream: "origin/main",
+            isRemoteTrackingCandidate: true,
+            remoteName: null,
+            remoteRef: null,
+          },
+          {
+            name: "feature",
+            kind: "remote" as const,
+            isCurrent: false,
+            upstream: null,
+            isRemoteTrackingCandidate: true,
+            // Key: the DTO carries the full ref from a non-origin remote.
+            remoteName: "upstream",
+            remoteRef: "upstream/feature",
+          },
+        ],
+      },
+    });
+    switchWorkspaceBranchMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "feature",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: false,
+        changedFilesSummary: [],
+        branches: [],
+      },
+    });
+
+    render(<EditorShell />);
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /switch branch/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /switch branch/i }));
+    await screen.findByRole("dialog", { name: /branch picker/i });
+    await user.click(await screen.findByRole("button", { name: /feature/i }));
+
+    await waitFor(() => {
+      expect(switchWorkspaceBranchMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetBranch: "feature",
+          // Must forward the remoteRef so the backend uses upstream/feature,
+          // not the hardcoded origin/feature.
+          remoteRef: "upstream/feature",
+        })
+      );
+    });
+  });
+
+  it("does not call switchWorkspaceBranch when dirty dialog is cancelled", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+
+    // Simulate a repo with uncommitted changes.
+    getWorkspaceBranchesMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "main",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: true,
+        changedFilesSummary: [{ path: "dirty.txt", status: "??" }],
+        branches: [
+          {
+            name: "main",
+            kind: "current" as const,
+            isCurrent: true,
+            upstream: "origin/main",
+            isRemoteTrackingCandidate: true,
+          },
+          {
+            name: "feature",
+            kind: "local" as const,
+            isCurrent: false,
+            upstream: null,
+            isRemoteTrackingCandidate: false,
+          },
+        ],
+      },
+    });
+
+    render(<EditorShell />);
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /switch branch/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /switch branch/i }));
+    await screen.findByRole("dialog", { name: /branch picker/i });
+    await user.click(await screen.findByRole("button", { name: /feature/i }));
+
+    // The dirty-tree dialog should now be showing.
+    await screen.findByRole("dialog", { name: /branch switch confirmation/i });
+
+    // Cancel the dialog.
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+
+    // switchWorkspaceBranch must NOT have been called.
+    expect(switchWorkspaceBranchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not render internal error prefix in branch switch error display", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+
+    getWorkspaceBranchesMock.mockResolvedValue({
+      ok: true,
+      data: {
+        currentBranch: "main",
+        isDetachedHead: false,
+        detachedHeadRef: null,
+        hasUncommittedChanges: false,
+        changedFilesSummary: [],
+        branches: [
+          {
+            name: "main",
+            kind: "current" as const,
+            isCurrent: true,
+            upstream: "origin/main",
+            isRemoteTrackingCandidate: true,
+          },
+          {
+            name: "feature",
+            kind: "local" as const,
+            isCurrent: false,
+            upstream: null,
+            isRemoteTrackingCandidate: false,
+          },
+        ],
+      },
+    });
+
+    // The backend now returns sanitized messages; make sure the UI displays
+    // only the human portion.
+    switchWorkspaceBranchMock.mockResolvedValue({
+      ok: false,
+      error: {
+        code: "git_branch_switch_failed",
+        message: "git command failed: branch not found",
+      },
+    });
+
+    render(<EditorShell />);
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: /switch branch/i })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: /switch branch/i }));
+    await screen.findByRole("dialog", { name: /branch picker/i });
+    await user.click(await screen.findByRole("button", { name: /feature/i }));
+
+    // The error message from the backend error.message should be displayed.
+    await waitFor(() => {
+      expect(screen.getByText("git command failed: branch not found")).toBeInTheDocument();
+    });
+
+    // The internal code prefix must not leak through as a standalone token.
+    expect(screen.queryByText(/git_branch_switch_failed/)).toBeNull();
   });
 });

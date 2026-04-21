@@ -246,6 +246,14 @@ export type WorkspaceGitBranch = {
   isCurrent: boolean;
   upstream?: string | null;
   isRemoteTrackingCandidate: boolean;
+  /** Remote name for remote-tracking branches, e.g. "origin" or "upstream". */
+  remoteName?: string | null;
+  /**
+   * Full remote ref for remote-tracking branches, e.g. "origin/develop".
+   * This is the value passed to `git switch --track` when creating a local
+   * tracking branch.  Absent for local/current branches.
+   */
+  remoteRef?: string | null;
 };
 
 export type WorkspaceGitChangedFileSummary = {
@@ -265,6 +273,12 @@ export type WorkspaceBranchSnapshot = {
 export type SwitchWorkspaceBranchRequest = {
   workspaceRoot: string;
   targetBranch: string;
+  /**
+   * Full remote ref to use as the tracking source when creating a new local
+   * branch (e.g. "upstream/develop").  Should be set from
+   * `WorkspaceGitBranch.remoteRef` when switching to a remote branch.
+   */
+  remoteRef?: string | null;
   preSwitchAction: "none" | "commit" | "stash" | "discard";
   commitMessage?: string | null;
 };

@@ -2150,6 +2150,7 @@ function EditorShell() {
       void switchWorkspaceBranch({
         workspaceRoot: workspacePathRef.current,
         targetBranch: branch.name,
+        remoteRef: branch.remoteRef ?? null,
         preSwitchAction: "none",
       }).then((res) => {
         setBranchSwitchLoading(false);
@@ -2173,6 +2174,7 @@ function EditorShell() {
       void switchWorkspaceBranch({
         workspaceRoot: workspacePathRef.current,
         targetBranch: pendingTargetBranch.name,
+        remoteRef: pendingTargetBranch.remoteRef ?? null,
         preSwitchAction: payload.action,
         commitMessage: payload.commitMessage ?? null,
       }).then((res) => {
