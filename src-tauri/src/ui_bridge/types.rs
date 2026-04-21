@@ -130,8 +130,18 @@ pub struct StartDebugSessionRequestDto {
 /// remains the active debugger session state used by current debugger controls.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct DebugFailureDto {
+    pub code: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct DebugSessionSnapshotDto {
     pub status: DebugSessionStatusDto,
+    pub failure: Option<DebugFailureDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

@@ -140,8 +140,16 @@ export type StartDebugSessionRequest = {
  * Keep this aligned with the existing lower-level `DebuggerState`, which
  * remains the active debugger session state used by current debugger controls.
  */
+export type DebugFailure = {
+  code: string;
+  title: string;
+  message: string;
+  details: string | null;
+};
+
 export type DebugSessionSnapshot = {
   status: "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+  failure: DebugFailure | null;
 };
 
 export type RuntimeAvailabilityResponse = {
