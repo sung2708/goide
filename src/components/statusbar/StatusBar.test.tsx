@@ -133,3 +133,30 @@ describe("StatusBar completion availability", () => {
     ).toBeInTheDocument();
   });
 });
+
+describe("StatusBar branch trigger", () => {
+  it("renders current branch as a clickable switch trigger", () => {
+    const onToggleBranchPicker = vi.fn();
+    render(
+      <StatusBar
+        workspacePath="C:/workspace"
+        activeFilePath="main.go"
+        mode="quick-insight"
+        runtimeAvailability="available"
+        diagnosticsAvailability="available"
+        completionAvailability="available"
+        toolchainStatus={null}
+        branchName="develop"
+        onToggleBranchPicker={onToggleBranchPicker}
+        isSummaryOpen={false}
+        isBottomPanelOpen={false}
+        isCommandPaletteOpen={false}
+        onToggleSummary={() => {}}
+        onToggleBottomPanel={() => {}}
+        onToggleCommandPalette={() => {}}
+      />
+    );
+
+    expect(screen.getByRole("button", { name: /switch branch/i })).toHaveTextContent("develop");
+  });
+});

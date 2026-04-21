@@ -20,6 +20,7 @@ import type {
   WorkspaceBranchSnapshot,
   WorkspaceGitSnapshot,
   WorkspaceSearchFile,
+  SwitchWorkspaceBranchRequest,
 } from "./types";
 
 function hasTauriInternals(): boolean {
@@ -363,5 +364,13 @@ export async function getWorkspaceBranches(
 ): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
   return invoke<ApiResponse<WorkspaceBranchSnapshot>>("get_workspace_branches", {
     workspaceRoot,
+  });
+}
+
+export async function switchWorkspaceBranch(
+  request: SwitchWorkspaceBranchRequest,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
+    request,
   });
 }
