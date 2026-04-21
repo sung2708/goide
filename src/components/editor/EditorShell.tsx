@@ -459,6 +459,7 @@ function EditorShell() {
   const [searchLoading, setSearchLoading] = useState(false);
   const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
   const [analysisRevision, setAnalysisRevision] = useState(0);
+  const [explorerRevision, setExplorerRevision] = useState(0);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
@@ -2111,6 +2112,9 @@ function EditorShell() {
     setRunOutput([]);
     setWorkspaceSearchResults([]);
 
+    // Explicitly refresh the Explorer tree so branch-switched file layout is reflected.
+    setExplorerRevision((prev) => prev + 1);
+
     if (activeFilePathRef.current) {
       await handleOpenFile(activeFilePathRef.current);
     }
@@ -2218,6 +2222,7 @@ function EditorShell() {
               activeFilePath={activeFilePath}
               onOpenFile={handleOpenFile}
               fileDecorations={fileDecorations}
+              explorerRevision={explorerRevision}
             />
           )}
           {activeTab === "search" && (
