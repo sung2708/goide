@@ -10,6 +10,7 @@ const readWorkspaceFileMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const getDebuggerStateMock = vi.fn();
 const deactivateDeepTraceMock = vi.fn();
+const debuggerToggleBreakpointMock = vi.fn();
 
 let mockDebuggerState: DebuggerState = {
   sessionActive: false,
@@ -25,6 +26,10 @@ function setMockDebuggerState(overrides: Partial<DebuggerState>) {
     ...mockDebuggerState,
     ...overrides,
   };
+}
+
+function getDebuggerStateMockResult() {
+  return mockDebuggerState;
 }
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -48,6 +53,8 @@ vi.mock("../../lib/ipc/client", async () => {
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
     getDebuggerState: (...args: unknown[]) => getDebuggerStateMock(...args),
+    debuggerToggleBreakpoint: (...args: unknown[]) =>
+      debuggerToggleBreakpointMock(...args),
     deactivateDeepTrace: (...args: unknown[]) => deactivateDeepTraceMock(...args),
     startDebugSession: vi.fn().mockResolvedValue({
       ok: true,
@@ -91,8 +98,25 @@ vi.mock("../sidebar/Explorer", () => ({
 }));
 
 vi.mock("./CodeEditor", () => ({
-  default: () => <div data-testid="mock-code-editor" />,
+  default: ({
+    onToggleBreakpoint,
+  }: {
+    onToggleBreakpoint?: (line: number) => void;
+  }) => (
+    <div data-testid="mock-code-editor">
+      <button type="button" onClick={() => onToggleBreakpoint?.(12)}>
+        Toggle Mock Breakpoint 12
+      </button>
+    </div>
+  ),
 }));
+
+async function toggleMockBreakpointAtLine(line: number) {
+  const button = await screen.findByRole("button", {
+    name: new RegExp(`toggle mock breakpoint ${line}`, "i"),
+  });
+  await userEvent.click(button);
+}
 
 describe("EditorShell debug controller", () => {
   beforeEach(() => {
@@ -119,6 +143,22 @@ describe("EditorShell debug controller", () => {
       ok: true,
       data: null,
     });
+    debuggerToggleBreakpointMock.mockImplementation(
+      async ({ relativePath, line }: { relativePath: string; line: number }) => {
+        const existing = mockDebuggerState.breakpoints.some(
+          (breakpoint) =>
+            breakpoint.relativePath === relativePath && breakpoint.line === line
+        );
+        const breakpoints = existing
+          ? mockDebuggerState.breakpoints.filter(
+              (breakpoint) =>
+                breakpoint.relativePath !== relativePath || breakpoint.line !== line
+            )
+          : [...mockDebuggerState.breakpoints, { relativePath, line }];
+        setMockDebuggerState({ breakpoints });
+        return { ok: true, data: mockDebuggerState };
+      }
+    );
     vi.mocked(startDebugSession).mockResolvedValue({
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
@@ -203,6 +243,29 @@ describe("EditorShell debug controller", () => {
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
+  });
+
+  it("preserves gutter breakpoints into the next debug session", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await toggleMockBreakpointAtLine(12);
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    expect(startDebugSession).toHaveBeenCalled();
+    expect(getDebuggerStateMockResult().breakpoints).toContainEqual({
+      relativePath: "main.go",
+      line: 12,
+    });
+
+    // While debug is active, toggling the same gutter breakpoint should remain synchronized.
+    await toggleMockBreakpointAtLine(12);
+    expect(getDebuggerStateMockResult().breakpoints).not.toContainEqual({
+      relativePath: "main.go",
+      line: 12,
+    });
   });
 
   it("renders step controls when the debug session is paused", async () => {
