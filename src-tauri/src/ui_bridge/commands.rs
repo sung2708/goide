@@ -275,7 +275,37 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
             eprintln!("[goide] run_go_file error: {e:#}");
         }
     });
-    // Returns immediately — output streams via events
+    // Returns immediately - output streams via events
+    ApiResponse::ok(())
+}
+
+#[cfg(windows)]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("taskkill")
+            .arg("/F")
+            .arg("/T")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .output();
+    }
+}
+
+#[cfg(not(windows))]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    let _ = child.kill().await;
+}
+
+#[tauri::command]
+pub async fn stop_current_run() -> ApiResponse<()> {
+    let handle = get_process_handle();
+    let mut guard = handle.lock().await;
+
+    if let Some(child) = guard.as_mut() {
+        kill_process_group(child).await;
+    }
+    *guard = None;
+
     ApiResponse::ok(())
 }
 
