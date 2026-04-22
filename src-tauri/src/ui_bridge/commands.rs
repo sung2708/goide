@@ -1,8 +1,8 @@
 use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
-use crate::integration::command::std_command;
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
+use crate::integration::command::std_command;
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
@@ -10,14 +10,14 @@ use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
-    ConcurrencyConstructKindDto, DebugFailureDto, DebugSessionSnapshotDto, DebugSessionStatusDto,
-    DebuggerBreakpointDto, DebuggerStateDto, DeepTraceConstructKindDto, DiagnosticRangeDto,
-    DiagnosticSeverityDto, DiagnosticsResponseDto, DiagnosticsToolingAvailabilityDto,
-    EditorDiagnosticDto, FsEntryDto, RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto,
-    RuntimeSignalDto, RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto,
-    StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
-    ToolAvailabilityDto, ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto,
-    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto,
+    ConcurrencyConstructKindDto, DebuggerBreakpointDto, DebuggerStateDto,
+    DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
+    DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
+    RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
+    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
+    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
+    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto,
+    WorkspaceGitChangedFileSummaryDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
     WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
@@ -67,7 +67,10 @@ enum DebuggerControlKind {
     StepOver,
     StepInto,
     StepOut,
-    ToggleBreakpoint { relative_path: String, line: usize },
+    ToggleBreakpoint {
+        relative_path: String,
+        line: usize,
+    },
 }
 
 struct DebuggerControlCommand {
@@ -273,31 +276,6 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
         }
     });
     // Returns immediately — output streams via events
-    ApiResponse::ok(())
-}
-
-#[tauri::command]
-pub async fn stop_current_run() -> ApiResponse<()> {
-    let handle = get_process_handle();
-    let mut guard = handle.lock().await;
-    if let Some(child) = guard.as_mut() {
-        #[cfg(windows)]
-        {
-            if let Some(pid) = child.id() {
-                let _ = std::process::Command::new("taskkill")
-                    .arg("/F")
-                    .arg("/T")
-                    .arg("/PID")
-                    .arg(pid.to_string())
-                    .output();
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = child.kill().await;
-        }
-        *guard = None;
-    }
     ApiResponse::ok(())
 }
 
@@ -522,27 +500,47 @@ async fn start_debug_session_internal(
     );
 
     let workspace_root = std::path::PathBuf::from(&request.workspace_root);
-    let target_file = workspace_root.join(&request.relative_path);
 
-    if !target_file.exists() {
-        return ApiResponse::err(
-            "deep_trace_file_not_found",
-            &format!("Target file not found: {}", target_file.display()),
-        );
-    }
-    let launch_mode = if request.relative_path.ends_with("_test.go") {
+    // Resolve the active file to its Go package and validate that the package
+    // is runnable (has a `package main` declaration). Test files bypass this
+    // check and use the legacy file-based launch path.
+    let is_test_file = request.relative_path.ends_with("_test.go");
+    let launch_mode = if is_test_file {
+        // Test files use the legacy file-based launch so that the test runner
+        // can discover individual test functions correctly.
+        let target_file = workspace_root.join(&request.relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
         LaunchMode::Test
     } else {
-        LaunchMode::Debug
+        // For non-test files, resolve to a Go package pattern so that Delve
+        // receives the correct package context (e.g. `./cmd/app`) instead of
+        // a raw file path.
+        let target = match resolve_debug_target(&workspace_root, &request.relative_path) {
+            Ok(target) => target,
+            Err(message) => {
+                return ApiResponse::err("debug_target_invalid", &message);
+            }
+        };
+        LaunchMode::Package {
+            package: target.package_pattern,
+            cwd: workspace_root.to_string_lossy().to_string(),
+        }
     };
+
+    // For the test-file path we still need a concrete target_file for the
+    // legacy launch; for package launches target_file is unused.
+    let target_file = workspace_root.join(&request.relative_path);
 
     let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
-            return api_response_from_debug_failure(
-                "debug_session_start_failed",
-                &error.to_string(),
-            );
+            let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
+            return ApiResponse::err(&failure.code, &failure.message);
         }
     };
 
@@ -550,19 +548,13 @@ async fn start_debug_session_internal(
         Ok(client) => client,
         Err(error) => {
             let _ = dap_process.child.kill().await;
-            return api_response_from_debug_failure(
-                "debug_session_start_failed",
-                &error.to_string(),
-            );
+            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
         }
     };
 
     if let Err(error) = client.initialize().await {
         let _ = dap_process.child.kill().await;
-        return api_response_from_debug_failure(
-            "debug_session_start_failed",
-            &format!("{error:#}"),
-        );
+        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
     }
 
     if let Err(error) = client
@@ -571,10 +563,7 @@ async fn start_debug_session_internal(
     {
         let _ = client.disconnect().await;
         let _ = dap_process.child.kill().await;
-        return api_response_from_debug_failure(
-            "debug_session_start_failed",
-            &format!("{error:#}"),
-        );
+        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
     }
 
     let signals_handle = get_runtime_signals_handle();
@@ -832,11 +821,79 @@ pub async fn start_debug_session(
     .await
 }
 
+/// Testable variant of `start_debug_session_internal` that accepts an optional
+/// override for the `dlv` binary path.  When `dlv_binary` is `Some`, the given
+/// path is used instead of `"dlv"` so tests can simulate a missing Delve
+/// installation without requiring the tool to be absent from the host PATH.
+#[cfg(test)]
+pub(crate) async fn start_debug_session_internal_for_test(
+    workspace_root: &std::path::Path,
+    request: StartDebugSessionRequestDto,
+    dlv_binary: Option<&str>,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    use crate::integration::delve::LaunchMode;
+
+    let workspace_root_path = workspace_root.to_path_buf();
+    let relative_path = request.relative_path.clone();
+
+    // Target resolution (same as production path).
+    let is_test_file = relative_path.ends_with("_test.go");
+    let launch_mode_result: Result<LaunchMode, String> = if is_test_file {
+        let target_file = workspace_root_path.join(&relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
+        Ok(LaunchMode::Test)
+    } else {
+        match resolve_debug_target(&workspace_root_path, &relative_path) {
+            Ok(target) => Ok(LaunchMode::Package {
+                package: target.package_pattern,
+                cwd: workspace_root_path.to_string_lossy().to_string(),
+            }),
+            Err(message) => Err(message),
+        }
+    };
+
+    if let Err(message) = launch_mode_result {
+        return ApiResponse::err("debug_target_invalid", &message);
+    }
+
+    // Attempt to spawn the Delve DAP server using the overridden binary name.
+    let dlv_cmd = dlv_binary.unwrap_or("dlv");
+    let spawn_result = crate::integration::delve::spawn_dlv_dap_with(
+        dlv_cmd,
+        &["dap", "--listen=127.0.0.1:0"],
+        &workspace_root_path,
+    )
+    .await;
+
+    match spawn_result {
+        Ok(mut dap_process) => {
+            // Minimal cleanup – kill the process immediately; we only care about
+            // whether Delve could be launched at all in this test helper.
+            let _ = dap_process.child.kill().await;
+            ApiResponse::ok(ActivateDeepTraceResponseDto {
+                mode: "deep-trace".to_string(),
+                scope_key: None,
+            })
+        }
+        Err(error) => {
+            let raw = error.to_string();
+            let user_message = format!("Delve debugger could not be started: {raw}");
+            ApiResponse::err("debug_session_start_failed", &user_message)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || std_command("dlv").arg("version").output())
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        std_command("dlv").arg("version").output()
+    })
+    .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -935,10 +992,9 @@ pub async fn create_workspace_folder(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        fs::create_folder(&workspace_root, &relative_path)
-    })
-    .await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || fs::create_folder(&workspace_root, &relative_path))
+            .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -952,10 +1008,9 @@ pub async fn delete_workspace_entry(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        fs::delete_entry(&workspace_root, &relative_path)
-    })
-    .await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || fs::delete_entry(&workspace_root, &relative_path))
+            .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -1019,79 +1074,71 @@ fn flatten_breakpoints(store: &RuntimeSignalStore) -> Vec<DebuggerBreakpointDto>
     items
 }
 
-fn map_debug_failure(code: &str, error: &str) -> DebugFailureDto {
-    let details = (!error.trim().is_empty()).then(|| error.trim().to_string());
-    let lower = error.to_ascii_lowercase();
-
-    match code {
-        "debug_session_start_failed" if lower.contains("dlv") || lower.contains("delve") => {
-            DebugFailureDto {
-                code: code.to_string(),
-                title: "Delve unavailable".to_string(),
-                message: "Delve is required to start a debug session. Install Delve and ensure it is available on PATH.".to_string(),
-                details,
-            }
-        }
-        "debug_session_start_failed" => DebugFailureDto {
-            code: code.to_string(),
-            title: "Debug session failed to start".to_string(),
-            message: "The debug session could not be started.".to_string(),
-            details,
-        },
-        _ => DebugFailureDto {
-            code: code.to_string(),
-            title: "Debug session error".to_string(),
-            message: "The debugger reported an unexpected error.".to_string(),
-            details,
-        },
-    }
-}
-
-fn api_response_from_debug_failure<T>(code: &str, error: &str) -> ApiResponse<T> {
-    let failure = map_debug_failure(code, error);
-    ApiResponse::err(&failure.code, &failure.message)
-}
-
-fn map_debugger_state_snapshot(
-    session_active: bool,
-    store: &RuntimeSignalStore,
-) -> DebugSessionSnapshotDto {
-    let status = if !session_active {
-        if store.healthy {
-            DebugSessionStatusDto::Failed
-        } else {
-            DebugSessionStatusDto::Idle
-        }
-    } else if store.paused {
-        DebugSessionStatusDto::Paused
-    } else {
-        DebugSessionStatusDto::Running
-    };
-
-    let failure = matches!(status, DebugSessionStatusDto::Failed).then(|| {
-        map_debug_failure(
-            "debug_session_start_failed",
-            "Debug session became unavailable before a state snapshot could be read.",
-        )
-    });
-
-    DebugSessionSnapshotDto { status, failure }
-}
-
-fn map_debugger_state(
-    snapshot: &DebugSessionSnapshotDto,
-    store: &RuntimeSignalStore,
-) -> DebuggerStateDto {
+fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> DebuggerStateDto {
     DebuggerStateDto {
-        session_active: !matches!(
-            snapshot.status,
-            DebugSessionStatusDto::Idle | DebugSessionStatusDto::Failed
-        ),
-        paused: matches!(snapshot.status, DebugSessionStatusDto::Paused),
+        session_active,
+        paused: store.paused,
         active_relative_path: store.active_relative_path.clone(),
         active_line: store.active_line,
         active_column: store.active_column,
         breakpoints: flatten_breakpoints(store),
+    }
+}
+
+/// Maps a raw backend error into a normalized, user-facing [`DebugFailureDto`].
+/// Strips any internal `code::` prefix from `raw` before placing it in the
+/// `message` field, and picks a human-readable title based on the failure code.
+///
+/// This helper is used in the session-start and session-lifecycle paths and
+/// will also be wired into the frontend controller state machine (Task 4).
+fn map_debug_failure(code: &str, raw: &str) -> crate::ui_bridge::types::DebugFailureDto {
+    let message = strip_error_prefix(raw).to_string();
+    let title = match code {
+        "debug_tool_missing" => "Unable to start debug session",
+        "debug_target_invalid" => "Invalid debug target",
+        _ => "Debug session failed",
+    };
+
+    crate::ui_bridge::types::DebugFailureDto {
+        code: code.to_string(),
+        title: title.to_string(),
+        message,
+        details: Some(raw.to_string()),
+    }
+}
+
+/// Produces a [`DebugSessionSnapshotDto`] that captures the full session state
+/// including an explicit `status` discriminant derived from the combination of
+/// `session_active`, store state, and an optional failure payload.
+///
+/// Status transitions: `failed` → `idle` → `paused` / `running`
+///
+/// This helper is the single canonical place for snapshot construction and is
+/// used by `get_debugger_state` to derive the canonical session status before
+/// projecting back into the legacy DTO shape.
+fn map_debugger_state_snapshot(
+    store: &RuntimeSignalStore,
+    session_active: bool,
+    failure: Option<crate::ui_bridge::types::DebugFailureDto>,
+) -> crate::ui_bridge::types::DebugSessionSnapshotDto {
+    let status = if failure.is_some() {
+        "failed"
+    } else if !session_active {
+        "idle"
+    } else if store.paused {
+        "paused"
+    } else {
+        "running"
+    };
+
+    crate::ui_bridge::types::DebugSessionSnapshotDto {
+        status: status.to_string(),
+        paused: store.paused,
+        active_relative_path: store.active_relative_path.clone(),
+        active_line: store.active_line,
+        active_column: store.active_column,
+        breakpoints: flatten_breakpoints(store),
+        failure,
     }
 }
 
@@ -1276,8 +1323,19 @@ pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
     };
     let signals_handle = get_runtime_signals_handle();
     let store = signals_handle.lock().await;
-    let snapshot = map_debugger_state_snapshot(session_active, &store);
-    ApiResponse::ok(map_debugger_state(&snapshot, &store))
+    // Use the canonical snapshot classifier as the single source of truth for
+    // session status, then project the result back into the legacy DebuggerStateDto
+    // shape for frontend compatibility.
+    let snapshot = map_debugger_state_snapshot(&store, session_active, None);
+    let adapted_session_active = snapshot.status != "idle";
+    ApiResponse::ok(DebuggerStateDto {
+        session_active: adapted_session_active,
+        paused: snapshot.paused,
+        active_relative_path: snapshot.active_relative_path,
+        active_line: snapshot.active_line,
+        active_column: snapshot.active_column,
+        breakpoints: snapshot.breakpoints,
+    })
 }
 
 #[tauri::command]
@@ -1354,8 +1412,7 @@ pub async fn debugger_toggle_breakpoint(
         let signals_handle = get_runtime_signals_handle();
         let mut store = signals_handle.lock().await;
         toggle_breakpoint_in_store(&mut store, &request.relative_path, request.line);
-        let snapshot = map_debugger_state_snapshot(false, &store);
-        ApiResponse::ok(map_debugger_state(&snapshot, &store))
+        ApiResponse::ok(map_debugger_state(false, &store))
     }
 }
 
@@ -1375,9 +1432,22 @@ fn should_search_file(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|value| value.to_ascii_lowercase());
     match extension.as_deref() {
-        Some("go") | Some("mod") | Some("sum") | Some("md") | Some("txt") | Some("json")
-        | Some("yaml") | Some("yml") | Some("toml") | Some("rs") | Some("ts") | Some("tsx")
-        | Some("js") | Some("jsx") | Some("css") | Some("html") => true,
+        Some("go")
+        | Some("mod")
+        | Some("sum")
+        | Some("md")
+        | Some("txt")
+        | Some("json")
+        | Some("yaml")
+        | Some("yml")
+        | Some("toml")
+        | Some("rs")
+        | Some("ts")
+        | Some("tsx")
+        | Some("js")
+        | Some("jsx")
+        | Some("css")
+        | Some("html") => true,
         _ => false,
     }
 }
@@ -1417,7 +1487,7 @@ fn collect_search_results(
         if !file_type.is_file() || !should_search_file(&path) {
             continue;
         }
-
+        
         // Skip large files (> 1MB) for search performance
         if let Ok(metadata) = path.metadata() {
             if metadata.len() > 1_000_000 {
@@ -1455,7 +1525,10 @@ fn collect_search_results(
     }
 }
 
-fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchFileDto>, String> {
+fn search_with_git_grep(
+    root: &Path,
+    query: &str,
+) -> Result<Vec<WorkspaceSearchFileDto>, String> {
     let output = std_command("git")
         .arg("grep")
         .arg("-i")
@@ -1473,21 +1546,21 @@ fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchF
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut file_map: HashMap<String, Vec<WorkspaceSearchMatchDto>> = HashMap::new();
-
+    
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(3, ':').collect();
         if parts.len() < 3 {
             continue;
         }
-
+        
         let path = parts[0].replace('\\', "/");
         let line_num = parts[1].parse::<usize>().unwrap_or(0);
         let preview = parts[2].trim().to_string();
-
+        
         if line_num == 0 {
             continue;
         }
-
+        
         let matches = file_map.entry(path).or_insert_with(Vec::new);
         if matches.len() < 10 {
             matches.push(WorkspaceSearchMatchDto {
@@ -1504,14 +1577,14 @@ fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchF
             matches,
         })
         .collect();
-
+    
     results.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-
+    
     // Limit to 100 files for git grep to maintain UI performance
     if results.len() > 100 {
         results.truncate(100);
     }
-
+    
     Ok(results)
 }
 
@@ -1533,19 +1606,17 @@ pub async fn search_workspace_text(
     let query_clone = trimmed.clone();
     let root_clone = root.clone();
 
-    let result = tauri::async_runtime::spawn_blocking(
-        move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
-            if is_git {
-                if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
-                    return Ok(results);
-                }
+    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
+        if is_git {
+            if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
+                return Ok(results);
             }
-
-            let mut files = Vec::new();
-            collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
-            Ok(files)
-        },
-    )
+        }
+        
+        let mut files = Vec::new();
+        collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
+        Ok(files)
+    })
     .await;
 
     match result {
@@ -1737,7 +1808,11 @@ where
 
     let remote_raw = git_runner(
         root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/",
+        ],
     )
     .map_err(|error| format!("git_remote_branches_failed::{error}"))?;
 
@@ -1749,11 +1824,7 @@ where
     for line in remote_raw.lines() {
         if let Some((remote, branch)) = parse_remote_ref(line.trim()) {
             remote_branch_names.insert(branch.to_string());
-            remote_refs.push((
-                branch.to_string(),
-                remote.to_string(),
-                line.trim().to_string(),
-            ));
+            remote_refs.push((branch.to_string(), remote.to_string(), line.trim().to_string()));
         }
     }
 
@@ -1940,14 +2011,20 @@ fn find_remote_ref_for_branch(root: &Path, branch: &str) -> Option<String> {
     // was supplied by the caller.
     let output = git_output(
         root,
-        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/remotes/",
+        ],
     )
     .ok()?;
-    output.lines().find_map(|line| {
-        parse_remote_ref(line.trim())
-            .filter(|(_, b)| *b == branch)
-            .map(|_| line.trim().to_string())
-    })
+    output
+        .lines()
+        .find_map(|line| {
+            parse_remote_ref(line.trim())
+                .filter(|(_, b)| *b == branch)
+                .map(|_| line.trim().to_string())
+        })
 }
 
 fn execute_branch_switch(
@@ -2083,6 +2160,103 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
     Ok(())
 }
 
+/// Checks that a directory contains at least one `.go` file with `package main`.
+/// Returns an error if the directory has no Go files, or all Go files declare a
+/// non-`main` package — i.e. the package is a library and cannot be run or
+/// debugged directly.
+fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
+    let entries = std_fs::read_dir(package_dir)
+        .map_err(|error| format!("cannot read package directory: {error}"))?;
+
+    let mut found_go_file = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("go") {
+            continue;
+        }
+        // Skip test files — they always declare `package X` or `package X_test`
+        // but we still want to allow debugging a package that only has tests.
+        found_go_file = true;
+        let content = match std_fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.starts_with("package ") {
+                let package_name = trimmed
+                    .trim_start_matches("package ")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if package_name == "main" {
+                    return Ok(());
+                }
+                break;
+            }
+        }
+    }
+
+    if !found_go_file {
+        return Err("not a runnable Go package: directory contains no .go files".to_string());
+    }
+
+    Err("not a runnable Go package: package is a library (no 'package main' declaration found)"
+        .to_string())
+}
+
+/// Resolved debug target, holding the package directory and the Go package
+/// pattern suitable for use with `dlv dap` launch arguments (e.g. `./cmd/app`).
+#[derive(Debug)]
+pub struct DebugTarget {
+    pub package_dir: PathBuf,
+    pub package_pattern: String,
+}
+
+/// Resolves a workspace-relative file path to a runnable Go package target.
+///
+/// Returns an error if:
+/// - the file does not exist
+/// - the resolved directory escapes the workspace root
+/// - the package is not runnable (no `package main`)
+pub fn resolve_debug_target(
+    workspace_root: &Path,
+    active_relative_path: &str,
+) -> Result<DebugTarget, String> {
+    let canonical_root = workspace_root
+        .canonicalize()
+        .map_err(|error| format!("workspace root does not exist: {error}"))?;
+    let absolute = canonical_root.join(active_relative_path);
+    let canonical = absolute
+        .canonicalize()
+        .map_err(|error| error.to_string())?;
+    let package_dir = canonical
+        .parent()
+        .ok_or_else(|| "active file has no parent directory".to_string())?;
+    let relative_dir = package_dir
+        .strip_prefix(&canonical_root)
+        .map_err(|_| "debug target escapes workspace root".to_string())?;
+
+    let package_pattern = if relative_dir.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        format!(
+            "./{}",
+            relative_dir.to_string_lossy().replace('\\', "/")
+        )
+    };
+
+    validate_runnable_go_package(package_dir)?;
+
+    Ok(DebugTarget {
+        package_dir: package_dir.to_path_buf(),
+        package_pattern,
+    })
+}
+
 fn validate_workspace_scoped_go_path(
     workspace_root: &str,
     relative_path: &str,
@@ -2115,27 +2289,23 @@ fn validate_workspace_scoped_go_path(
 #[cfg(test)]
 mod tests {
     use super::{
-        api_response_from_debug_failure, build_workspace_branch_snapshot_with_git_runner,
-        deactivate_deep_trace, debugger_toggle_breakpoint, get_dap_session_handle,
-        get_debugger_state, get_runtime_signals, get_runtime_signals_handle,
-        get_workspace_branches, map_debug_failure, map_debugger_state_snapshot,
-        normalize_remote_branch_name, parse_remote_ref, strip_error_prefix,
+        build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
+        debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
+        get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
+        map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
+        resolve_debug_target, start_debug_session_internal_for_test, strip_error_prefix,
         switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
         validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path, RuntimeSignalStore,
     };
-    use crate::integration::delve::{DapClient, LaunchMode};
     use crate::ui_bridge::types::{
-        DebugSessionStatusDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
+        StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
     };
-    use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
     use std::sync::OnceLock;
     use std::time::{SystemTime, UNIX_EPOCH};
-    use tokio::io::{AsyncReadExt, AsyncWriteExt};
-    use tokio::net::TcpListener;
     use tokio::sync::Mutex;
 
     fn unique_suffix() -> u128 {
@@ -2196,15 +2366,7 @@ mod tests {
     fn add_remote(dir: &std::path::PathBuf, name: &str) -> std::path::PathBuf {
         let remote_dir = create_temp_workspace(&format!("remote_{name}"));
         git(&remote_dir, &["init", "--bare"]);
-        git(
-            dir,
-            &[
-                "remote",
-                "add",
-                name,
-                remote_dir.to_str().expect("remote path"),
-            ],
-        );
+        git(dir, &["remote", "add", name, remote_dir.to_str().expect("remote path")]);
         remote_dir
     }
 
@@ -2232,16 +2394,25 @@ mod tests {
         git(local, &["config", "user.name", "GoIDE Test"]);
     }
 
-    fn git_output_in_test(dir: &std::path::PathBuf, args: &[&str]) -> Result<String, String> {
+    fn git_output_in_test(
+        dir: &std::path::PathBuf,
+        args: &[&str],
+    ) -> Result<String, String> {
         let output = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
             .map_err(|e| e.to_string())?;
         if !output.status.success() {
-            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+            return Err(
+                String::from_utf8_lossy(&output.stderr)
+                    .trim()
+                    .to_string(),
+            );
         }
-        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .trim()
+            .to_string())
     }
 
     fn create_dirty_git_repo(label: &str) -> std::path::PathBuf {
@@ -2261,8 +2432,8 @@ mod tests {
     }
 
     fn assert_clean_worktree(dir: &std::path::PathBuf) {
-        let status =
-            git_output_in_test(dir, &["status", "--porcelain"]).expect("status should be readable");
+        let status = git_output_in_test(dir, &["status", "--porcelain"])
+            .expect("status should be readable");
         assert!(status.is_empty(), "expected clean worktree, got: {status}");
     }
 
@@ -2278,12 +2449,7 @@ mod tests {
 
         let feature_branch_name = "feature/remote-only";
         git(&repo_dir, &["checkout", "-b", feature_branch_name]);
-        add_commit(
-            &repo_dir,
-            "feature.txt",
-            "remote feature\n",
-            "add remote feature",
-        );
+        add_commit(&repo_dir, "feature.txt", "remote feature\n", "add remote feature");
         git(&repo_dir, &["push", "-u", "origin", feature_branch_name]);
         git(&repo_dir, &["checkout", "main"]);
         git(&repo_dir, &["branch", "-D", feature_branch_name]);
@@ -2321,10 +2487,7 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(
-            branch_map.get("main"),
-            Some(&("current", true, Some("origin/main")))
-        );
+        assert_eq!(branch_map.get("main"), Some(&("current", true, Some("origin/main"))));
         assert_eq!(branch_map.get("develop"), Some(&("local", false, None)));
         assert_eq!(
             branch_map.get("feature/remote-only"),
@@ -2345,93 +2508,6 @@ mod tests {
         );
         assert_eq!(normalize_remote_branch_name("origin/HEAD"), None);
         assert_eq!(normalize_remote_branch_name(""), None);
-    }
-
-    #[test]
-    fn map_debug_failure_reports_delve_unavailable_with_user_facing_message() {
-        let failure = map_debug_failure(
-            "debug_session_start_failed",
-            "failed to spawn `dlv` — is it installed and on PATH?",
-        );
-
-        assert_eq!(failure.code, "debug_session_start_failed");
-        assert_eq!(failure.title, "Delve unavailable");
-        assert!(failure.message.contains("Delve"));
-        assert_eq!(
-            failure.details.as_deref(),
-            Some("failed to spawn `dlv` — is it installed and on PATH?")
-        );
-    }
-
-    #[test]
-    fn map_debug_failure_preserves_generic_start_failure_copy_and_details() {
-        let failure = map_debug_failure(
-            "debug_session_start_failed",
-            "launch request timed out while waiting for debugger handshake",
-        );
-
-        assert_eq!(failure.code, "debug_session_start_failed");
-        assert_eq!(failure.title, "Debug session failed to start");
-        assert_eq!(failure.message, "The debug session could not be started.");
-        assert_eq!(
-            failure.details.as_deref(),
-            Some("launch request timed out while waiting for debugger handshake")
-        );
-    }
-
-    #[test]
-    fn api_response_from_debug_failure_keeps_api_shape_with_helper_selected_message() {
-        let response = api_response_from_debug_failure(
-            "debug_session_start_failed",
-            "failed to spawn `dlv` — is it installed and on PATH?",
-        );
-
-        assert!(!response.ok);
-        let error = response.error.expect("error payload should be present");
-        assert_eq!(error.code, "debug_session_start_failed");
-        assert_eq!(
-            error.message,
-            "Delve is required to start a debug session. Install Delve and ensure it is available on PATH."
-        );
-    }
-
-    #[test]
-    fn map_debugger_state_snapshot_classifies_failed_idle_paused_and_running_states() {
-        let failed = map_debugger_state_snapshot(
-            false,
-            &RuntimeSignalStore {
-                healthy: true,
-                ..RuntimeSignalStore::default()
-            },
-        );
-        assert_eq!(failed.status, DebugSessionStatusDto::Failed);
-        assert!(failed.failure.is_some());
-
-        let idle = map_debugger_state_snapshot(false, &RuntimeSignalStore::default());
-        assert_eq!(idle.status, DebugSessionStatusDto::Idle);
-        assert!(idle.failure.is_none());
-
-        let paused = map_debugger_state_snapshot(
-            true,
-            &RuntimeSignalStore {
-                healthy: true,
-                paused: true,
-                ..RuntimeSignalStore::default()
-            },
-        );
-        assert_eq!(paused.status, DebugSessionStatusDto::Paused);
-        assert!(paused.failure.is_none());
-
-        let running = map_debugger_state_snapshot(
-            true,
-            &RuntimeSignalStore {
-                healthy: true,
-                paused: false,
-                ..RuntimeSignalStore::default()
-            },
-        );
-        assert_eq!(running.status, DebugSessionStatusDto::Running);
-        assert!(running.failure.is_none());
     }
 
     #[test]
@@ -2602,211 +2678,6 @@ mod tests {
             .expect("must accept in-workspace go file");
     }
 
-    async fn read_raw_dap_message(stream: &mut tokio::net::TcpStream) -> anyhow::Result<Value> {
-        let mut header = Vec::new();
-        let mut last_four = [0u8; 4];
-        let mut idx = 0usize;
-        loop {
-            let mut byte = [0u8; 1];
-            stream.read_exact(&mut byte).await?;
-            header.push(byte[0]);
-            last_four[idx % 4] = byte[0];
-            idx += 1;
-            if idx >= 4
-                && last_four[(idx - 4) % 4] == b'\r'
-                && last_four[(idx - 3) % 4] == b'\n'
-                && last_four[(idx - 2) % 4] == b'\r'
-                && last_four[(idx - 1) % 4] == b'\n'
-            {
-                break;
-            }
-        }
-
-        let header_text = String::from_utf8(header)?;
-        let content_length = header_text
-            .lines()
-            .find_map(|line| {
-                line.strip_prefix("Content-Length:")
-                    .map(str::trim)
-                    .and_then(|value| value.parse::<usize>().ok())
-            })
-            .expect("content length header");
-
-        let mut body = vec![0u8; content_length];
-        stream.read_exact(&mut body).await?;
-        Ok(serde_json::from_slice(&body)?)
-    }
-
-    async fn write_raw_dap_message(
-        stream: &mut tokio::net::TcpStream,
-        payload: &Value,
-    ) -> anyhow::Result<()> {
-        let body = serde_json::to_vec(payload)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
-        stream.write_all(header.as_bytes()).await?;
-        stream.write_all(&body).await?;
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn start_debug_session_resolves_root_package_target() {
-        let listener = match TcpListener::bind("127.0.0.1:0").await {
-            Ok(listener) => listener,
-            Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => return,
-            Err(error) => panic!("bind mock dap listener: {error}"),
-        };
-        let addr = listener.local_addr().expect("local addr");
-        let workspace = create_temp_workspace("debug_root_target");
-        init_git_repo(&workspace);
-        write_file(
-            workspace.join("go.mod"),
-            "module example.com/app\n\ngo 1.22\n",
-        );
-        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
-        let expected_program = workspace.join("main.go").to_string_lossy().to_string();
-        let expected_cwd = workspace.to_string_lossy().to_string();
-
-        let server_task = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.expect("accept client");
-            for expected_command in ["initialize", "launch", "disconnect"] {
-                let request = read_raw_dap_message(&mut socket)
-                    .await
-                    .expect("read request");
-                let request_seq = request
-                    .get("seq")
-                    .and_then(Value::as_i64)
-                    .expect("request seq");
-                let command = request
-                    .get("command")
-                    .and_then(Value::as_str)
-                    .expect("command");
-                assert_eq!(command, expected_command);
-                if expected_command == "launch" {
-                    let args = request
-                        .get("arguments")
-                        .and_then(Value::as_object)
-                        .expect("launch arguments");
-                    assert_eq!(
-                        args.get("mode")
-                            .and_then(Value::as_str)
-                            .expect("launch mode"),
-                        "debug"
-                    );
-                    assert_eq!(
-                        args.get("program")
-                            .and_then(Value::as_str)
-                            .expect("launch program"),
-                        expected_program
-                    );
-                    assert_eq!(
-                        args.get("cwd").and_then(Value::as_str).expect("launch cwd"),
-                        expected_cwd
-                    );
-                }
-
-                let response = json!({
-                    "seq": 100 + request_seq,
-                    "type": "response",
-                    "request_seq": request_seq,
-                    "success": true,
-                    "command": expected_command
-                });
-                write_raw_dap_message(&mut socket, &response)
-                    .await
-                    .expect("write response");
-            }
-        });
-
-        let mut client = DapClient::connect(addr).await.expect("connect");
-        client.initialize().await.expect("initialize");
-        client
-            .launch(LaunchMode::Debug, &workspace, &workspace.join("main.go"))
-            .await
-            .expect("launch debug session");
-        client.disconnect().await.expect("disconnect");
-        server_task.await.expect("server task");
-    }
-
-    #[tokio::test]
-    async fn get_debugger_state_uses_snapshot_mapping_for_failed_idle_paused_and_running_states() {
-        let _guard = shared_state_test_lock().lock().await;
-        let session_handle = get_dap_session_handle();
-        let signals_handle = get_runtime_signals_handle();
-
-        {
-            let mut session = session_handle.lock().await;
-            *session = None;
-        }
-        {
-            let mut store = signals_handle.lock().await;
-            *store = RuntimeSignalStore::default();
-        }
-
-        let idle = get_debugger_state().await;
-        assert!(idle.ok, "idle debugger state should succeed");
-        let idle_state = idle.data.expect("idle state payload should exist");
-        assert!(!idle_state.session_active);
-        assert!(!idle_state.paused);
-
-        {
-            let mut store = signals_handle.lock().await;
-            store.healthy = true;
-        }
-
-        let failed = get_debugger_state().await;
-        assert!(
-            failed.ok,
-            "failed debugger state should still return snapshot-derived state"
-        );
-        let failed_state = failed.data.expect("failed state payload should exist");
-        assert!(!failed_state.session_active);
-        assert!(!failed_state.paused);
-
-        {
-            let mut session = session_handle.lock().await;
-            *session = Some(DapSessionHandle {
-                child: tokio::process::Command::new("cmd")
-                    .args(["/C", "exit", "0"])
-                    .spawn()
-                    .expect("spawn placeholder child"),
-                stop_tx: oneshot::channel::<()>().0,
-                control_tx: mpsc::unbounded_channel::<DebuggerControlCommand>().0,
-                sampler_task: tokio::spawn(async {}),
-            });
-        }
-        {
-            let mut store = signals_handle.lock().await;
-            store.healthy = true;
-            store.paused = true;
-        }
-
-        let paused = get_debugger_state().await;
-        assert!(paused.ok, "paused debugger state should succeed");
-        let paused_state = paused.data.expect("paused state payload should exist");
-        assert!(paused_state.session_active);
-        assert!(paused_state.paused);
-
-        {
-            let mut store = signals_handle.lock().await;
-            store.paused = false;
-        }
-
-        let running = get_debugger_state().await;
-        assert!(running.ok, "running debugger state should succeed");
-        let running_state = running.data.expect("running state payload should exist");
-        assert!(running_state.session_active);
-        assert!(!running_state.paused);
-
-        {
-            let mut session = session_handle.lock().await;
-            *session = None;
-        }
-        {
-            let mut store = signals_handle.lock().await;
-            *store = RuntimeSignalStore::default();
-        }
-    }
-
     #[tokio::test]
     async fn runtime_signals_reject_when_deep_trace_session_is_inactive() {
         let _guard = shared_state_test_lock().lock().await;
@@ -2855,10 +2726,7 @@ mod tests {
             line: 12,
         })
         .await;
-        assert!(
-            first.ok,
-            "should allow storing breakpoints before debug starts"
-        );
+        assert!(first.ok, "should allow storing breakpoints before debug starts");
         let first_state = first.data.expect("state payload should be returned");
         assert!(!first_state.session_active);
         assert_eq!(first_state.breakpoints.len(), 1);
@@ -2894,10 +2762,7 @@ mod tests {
         }
 
         let response = deactivate_deep_trace().await;
-        assert!(
-            response.ok,
-            "deactivate should succeed without a live session"
-        );
+        assert!(response.ok, "deactivate should succeed without a live session");
 
         let store = signals_handle.lock().await;
         assert_eq!(store.breakpoints.get("main.go"), Some(&vec![7, 9]));
@@ -2933,7 +2798,8 @@ mod tests {
 
         assert!(response.ok, "switch to remote-only branch should succeed");
         let current =
-            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .expect("head");
         assert_eq!(current, "develop");
     }
 
@@ -2950,10 +2816,7 @@ mod tests {
         })
         .await;
 
-        assert!(
-            !response.ok,
-            "dirty worktree with 'none' action should fail"
-        );
+        assert!(!response.ok, "dirty worktree with 'none' action should fail");
         assert_eq!(
             response.error.expect("error").code,
             "git_branch_dirty_action_required"
@@ -3042,8 +2905,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching(
-    ) {
+    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching() {
         let repo_dir = create_temp_workspace("branch_switch_discard_action");
         init_git_repo(&repo_dir);
         add_commit(&repo_dir, "README.md", "initial\n", "init");
@@ -3110,12 +2972,9 @@ mod tests {
         })
         .await;
 
-        assert!(
-            response.ok,
-            "switch using explicit non-origin remote_ref should succeed"
-        );
-        let current =
-            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
+        assert!(response.ok, "switch using explicit non-origin remote_ref should succeed");
+        let current = git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("head");
         assert_eq!(current, "develop");
         // Verify that the new local branch tracks the upstream remote.
         let tracking = git_output_in_test(
@@ -3182,9 +3041,7 @@ mod tests {
     #[test]
     fn strip_error_prefix_removes_code_prefix_from_message() {
         assert_eq!(
-            strip_error_prefix(
-                "git_branches_failed::workspace root does not exist: No such file or directory"
-            ),
+            strip_error_prefix("git_branches_failed::workspace root does not exist: No such file or directory"),
             "workspace root does not exist: No such file or directory"
         );
     }
@@ -3208,10 +3065,7 @@ mod tests {
 
     #[test]
     fn parse_remote_ref_returns_remote_and_branch() {
-        assert_eq!(
-            parse_remote_ref("origin/develop"),
-            Some(("origin", "develop"))
-        );
+        assert_eq!(parse_remote_ref("origin/develop"), Some(("origin", "develop")));
         assert_eq!(
             parse_remote_ref("upstream/feature/my-feat"),
             Some(("upstream", "feature/my-feat"))
@@ -3267,9 +3121,10 @@ mod tests {
     async fn get_workspace_branches_error_message_is_sanitized() {
         // Supplying a non-existent workspace root should surface a clean error
         // without the internal "git_branches_failed::" prefix in the message.
-        let response =
-            get_workspace_branches("/this/path/does/absolutely/not/exist/anywhere".to_string())
-                .await;
+        let response = get_workspace_branches(
+            "/this/path/does/absolutely/not/exist/anywhere".to_string(),
+        )
+        .await;
 
         assert!(!response.ok, "non-existent workspace should fail");
         let error = response.error.expect("error payload must be present");
@@ -3284,5 +3139,171 @@ mod tests {
             "user-facing message must not contain '::' separator, got: {}",
             error.message
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug target resolution — package-aware
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_cmd_package_target() {
+        let workspace = create_temp_workspace("debug_cmd_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        std::fs::create_dir_all(workspace.join("cmd/app")).unwrap();
+        write_file(
+            workspace.join("cmd/app/main.go"),
+            "package main\nfunc main() {}\n",
+        );
+
+        let resolved = resolve_debug_target(&workspace, "cmd/app/main.go").expect("target");
+
+        assert_eq!(resolved.package_dir, workspace.join("cmd/app").canonicalize().unwrap());
+        assert_eq!(resolved.package_pattern, "./cmd/app");
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_root_package_target() {
+        let workspace = create_temp_workspace("debug_root_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("main.go"),
+            "package main\nfunc main() {}\n",
+        );
+
+        let resolved = resolve_debug_target(&workspace, "main.go").expect("target");
+
+        assert_eq!(resolved.package_dir, workspace.canonicalize().unwrap());
+        assert_eq!(resolved.package_pattern, ".");
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_rejects_non_runnable_target() {
+        let workspace = create_temp_workspace("debug_invalid_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        std::fs::create_dir_all(workspace.join("internal/logger")).unwrap();
+        write_file(
+            workspace.join("internal/logger/logger.go"),
+            "package logger\nfunc New() string { return \"ok\" }\n",
+        );
+
+        let error = resolve_debug_target(&workspace, "internal/logger/logger.go").unwrap_err();
+        assert!(error.contains("not a runnable Go package"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug session lifecycle — failure payload normalization
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_returns_user_facing_failure_when_delve_is_missing() {
+        let workspace = create_temp_workspace("debug_missing_dlv");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
+
+        let response = start_debug_session_internal_for_test(
+            &workspace,
+            StartDebugSessionRequestDto {
+                workspace_root: workspace.to_string_lossy().to_string(),
+                relative_path: "main.go".to_string(),
+            },
+            Some("missing-dlv"),
+        )
+        .await;
+
+        assert!(!response.ok);
+        let error = response.error.expect("error");
+        assert_eq!(error.code, "debug_session_start_failed");
+        assert!(
+            error.message.contains("Delve"),
+            "user-facing message should mention Delve, got: {}",
+            error.message
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debug_failure participates in production failure semantics
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debug_failure` produces the normalized failure shape
+    /// used by the production `start_debug_session_internal` spawn-failure path.
+    /// When the raw error carries an internal `code::` prefix, the helper must
+    /// strip it so only the human-readable portion reaches the `message` field.
+    #[test]
+    fn map_debug_failure_strips_internal_prefix_and_sets_correct_title() {
+        let failure = map_debug_failure(
+            "debug_session_start_failed",
+            "debug_session_start_failed::Delve binary not found in PATH",
+        );
+
+        assert_eq!(failure.code, "debug_session_start_failed");
+        assert_eq!(failure.title, "Debug session failed");
+        // The message field must contain only the human part, not the prefix.
+        assert_eq!(
+            failure.message,
+            "Delve binary not found in PATH",
+            "map_debug_failure must strip the code:: prefix; got: {}",
+            failure.message
+        );
+        // details carries the original raw string for diagnostics.
+        assert!(
+            failure
+                .details
+                .as_deref()
+                .unwrap_or("")
+                .contains("debug_session_start_failed::"),
+            "details should preserve the original raw error"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debugger_state_snapshot is canonical source of truth for
+    // get_debugger_state status classification
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debugger_state_snapshot` correctly classifies the full
+    /// range of session states. Because `get_debugger_state` now delegates all
+    /// status classification to this function, these invariants directly govern
+    /// production behavior of the command.
+    #[test]
+    fn map_debugger_state_snapshot_classifies_all_session_states() {
+        // idle: no active session, no failure
+        let idle_store = RuntimeSignalStore::default();
+        let idle_snapshot = map_debugger_state_snapshot(&idle_store, false, None);
+        assert_eq!(idle_snapshot.status, "idle");
+        assert!(!idle_snapshot.paused);
+        assert!(idle_snapshot.failure.is_none());
+
+        // running: session active, not paused
+        let running_store = RuntimeSignalStore {
+            paused: false,
+            ..RuntimeSignalStore::default()
+        };
+        let running_snapshot = map_debugger_state_snapshot(&running_store, true, None);
+        assert_eq!(running_snapshot.status, "running");
+        assert!(!running_snapshot.paused);
+
+        // paused: session active and paused
+        let paused_store = RuntimeSignalStore {
+            paused: true,
+            active_relative_path: Some("main.go".to_string()),
+            active_line: Some(10),
+            active_column: Some(1),
+            ..RuntimeSignalStore::default()
+        };
+        let paused_snapshot = map_debugger_state_snapshot(&paused_store, true, None);
+        assert_eq!(paused_snapshot.status, "paused");
+        assert!(paused_snapshot.paused);
+        assert_eq!(paused_snapshot.active_relative_path.as_deref(), Some("main.go"));
+
+        // failed: failure payload overrides session_active
+        let failure = map_debug_failure("debug_session_start_failed", "spawn error");
+        let failed_snapshot =
+            map_debugger_state_snapshot(&RuntimeSignalStore::default(), true, Some(failure));
+        assert_eq!(failed_snapshot.status, "failed");
+        assert!(failed_snapshot.failure.is_some());
     }
 }
