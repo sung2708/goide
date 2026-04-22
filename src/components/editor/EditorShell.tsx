@@ -36,6 +36,7 @@ import type {
   ApiResponse,
   CompletionItem,
   DeepTraceConstructKind,
+  DebugFailure,
   EditorDiagnostic,
   RuntimeSignal,
   RuntimePanelSnapshot,
@@ -72,6 +73,7 @@ import GitPanel from "../panels/GitPanel";
 import BranchPicker from "../panels/BranchPicker";
 import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
+import DebugFailureDialog from "../panels/DebugFailureDialog";
 
 const DEBUG_UI_ENABLED = false;
 
@@ -105,6 +107,8 @@ type FileDiagnosticsSummary = {
   hasErrors: boolean;
   hasWarnings: boolean;
 };
+
+type DebugUiState = "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
 
 function mapGitStatus(statusToken: string): "modified" | "untracked" | "staged" {
   const token = statusToken.trim();
@@ -444,6 +448,8 @@ function EditorShell() {
       return null;
     }
   }, []);
+  const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
+  const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
   const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
     useState<RuntimePanelSnapshot | null>(null);
@@ -1532,30 +1538,37 @@ function EditorShell() {
     void handleRunFile("standard");
   }, [handleRunFile]);
 
-  const handleStartDebug = useCallback(() => {
-    if (!DEBUG_UI_ENABLED) return;
-    if (runStatus === "running") return;
-    if (!workspacePath || !activeFilePath) return;
+  const handleStartDebug = useCallback(async () => {
+    if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
+    setDebugUiState("starting");
+    setDebugFailure(null);
 
-    setRunStatus("running");
-    setRunMode("debug");
-    setIsBottomPanelOpen(true);
-    setRunOutput([]);
-    activeRunIdRef.current = "debug-" + Date.now();
-
-    void startDebugSession({
+    const response = await startDebugSession({
       workspaceRoot: workspacePath,
       relativePath: activeFilePath,
-    }).then((res) => {
-      if (!res.ok) {
-        setRunStatus("error");
-        setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session failed to start: ${res.error?.message}`, stream: "stderr" }]);
-      }
-    }).catch(err => {
-      setRunStatus("error");
-      setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session error: ${err}`, stream: "stderr" }]);
     });
-  }, [runStatus, workspacePath, activeFilePath]);
+
+    if (!response.ok) {
+      setDebugUiState("failed");
+      setDebugFailure({
+        code: response.error?.code ?? "debug_session_start_failed",
+        title: "Unable to start debug session",
+        message: response.error?.message ?? "Unknown debug startup failure.",
+        details: null,
+      });
+      return;
+    }
+
+    setDebugUiState("running");
+
+    if (DEBUG_UI_ENABLED) {
+      setRunStatus("running");
+      setRunMode("debug");
+      setIsBottomPanelOpen(true);
+      setRunOutput([]);
+      activeRunIdRef.current = "debug-" + Date.now();
+    }
+  }, [workspacePath, activeFilePath]);
 
   const handleStopDebug = useCallback(async () => {
     await deactivateDeepTrace();
@@ -2415,6 +2428,23 @@ function EditorShell() {
                       {runStatus === "running" && runMode === "race" ? "Race..." : "Run Race"}
                     </button>
                   )}
+                  {isGoFile(activeFilePath) && (
+                    <button
+                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
+                        debugUiState === "starting"
+                          ? "border-[rgba(239,159,118,0.25)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[rgba(239,159,118,0.4)] text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
+                      }`}
+                      onClick={() => void handleStartDebug()}
+                      type="button"
+                      aria-label="Debug active Go file"
+                      title="Start a debug session for the active Go file."
+                      disabled={debugUiState === "starting"}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                      {debugUiState === "starting" ? "Starting..." : "Debug"}
+                    </button>
+                  )}
                 </div>
               </header>
 
@@ -2651,6 +2681,17 @@ function EditorShell() {
           {branchSwitchError}
         </div>
       )}
+
+      <DebugFailureDialog
+        open={debugFailure !== null}
+        title={debugFailure?.title ?? "Unable to start debug session"}
+        message={debugFailure?.message ?? ""}
+        details={debugFailure?.details ?? null}
+        onClose={() => {
+          setDebugFailure(null);
+          setDebugUiState("idle");
+        }}
+      />
     </div>
   );
 }
