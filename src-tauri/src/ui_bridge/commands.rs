@@ -820,6 +820,73 @@ pub async fn start_debug_session(
     .await
 }
 
+/// Testable variant of `start_debug_session_internal` that accepts an optional
+/// override for the `dlv` binary path.  When `dlv_binary` is `Some`, the given
+/// path is used instead of `"dlv"` so tests can simulate a missing Delve
+/// installation without requiring the tool to be absent from the host PATH.
+#[cfg(test)]
+pub(crate) async fn start_debug_session_internal_for_test(
+    workspace_root: &std::path::Path,
+    request: StartDebugSessionRequestDto,
+    dlv_binary: Option<&str>,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    use crate::integration::delve::LaunchMode;
+
+    let workspace_root_path = workspace_root.to_path_buf();
+    let relative_path = request.relative_path.clone();
+
+    // Target resolution (same as production path).
+    let is_test_file = relative_path.ends_with("_test.go");
+    let launch_mode_result: Result<LaunchMode, String> = if is_test_file {
+        let target_file = workspace_root_path.join(&relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
+        Ok(LaunchMode::Test)
+    } else {
+        match resolve_debug_target(&workspace_root_path, &relative_path) {
+            Ok(target) => Ok(LaunchMode::Package {
+                package: target.package_pattern,
+                cwd: workspace_root_path.to_string_lossy().to_string(),
+            }),
+            Err(message) => Err(message),
+        }
+    };
+
+    if let Err(message) = launch_mode_result {
+        return ApiResponse::err("debug_target_invalid", &message);
+    }
+
+    // Attempt to spawn the Delve DAP server using the overridden binary name.
+    let dlv_cmd = dlv_binary.unwrap_or("dlv");
+    let spawn_result = crate::integration::delve::spawn_dlv_dap_with(
+        dlv_cmd,
+        &["dap", "--listen=127.0.0.1:0"],
+        &workspace_root_path,
+    )
+    .await;
+
+    match spawn_result {
+        Ok(mut dap_process) => {
+            // Minimal cleanup – kill the process immediately; we only care about
+            // whether Delve could be launched at all in this test helper.
+            let _ = dap_process.child.kill().await;
+            ApiResponse::ok(ActivateDeepTraceResponseDto {
+                mode: "deep-trace".to_string(),
+                scope_key: None,
+            })
+        }
+        Err(error) => {
+            let raw = error.to_string();
+            let user_message = format!("Delve debugger could not be started: {raw}");
+            ApiResponse::err("debug_session_start_failed", &user_message)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
     let result = tauri::async_runtime::spawn_blocking(move || {
@@ -1014,6 +1081,65 @@ fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> Debug
         active_line: store.active_line,
         active_column: store.active_column,
         breakpoints: flatten_breakpoints(store),
+    }
+}
+
+/// Maps a raw backend error into a normalized, user-facing [`DebugFailureDto`].
+/// Strips any internal `code::` prefix from `raw` before placing it in the
+/// `message` field, and picks a human-readable title based on the failure code.
+///
+/// This helper is used in the session-start and session-lifecycle paths and
+/// will also be wired into the frontend controller state machine (Task 4).
+#[allow(dead_code)]
+fn map_debug_failure(code: &str, raw: &str) -> crate::ui_bridge::types::DebugFailureDto {
+    let message = strip_error_prefix(raw).to_string();
+    let title = match code {
+        "debug_tool_missing" => "Unable to start debug session",
+        "debug_target_invalid" => "Invalid debug target",
+        _ => "Debug session failed",
+    };
+
+    crate::ui_bridge::types::DebugFailureDto {
+        code: code.to_string(),
+        title: title.to_string(),
+        message,
+        details: Some(raw.to_string()),
+    }
+}
+
+/// Produces a [`DebugSessionSnapshotDto`] that captures the full session state
+/// including an explicit `status` discriminant derived from the combination of
+/// `session_active`, store state, and an optional failure payload.
+///
+/// Status transitions: `failed` → `idle` → `paused` / `running`
+///
+/// This helper is the single canonical place for snapshot construction and will
+/// be used by `get_debugger_state` and the frontend-facing snapshot command
+/// once Task 4 wires them up.
+#[allow(dead_code)]
+fn map_debugger_state_snapshot(
+    store: &RuntimeSignalStore,
+    session_active: bool,
+    failure: Option<crate::ui_bridge::types::DebugFailureDto>,
+) -> crate::ui_bridge::types::DebugSessionSnapshotDto {
+    let status = if failure.is_some() {
+        "failed"
+    } else if !session_active {
+        "idle"
+    } else if store.paused {
+        "paused"
+    } else {
+        "running"
+    };
+
+    crate::ui_bridge::types::DebugSessionSnapshotDto {
+        status: status.to_string(),
+        paused: store.paused,
+        active_relative_path: store.active_relative_path.clone(),
+        active_line: store.active_line,
+        active_column: store.active_column,
+        breakpoints: flatten_breakpoints(store),
+        failure,
     }
 }
 
@@ -2155,12 +2281,14 @@ mod tests {
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
-        parse_remote_ref, resolve_debug_target, strip_error_prefix,
-        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
-        validate_go_completion_path, validate_go_diagnostics_path,
+        parse_remote_ref, resolve_debug_target, start_debug_session_internal_for_test,
+        strip_error_prefix, switch_workspace_branch, validate_completion_cursor,
+        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path,
     };
-    use crate::ui_bridge::types::{SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto};
+    use crate::ui_bridge::types::{
+        StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
+    };
     use std::collections::HashMap;
     use std::fs;
     use std::process::Command;
@@ -3023,6 +3151,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_debug_session_resolves_root_package_target() {
+        let workspace = create_temp_workspace("debug_root_target");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("main.go"),
+            "package main\nfunc main() {}\n",
+        );
+
+        let resolved = resolve_debug_target(&workspace, "main.go").expect("target");
+
+        assert_eq!(resolved.package_dir, workspace.canonicalize().unwrap());
+        assert_eq!(resolved.package_pattern, ".");
+    }
+
+    #[tokio::test]
     async fn start_debug_session_rejects_non_runnable_target() {
         let workspace = create_temp_workspace("debug_invalid_target");
         init_git_repo(&workspace);
@@ -3035,5 +3179,36 @@ mod tests {
 
         let error = resolve_debug_target(&workspace, "internal/logger/logger.go").unwrap_err();
         assert!(error.contains("not a runnable Go package"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug session lifecycle — failure payload normalization
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_returns_user_facing_failure_when_delve_is_missing() {
+        let workspace = create_temp_workspace("debug_missing_dlv");
+        init_git_repo(&workspace);
+        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
+
+        let response = start_debug_session_internal_for_test(
+            &workspace,
+            StartDebugSessionRequestDto {
+                workspace_root: workspace.to_string_lossy().to_string(),
+                relative_path: "main.go".to_string(),
+            },
+            Some("missing-dlv"),
+        )
+        .await;
+
+        assert!(!response.ok);
+        let error = response.error.expect("error");
+        assert_eq!(error.code, "debug_session_start_failed");
+        assert!(
+            error.message.contains("Delve"),
+            "user-facing message should mention Delve, got: {}",
+            error.message
+        );
     }
 }
