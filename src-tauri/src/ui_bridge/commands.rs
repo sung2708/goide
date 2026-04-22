@@ -539,7 +539,8 @@ async fn start_debug_session_internal(
     let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
-            return ApiResponse::err("debug_session_start_failed", &error.to_string());
+            let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
+            return ApiResponse::err(&failure.code, &failure.message);
         }
     };
 
@@ -1090,7 +1091,6 @@ fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> Debug
 ///
 /// This helper is used in the session-start and session-lifecycle paths and
 /// will also be wired into the frontend controller state machine (Task 4).
-#[allow(dead_code)]
 fn map_debug_failure(code: &str, raw: &str) -> crate::ui_bridge::types::DebugFailureDto {
     let message = strip_error_prefix(raw).to_string();
     let title = match code {
@@ -1113,10 +1113,9 @@ fn map_debug_failure(code: &str, raw: &str) -> crate::ui_bridge::types::DebugFai
 ///
 /// Status transitions: `failed` → `idle` → `paused` / `running`
 ///
-/// This helper is the single canonical place for snapshot construction and will
-/// be used by `get_debugger_state` and the frontend-facing snapshot command
-/// once Task 4 wires them up.
-#[allow(dead_code)]
+/// This helper is the single canonical place for snapshot construction and is
+/// used by `get_debugger_state` to derive the canonical session status before
+/// projecting back into the legacy DTO shape.
 fn map_debugger_state_snapshot(
     store: &RuntimeSignalStore,
     session_active: bool,
@@ -1324,7 +1323,19 @@ pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
     };
     let signals_handle = get_runtime_signals_handle();
     let store = signals_handle.lock().await;
-    ApiResponse::ok(map_debugger_state(session_active, &store))
+    // Use the canonical snapshot classifier as the single source of truth for
+    // session status, then project the result back into the legacy DebuggerStateDto
+    // shape for frontend compatibility.
+    let snapshot = map_debugger_state_snapshot(&store, session_active, None);
+    let adapted_session_active = snapshot.status != "idle";
+    ApiResponse::ok(DebuggerStateDto {
+        session_active: adapted_session_active,
+        paused: snapshot.paused,
+        active_relative_path: snapshot.active_relative_path,
+        active_line: snapshot.active_line,
+        active_column: snapshot.active_column,
+        breakpoints: snapshot.breakpoints,
+    })
 }
 
 #[tauri::command]
@@ -2280,11 +2291,12 @@ mod tests {
     use super::{
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
-        get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
-        parse_remote_ref, resolve_debug_target, start_debug_session_internal_for_test,
-        strip_error_prefix, switch_workspace_branch, validate_completion_cursor,
-        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
-        validate_workspace_scoped_go_path,
+        get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
+        map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
+        resolve_debug_target, start_debug_session_internal_for_test, strip_error_prefix,
+        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
+        validate_go_completion_path, validate_go_diagnostics_path,
+        validate_workspace_scoped_go_path, RuntimeSignalStore,
     };
     use crate::ui_bridge::types::{
         StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
@@ -3210,5 +3222,88 @@ mod tests {
             "user-facing message should mention Delve, got: {}",
             error.message
         );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debug_failure participates in production failure semantics
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debug_failure` produces the normalized failure shape
+    /// used by the production `start_debug_session_internal` spawn-failure path.
+    /// When the raw error carries an internal `code::` prefix, the helper must
+    /// strip it so only the human-readable portion reaches the `message` field.
+    #[test]
+    fn map_debug_failure_strips_internal_prefix_and_sets_correct_title() {
+        let failure = map_debug_failure(
+            "debug_session_start_failed",
+            "debug_session_start_failed::Delve binary not found in PATH",
+        );
+
+        assert_eq!(failure.code, "debug_session_start_failed");
+        assert_eq!(failure.title, "Debug session failed");
+        // The message field must contain only the human part, not the prefix.
+        assert_eq!(
+            failure.message,
+            "Delve binary not found in PATH",
+            "map_debug_failure must strip the code:: prefix; got: {}",
+            failure.message
+        );
+        // details carries the original raw string for diagnostics.
+        assert!(
+            failure
+                .details
+                .as_deref()
+                .unwrap_or("")
+                .contains("debug_session_start_failed::"),
+            "details should preserve the original raw error"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debugger_state_snapshot is canonical source of truth for
+    // get_debugger_state status classification
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debugger_state_snapshot` correctly classifies the full
+    /// range of session states. Because `get_debugger_state` now delegates all
+    /// status classification to this function, these invariants directly govern
+    /// production behavior of the command.
+    #[test]
+    fn map_debugger_state_snapshot_classifies_all_session_states() {
+        // idle: no active session, no failure
+        let idle_store = RuntimeSignalStore::default();
+        let idle_snapshot = map_debugger_state_snapshot(&idle_store, false, None);
+        assert_eq!(idle_snapshot.status, "idle");
+        assert!(!idle_snapshot.paused);
+        assert!(idle_snapshot.failure.is_none());
+
+        // running: session active, not paused
+        let running_store = RuntimeSignalStore {
+            paused: false,
+            ..RuntimeSignalStore::default()
+        };
+        let running_snapshot = map_debugger_state_snapshot(&running_store, true, None);
+        assert_eq!(running_snapshot.status, "running");
+        assert!(!running_snapshot.paused);
+
+        // paused: session active and paused
+        let paused_store = RuntimeSignalStore {
+            paused: true,
+            active_relative_path: Some("main.go".to_string()),
+            active_line: Some(10),
+            active_column: Some(1),
+            ..RuntimeSignalStore::default()
+        };
+        let paused_snapshot = map_debugger_state_snapshot(&paused_store, true, None);
+        assert_eq!(paused_snapshot.status, "paused");
+        assert!(paused_snapshot.paused);
+        assert_eq!(paused_snapshot.active_relative_path.as_deref(), Some("main.go"));
+
+        // failed: failure payload overrides session_active
+        let failure = map_debug_failure("debug_session_start_failed", "spawn error");
+        let failed_snapshot =
+            map_debugger_state_snapshot(&RuntimeSignalStore::default(), true, Some(failure));
+        assert_eq!(failed_snapshot.status, "failed");
+        assert!(failed_snapshot.failure.is_some());
     }
 }
