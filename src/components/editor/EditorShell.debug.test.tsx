@@ -1,12 +1,31 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 import { startDebugSession } from "../../lib/ipc/client";
+import type { DebuggerState } from "../../lib/ipc/types";
 
 const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
+const getDebuggerStateMock = vi.fn();
+const deactivateDeepTraceMock = vi.fn();
+
+let mockDebuggerState: DebuggerState = {
+  sessionActive: false,
+  paused: false,
+  activeRelativePath: null,
+  activeLine: null,
+  activeColumn: null,
+  breakpoints: [],
+};
+
+function setMockDebuggerState(overrides: Partial<DebuggerState>) {
+  mockDebuggerState = {
+    ...mockDebuggerState,
+    ...overrides,
+  };
+}
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -28,6 +47,8 @@ vi.mock("../../lib/ipc/client", async () => {
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
+    getDebuggerState: (...args: unknown[]) => getDebuggerStateMock(...args),
+    deactivateDeepTrace: (...args: unknown[]) => deactivateDeepTraceMock(...args),
     startDebugSession: vi.fn().mockResolvedValue({
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
@@ -82,6 +103,22 @@ describe("EditorShell debug controller", () => {
       ok: true,
       data: { runtimeAvailability: "unavailable" },
     });
+    mockDebuggerState = {
+      sessionActive: false,
+      paused: false,
+      activeRelativePath: null,
+      activeLine: null,
+      activeColumn: null,
+      breakpoints: [],
+    };
+    getDebuggerStateMock.mockImplementation(async () => ({
+      ok: true,
+      data: mockDebuggerState,
+    }));
+    deactivateDeepTraceMock.mockResolvedValue({
+      ok: true,
+      data: null,
+    });
     vi.mocked(startDebugSession).mockResolvedValue({
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
@@ -109,6 +146,22 @@ describe("EditorShell debug controller", () => {
     expect(screen.getByText(/Delve is not installed/i)).toBeInTheDocument();
   });
 
+  it("shows the failure modal when debug start throws", async () => {
+    const user = userEvent.setup();
+    vi.mocked(startDebugSession).mockRejectedValue(new Error("Transport unavailable"));
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    expect(
+      await screen.findByRole("dialog", { name: /unable to start debug session/i })
+    ).toBeInTheDocument();
+    expect(screen.getByText(/transport unavailable/i)).toBeInTheDocument();
+  });
+
   it("sets debugUiState back to idle when the failure dialog is dismissed", async () => {
     const user = userEvent.setup();
     vi.mocked(startDebugSession).mockResolvedValue({
@@ -128,7 +181,7 @@ describe("EditorShell debug controller", () => {
     const dialog = await screen.findByRole("dialog", { name: /unable to start debug session/i });
     expect(dialog).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /dismiss/i }));
+    await user.click(screen.getByRole("button", { name: /close/i }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
 
@@ -150,5 +203,71 @@ describe("EditorShell debug controller", () => {
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
+  });
+
+  it("renders step controls when the debug session is paused", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    setMockDebuggerState({
+      sessionActive: true,
+      paused: true,
+      activeRelativePath: "main.go",
+      activeLine: 12,
+      breakpoints: [],
+    });
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    expect(await screen.findByRole("button", { name: /step over/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /step into/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /step out/i })).toBeInTheDocument();
+  });
+
+  it("keeps debug start disabled while stop is in progress", async () => {
+    const user = userEvent.setup();
+    let resolveStop: (() => void) | null = null;
+    deactivateDeepTraceMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStop = () => resolve({ ok: true, data: null });
+        })
+    );
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    expect(vi.mocked(startDebugSession)).toHaveBeenCalledTimes(1);
+    await screen.findByRole("button", { name: /stop debugging/i });
+    fireEvent.keyDown(window, { key: "F5", shiftKey: true });
+    await waitFor(() => expect(deactivateDeepTraceMock).toHaveBeenCalledTimes(1));
+
+    fireEvent.keyDown(window, { key: "F5" });
+    expect(vi.mocked(startDebugSession)).toHaveBeenCalledTimes(1);
+
+    resolveStop?.();
+  });
+
+  it("recovers from stop errors without remaining in stopping state", async () => {
+    const user = userEvent.setup();
+    deactivateDeepTraceMock.mockRejectedValueOnce(new Error("stop failed"));
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    await screen.findByRole("button", { name: /stop debugging/i });
+    fireEvent.keyDown(window, { key: "F5", shiftKey: true });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/^Stopping$/i)).toBeNull();
+      expect(screen.getByRole("button", { name: /stop debugging/i })).toBeInTheDocument();
+    });
   });
 });

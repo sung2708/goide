@@ -75,7 +75,7 @@ import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 import DebugFailureDialog from "../panels/DebugFailureDialog";
 
-const DEBUG_UI_ENABLED = false;
+const DEBUG_UI_ENABLED = true;
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -508,6 +508,7 @@ function EditorShell() {
   const searchRequestIdRef = useRef(0);
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
+  const debugStopInFlightRef = useRef(false);
   const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diagnosticPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1539,14 +1540,29 @@ function EditorShell() {
   }, [handleRunFile]);
 
   const handleStartDebug = useCallback(async () => {
+    if (debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
+      return;
+    }
     if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
     setDebugUiState("starting");
     setDebugFailure(null);
 
-    const response = await startDebugSession({
-      workspaceRoot: workspacePath,
-      relativePath: activeFilePath,
-    });
+    let response: Awaited<ReturnType<typeof startDebugSession>>;
+    try {
+      response = await startDebugSession({
+        workspaceRoot: workspacePath,
+        relativePath: activeFilePath,
+      });
+    } catch (error) {
+      setDebugUiState("failed");
+      setDebugFailure({
+        code: "debug_session_start_failed",
+        title: "Unable to start debug session",
+        message: error instanceof Error ? error.message : "Unknown debug startup failure.",
+        details: null,
+      });
+      return;
+    }
 
     if (!response.ok) {
       setDebugUiState("failed");
@@ -1568,19 +1584,31 @@ function EditorShell() {
       setRunOutput([]);
       activeRunIdRef.current = "debug-" + Date.now();
     }
-  }, [workspacePath, activeFilePath]);
+  }, [workspacePath, activeFilePath, runStatus, runMode]);
 
   const handleStopDebug = useCallback(async () => {
-    await deactivateDeepTrace();
-    setRunStatus("done");
-    setRunMode("standard");
-    setDebuggerState(null);
-    setRuntimePanelSnapshot(null);
-    setRuntimeTopologySnapshot(null);
-    setRuntimeTopologyError(null);
-    setActiveBlockedSignal(null);
-    setDeepTraceScope(null);
-  }, []);
+    if (debugStopInFlightRef.current) {
+      return;
+    }
+    debugStopInFlightRef.current = true;
+    setDebugUiState("stopping");
+    try {
+      await deactivateDeepTrace();
+      setDebugUiState("idle");
+      setRunStatus("done");
+      setRunMode("standard");
+      setDebuggerState(null);
+      setRuntimePanelSnapshot(null);
+      setRuntimeTopologySnapshot(null);
+      setRuntimeTopologyError(null);
+      setActiveBlockedSignal(null);
+      setDeepTraceScope(null);
+    } catch (_error) {
+      setDebugUiState(debuggerState?.paused ? "paused" : "running");
+    } finally {
+      debugStopInFlightRef.current = false;
+    }
+  }, [debuggerState?.paused]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1647,6 +1675,26 @@ function EditorShell() {
       setRuntimeTopologyError(null);
     }
   }, [debuggerState, runMode, runStatus]);
+
+  useEffect(() => {
+    if (!DEBUG_UI_ENABLED) {
+      return;
+    }
+    if (debugUiState === "starting" || debugUiState === "failed" || debugUiState === "stopping") {
+      return;
+    }
+    if (runMode !== "debug" || runStatus !== "running") {
+      if (debugUiState !== "idle") {
+        setDebugUiState("idle");
+      }
+      return;
+    }
+
+    const nextState: DebugUiState = debuggerState?.paused ? "paused" : "running";
+    if (debugUiState !== nextState) {
+      setDebugUiState(nextState);
+    }
+  }, [debugUiState, debuggerState?.paused, runMode, runStatus]);
 
   useEffect(() => {
     if (!workspacePath || !activeFilePath) {
@@ -1722,12 +1770,21 @@ function EditorShell() {
     } catch (err) {
       console.error("Failed to toggle breakpoint:", err);
     }
-  }, [workspacePath, activeFilePath]);
+  }, [workspacePath, activeFilePath, runStatus, runMode]);
+
+  const isDebugSessionRunning = debugUiState === "running" || debugUiState === "paused";
+  const isDebugPaused = debugUiState === "paused";
+  const isDebugSessionBusy =
+    isDebugSessionRunning || debugUiState === "starting" || debugUiState === "stopping";
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const canStartDebug = DEBUG_UI_ENABLED && Boolean(workspacePath && isGoFile(activeFilePath));
-      const isDebugRunning = DEBUG_UI_ENABLED && runMode === "debug" && runStatus === "running";
+      const canStartDebug =
+        DEBUG_UI_ENABLED &&
+        !isDebugSessionBusy &&
+        !debugStopInFlightRef.current &&
+        runStatus !== "running" &&
+        Boolean(workspacePath && isGoFile(activeFilePath));
 
       if (e.key === "F9" && activeFilePath && selectedLine) {
         e.preventDefault();
@@ -1737,15 +1794,17 @@ function EditorShell() {
 
       if (e.key === "F5" && !e.shiftKey) {
         e.preventDefault();
-        if (!isDebugRunning) {
+        if (!isDebugSessionRunning) {
           if (canStartDebug) {
             handleStartDebug();
           }
           return;
         }
-        if (debuggerState?.paused) {
+        if (isDebugPaused) {
+          setDebugUiState("running");
           void debuggerContinue();
         } else {
+          setDebugUiState("paused");
           void debuggerPause();
         }
         return;
@@ -1753,14 +1812,14 @@ function EditorShell() {
 
       if (e.key === "F5" && e.shiftKey) {
         e.preventDefault();
-        if (isDebugRunning) {
+        if (isDebugSessionRunning) {
           void handleStopDebug();
         }
         return;
       }
 
 
-      if (!isDebugRunning || !debuggerState?.paused) {
+      if (!isDebugSessionRunning || !isDebugPaused) {
         return;
       }
 
@@ -1786,12 +1845,12 @@ function EditorShell() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     activeFilePath,
-    activeTab,
-    debuggerState,
     handleToggleBreakpoint,
     handleStartDebug,
     handleStopDebug,
-    runMode,
+    isDebugSessionBusy,
+    isDebugPaused,
+    isDebugSessionRunning,
     runStatus,
     selectedLine,
     workspacePath,
@@ -2265,6 +2324,8 @@ function EditorShell() {
               loading={runtimeTopologyLoading}
               runMode={runMode}
               runStatus={runStatus}
+              isDebugSessionRunning={isDebugSessionRunning}
+              isDebugPaused={isDebugPaused}
               debuggerState={debuggerState}
               panelSnapshot={runtimePanelSnapshot}
               topologySnapshot={runtimeTopologySnapshot}
@@ -2276,8 +2337,10 @@ function EditorShell() {
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
                 <p className="text-[11px] text-[var(--subtext0)]">
-                  {runMode === "debug" && runStatus === "running"
-                    ? debuggerState?.paused
+                  {debugUiState === "stopping"
+                    ? "Stopping"
+                    : isDebugSessionRunning
+                    ? isDebugPaused
                       ? "Paused"
                       : "Running"
                     : "Idle"}
@@ -2290,32 +2353,40 @@ function EditorShell() {
                 )}
               </div>
 
-              {!(runMode === "debug" && runStatus === "running") && (
+              {!isDebugSessionBusy && (
                 <button
                   type="button"
                   aria-label="Start debug session"
                   className={`rounded-md border px-3 py-2 text-[11px] font-semibold ${
-                    runStatus === "running" && runMode !== "debug"
+                    runStatus === "running" || isDebugSessionBusy
                       ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
                       : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
                   }`}
                   onClick={handleStartDebug}
-                  disabled={runStatus === "running" && runMode !== "debug"}
+                  disabled={runStatus === "running" || isDebugSessionBusy}
                 >
                   Start Debug Session
                 </button>
               )}
 
-              {runMode === "debug" && runStatus === "running" && (
+              {isDebugSessionRunning && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      aria-label={debuggerState?.paused ? "Continue debugging" : "Pause debugging"}
+                      aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
-                      onClick={() => debuggerState?.paused ? void debuggerContinue() : void debuggerPause()}
+                      onClick={() => {
+                        if (isDebugPaused) {
+                          setDebugUiState("running");
+                          void debuggerContinue();
+                          return;
+                        }
+                        setDebugUiState("paused");
+                        void debuggerPause();
+                      }}
                     >
-                      {debuggerState?.paused ? "Continue" : "Pause"}
+                      {isDebugPaused ? "Continue" : "Pause"}
                     </button>
                     <button
                       type="button"
@@ -2327,7 +2398,7 @@ function EditorShell() {
                     </button>
                   </div>
 
-                  {debuggerState?.paused && (
+                  {isDebugPaused && (
                     <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
@@ -2359,8 +2430,8 @@ function EditorShell() {
               )}
 
               <div className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--subtext0)]">
-                {runMode === "debug" && runStatus === "running"
-                  ? debuggerState?.paused
+                {isDebugSessionRunning
+                  ? isDebugPaused
                     ? "Step controls are active while the program is paused."
                     : "Pause or hit a breakpoint to inspect state."
                   : "Open a Go file, place breakpoints, then start a debug session."}
@@ -2431,7 +2502,7 @@ function EditorShell() {
                   {isGoFile(activeFilePath) && (
                     <button
                       className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
-                        debugUiState === "starting"
+                        isDebugSessionBusy || runStatus === "running"
                           ? "border-[rgba(239,159,118,0.25)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[rgba(239,159,118,0.4)] text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
                       }`}
@@ -2439,10 +2510,16 @@ function EditorShell() {
                       type="button"
                       aria-label="Debug active Go file"
                       title="Start a debug session for the active Go file."
-                      disabled={debugUiState === "starting"}
+                      disabled={isDebugSessionBusy || runStatus === "running"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                      {debugUiState === "starting" ? "Starting..." : "Debug"}
+                      {debugUiState === "starting"
+                        ? "Starting..."
+                        : debugUiState === "stopping"
+                        ? "Stopping..."
+                        : isDebugSessionRunning
+                        ? "Debugging..."
+                        : "Debug"}
                     </button>
                   )}
                 </div>
