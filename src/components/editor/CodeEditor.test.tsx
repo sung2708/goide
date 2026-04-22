@@ -468,6 +468,40 @@ describe("CodeEditor", () => {
     expect(selectionSpy).toHaveBeenCalledWith(2);
   });
 
+  it("toggles breakpoint when clicking in the gutter", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    const gutter = document.createElement("div");
+    gutter.className = "cm-gutter";
+    editorContainer.appendChild(gutter);
+
+    fireEvent.mouseDown(gutter, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("does not toggle breakpoint on non-gutter clicks", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).not.toHaveBeenCalled();
+  });
+
   it("emits modifier-click line on Ctrl+click (non-Mac) and does not emit selection", () => {
     const originalPlatform = navigator.platform;
     Object.defineProperty(navigator, "platform", {
