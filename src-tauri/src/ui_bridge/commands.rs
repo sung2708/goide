@@ -10,8 +10,9 @@ use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
-    ConcurrencyConstructKindDto, DebuggerBreakpointDto, DebuggerStateDto,
-    DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
+    ConcurrencyConstructKindDto, DebugFailureDto, DebugSessionSnapshotDto,
+    DebugSessionStatusDto, DebuggerBreakpointDto, DebuggerStateDto, DeepTraceConstructKindDto,
+    DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
     DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
     RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
@@ -542,7 +543,8 @@ async fn start_debug_session_internal(
     let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
-            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+            let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
+            return ApiResponse::err(&failure.code, &failure.message);
         }
     };
 
@@ -550,13 +552,15 @@ async fn start_debug_session_internal(
         Ok(client) => client,
         Err(error) => {
             let _ = dap_process.child.kill().await;
-            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+            let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
+            return ApiResponse::err(&failure.code, &failure.message);
         }
     };
 
     if let Err(error) = client.initialize().await {
         let _ = dap_process.child.kill().await;
-        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+        let failure = map_debug_failure("debug_session_start_failed", &format!("{error:#}"));
+        return ApiResponse::err(&failure.code, &failure.message);
     }
 
     if let Err(error) = client
@@ -565,7 +569,8 @@ async fn start_debug_session_internal(
     {
         let _ = client.disconnect().await;
         let _ = dap_process.child.kill().await;
-        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+        let failure = map_debug_failure("debug_session_start_failed", &format!("{error:#}"));
+        return ApiResponse::err(&failure.code, &failure.message);
     }
 
     let signals_handle = get_runtime_signals_handle();
@@ -1009,10 +1014,65 @@ fn flatten_breakpoints(store: &RuntimeSignalStore) -> Vec<DebuggerBreakpointDto>
     items
 }
 
+fn map_debug_failure(code: &str, error: &str) -> DebugFailureDto {
+    let details = (!error.trim().is_empty()).then(|| error.trim().to_string());
+    let lower = error.to_ascii_lowercase();
+
+    match code {
+        "debug_session_start_failed" if lower.contains("dlv") || lower.contains("delve") => {
+            DebugFailureDto {
+                code: code.to_string(),
+                title: "Delve unavailable".to_string(),
+                message: "Delve is required to start a debug session. Install Delve and ensure it is available on PATH.".to_string(),
+                details,
+            }
+        }
+        "debug_session_start_failed" => DebugFailureDto {
+            code: code.to_string(),
+            title: "Debug session failed to start".to_string(),
+            message: "The debug session could not be started.".to_string(),
+            details,
+        },
+        _ => DebugFailureDto {
+            code: code.to_string(),
+            title: "Debug session error".to_string(),
+            message: "The debugger reported an unexpected error.".to_string(),
+            details,
+        },
+    }
+}
+
+fn map_debugger_state_snapshot(
+    session_active: bool,
+    store: &RuntimeSignalStore,
+) -> DebugSessionSnapshotDto {
+    let status = if !session_active {
+        if store.healthy {
+            DebugSessionStatusDto::Failed
+        } else {
+            DebugSessionStatusDto::Idle
+        }
+    } else if store.paused {
+        DebugSessionStatusDto::Paused
+    } else {
+        DebugSessionStatusDto::Running
+    };
+
+    let failure = matches!(status, DebugSessionStatusDto::Failed).then(|| {
+        map_debug_failure(
+            "debug_session_start_failed",
+            "Debug session became unavailable before a state snapshot could be read.",
+        )
+    });
+
+    DebugSessionSnapshotDto { status, failure }
+}
+
 fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> DebuggerStateDto {
+    let snapshot = map_debugger_state_snapshot(session_active, store);
     DebuggerStateDto {
-        session_active,
-        paused: store.paused,
+        session_active: !matches!(snapshot.status, DebugSessionStatusDto::Idle | DebugSessionStatusDto::Failed),
+        paused: matches!(snapshot.status, DebugSessionStatusDto::Paused),
         active_relative_path: store.active_relative_path.clone(),
         active_line: store.active_line,
         active_column: store.active_column,
@@ -2060,14 +2120,16 @@ mod tests {
     use super::{
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
-        get_runtime_signals_handle, get_workspace_branches, normalize_remote_branch_name,
-        parse_remote_ref, strip_error_prefix,
-        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
-        validate_go_completion_path, validate_go_diagnostics_path,
-        validate_workspace_scoped_go_path,
+        get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
+        map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
+        strip_error_prefix, switch_workspace_branch, validate_completion_cursor,
+        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
+        validate_workspace_scoped_go_path, RuntimeSignalStore,
     };
     use crate::integration::delve::{DapClient, LaunchMode};
-    use crate::ui_bridge::types::{SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto};
+    use crate::ui_bridge::types::{
+        DebugSessionStatusDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
+    };
     use serde_json::{json, Value};
     use std::collections::HashMap;
     use std::fs;
@@ -2278,6 +2340,61 @@ mod tests {
         );
         assert_eq!(normalize_remote_branch_name("origin/HEAD"), None);
         assert_eq!(normalize_remote_branch_name(""), None);
+    }
+
+    #[test]
+    fn map_debug_failure_reports_delve_unavailable_with_user_facing_message() {
+        let failure = map_debug_failure(
+            "debug_session_start_failed",
+            "failed to spawn `dlv` — is it installed and on PATH?",
+        );
+
+        assert_eq!(failure.code, "debug_session_start_failed");
+        assert_eq!(failure.title, "Delve unavailable");
+        assert!(failure.message.contains("Delve"));
+        assert_eq!(
+            failure.details.as_deref(),
+            Some("failed to spawn `dlv` — is it installed and on PATH?")
+        );
+    }
+
+    #[test]
+    fn map_debugger_state_snapshot_classifies_failed_idle_paused_and_running_states() {
+        let failed = map_debugger_state_snapshot(
+            false,
+            &RuntimeSignalStore {
+                healthy: true,
+                ..RuntimeSignalStore::default()
+            },
+        );
+        assert_eq!(failed.status, DebugSessionStatusDto::Failed);
+        assert!(failed.failure.is_some());
+
+        let idle = map_debugger_state_snapshot(false, &RuntimeSignalStore::default());
+        assert_eq!(idle.status, DebugSessionStatusDto::Idle);
+        assert!(idle.failure.is_none());
+
+        let paused = map_debugger_state_snapshot(
+            true,
+            &RuntimeSignalStore {
+                healthy: true,
+                paused: true,
+                ..RuntimeSignalStore::default()
+            },
+        );
+        assert_eq!(paused.status, DebugSessionStatusDto::Paused);
+        assert!(paused.failure.is_none());
+
+        let running = map_debugger_state_snapshot(
+            true,
+            &RuntimeSignalStore {
+                healthy: true,
+                paused: false,
+                ..RuntimeSignalStore::default()
+            },
+        );
+        assert_eq!(running.status, DebugSessionStatusDto::Running);
+        assert!(running.failure.is_none());
     }
 
     #[test]
