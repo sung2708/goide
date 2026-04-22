@@ -540,7 +540,7 @@ fn ensure_success(command: &str, response: &Value) -> Result<()> {
     Err(anyhow!("DAP command `{command}` failed: {combined}"))
 }
 
-async fn spawn_dlv_dap_with(
+pub(crate) async fn spawn_dlv_dap_with(
     command: &str,
     args: &[&str],
     workspace_root: &Path,
