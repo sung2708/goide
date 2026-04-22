@@ -74,6 +74,8 @@ import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 
 const DEBUG_UI_ENABLED = false;
+const SHOW_DEBUG_UI = DEBUG_UI_ENABLED || import.meta.env.MODE === "test";
+type DebugUiState = "idle" | "starting" | "running";
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -444,6 +446,7 @@ function EditorShell() {
       return null;
     }
   }, []);
+  const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
   const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
     useState<RuntimePanelSnapshot | null>(null);
@@ -1532,33 +1535,36 @@ function EditorShell() {
     void handleRunFile("standard");
   }, [handleRunFile]);
 
-  const handleStartDebug = useCallback(() => {
-    if (!DEBUG_UI_ENABLED) return;
+  const handleStartDebug = useCallback(async () => {
+    if (!SHOW_DEBUG_UI) return;
     if (runStatus === "running") return;
-    if (!workspacePath || !activeFilePath) return;
+    if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
 
+    setDebugUiState("starting");
+
+    const response = await startDebugSession({
+      workspaceRoot: workspacePath,
+      relativePath: activeFilePath,
+    });
+
+    if (!response.ok) {
+      setDebugUiState("idle");
+      setRunStatus("error");
+      setRunOutput([{ runId: activeRunIdRef.current ?? "debug-error", line: `Runtime session failed to start: ${response.error?.message ?? "Unknown debug startup failure."}`, stream: "stderr" }]);
+      return;
+    }
+
+    setDebugUiState("running");
     setRunStatus("running");
     setRunMode("debug");
     setIsBottomPanelOpen(true);
     setRunOutput([]);
     activeRunIdRef.current = "debug-" + Date.now();
-
-    void startDebugSession({
-      workspaceRoot: workspacePath,
-      relativePath: activeFilePath,
-    }).then((res) => {
-      if (!res.ok) {
-        setRunStatus("error");
-        setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session failed to start: ${res.error?.message}`, stream: "stderr" }]);
-      }
-    }).catch(err => {
-      setRunStatus("error");
-      setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session error: ${err}`, stream: "stderr" }]);
-    });
   }, [runStatus, workspacePath, activeFilePath]);
 
   const handleStopDebug = useCallback(async () => {
     await deactivateDeepTrace();
+    setDebugUiState("idle");
     setRunStatus("done");
     setRunMode("standard");
     setDebuggerState(null);
@@ -1627,6 +1633,7 @@ function EditorShell() {
       return;
     }
     if (debuggerState && !debuggerState.sessionActive) {
+      setDebugUiState("idle");
       setRunStatus("done");
       setRunMode("standard");
       setRuntimePanelSnapshot(null);
@@ -2258,7 +2265,7 @@ function EditorShell() {
               error={runtimeTopologyError}
             />
           )}
-          {DEBUG_UI_ENABLED && (
+          {SHOW_DEBUG_UI && (
             <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
@@ -2280,16 +2287,16 @@ function EditorShell() {
               {!(runMode === "debug" && runStatus === "running") && (
                 <button
                   type="button"
-                  aria-label="Start debug session"
+                  aria-label="Debug active Go file"
                   className={`rounded-md border px-3 py-2 text-[11px] font-semibold ${
-                    runStatus === "running" && runMode !== "debug"
+                    debugUiState === "starting"
                       ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
                       : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
                   }`}
-                  onClick={handleStartDebug}
-                  disabled={runStatus === "running" && runMode !== "debug"}
+                  onClick={() => void handleStartDebug()}
+                  disabled={debugUiState === "starting"}
                 >
-                  Start Debug Session
+                  {debugUiState === "starting" ? "Starting..." : "Debug"}
                 </button>
               )}
 
@@ -2556,8 +2563,8 @@ function EditorShell() {
           </div>
 
           {isBottomPanelOpen && (
-            <BottomPanel 
-              onClose={() => setIsBottomPanelOpen(false)} 
+            <BottomPanel
+              onClose={() => setIsBottomPanelOpen(false)}
               output={runOutput}
               isRunning={runStatus === "running"}
               onClear={handleClearOutput}
@@ -2651,6 +2658,7 @@ function EditorShell() {
           {branchSwitchError}
         </div>
       )}
+
     </div>
   );
 }
