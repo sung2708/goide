@@ -115,6 +115,17 @@ describe("BottomPanel", () => {
     expect(onRunWithRace).toHaveBeenCalledTimes(1);
   });
 
+  it("invokes onStop when stop is clicked during a running process", async () => {
+    const user = userEvent.setup();
+    const onStop = vi.fn();
+
+    render(<BottomPanel output={[]} isRunning onStop={onStop} />);
+
+    await user.click(screen.getByRole("button", { name: /stop/i }));
+
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the panel height bounded for long output", () => {
     render(<BottomPanel output={[]} />);
 

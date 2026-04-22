@@ -10,6 +10,7 @@ type BottomPanelProps = {
   onClear?: () => void;
   onRun?: () => void;
   onRunWithRace?: () => void;
+  onStop?: () => void;
   canRunWithRace?: boolean;
 };
 
@@ -20,6 +21,7 @@ function BottomPanel({
   onClear,
   onRun,
   onRunWithRace,
+  onStop,
   canRunWithRace = false,
 }: BottomPanelProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -72,6 +74,16 @@ function BottomPanel({
               title="Run the active Go file with race detection."
             >
               Run Race
+            </button>
+          )}
+          {onStop && isRunning && (
+            <button
+              type="button"
+              className="cursor-pointer rounded border border-[rgba(231,130,132,0.3)] bg-[rgba(231,130,132,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.16)]"
+              onClick={onStop}
+              title="Stop the current run."
+            >
+              Stop
             </button>
           )}
           {onClear && (

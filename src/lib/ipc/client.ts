@@ -94,6 +94,10 @@ export async function runWorkspaceFileWithRace(
   });
 }
 
+export async function stopCurrentRun(): Promise<ApiResponse<void>> {
+  return invoke<ApiResponse<void>>("stop_current_run");
+}
+
 export async function fetchWorkspaceDiagnostics(
   workspaceRoot: string,
   relativePath: string

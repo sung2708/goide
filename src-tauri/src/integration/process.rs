@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use crate::integration::command::tokio_command;
+use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -53,12 +53,26 @@ pub fn resolve_run_path(workspace_root: &str, relative_path: &str) -> Result<std
     Ok(target)
 }
 
-fn build_go_run_args(target: &Path, mode: RunMode) -> Vec<String> {
+fn to_package_run_target(workspace_root: &Path, target: &Path) -> String {
+    let package_dir = target.parent().unwrap_or(target);
+    if let Ok(relative_dir) = package_dir.strip_prefix(workspace_root) {
+        let normalized = relative_dir.to_string_lossy().replace('\\', "/");
+        if normalized.is_empty() || normalized == "." {
+            ".".to_string()
+        } else {
+            format!("./{normalized}")
+        }
+    } else {
+        package_dir.to_string_lossy().to_string()
+    }
+}
+
+fn build_go_run_args(workspace_root: &Path, target: &Path, mode: RunMode) -> Vec<String> {
     let mut args = vec!["run".to_string()];
     if mode == RunMode::Race {
         args.push("-race".to_string());
     }
-    args.push(target.to_string_lossy().to_string());
+    args.push(to_package_run_target(workspace_root, target));
     args
 }
 
@@ -103,8 +117,11 @@ pub async fn run_go_file<R: tauri::Runtime>(
         *guard = None;
     }
 
-    // Spawn go run <file> (optionally with -race)
-    let args = build_go_run_args(&target, mode);
+    // Spawn go run <package> (optionally with -race)
+    let workspace_root_path = Path::new(&workspace_root)
+        .canonicalize()
+        .with_context(|| format!("workspace root does not exist: {workspace_root}"))?;
+    let args = build_go_run_args(&workspace_root_path, &target, mode);
     let mut child = tokio_command("go")
         .args(&args)
         .current_dir(&workspace_root)
@@ -225,4 +242,52 @@ pub fn emit_run_failure<R: tauri::Runtime>(
             exit_code: Some(-1),
         },
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_go_run_args, to_package_run_target, RunMode};
+    use std::path::Path;
+
+    #[test]
+    fn converts_main_go_path_to_package_dir_relative_to_workspace() {
+        let workspace_root = Path::new("C:/repo");
+        let target = Path::new("C:/repo/cmd/app/main.go");
+
+        assert_eq!(to_package_run_target(workspace_root, target), "./cmd/app");
+    }
+
+    #[test]
+    fn uses_dot_for_workspace_root_package() {
+        let workspace_root = Path::new("C:/repo");
+        let target = Path::new("C:/repo/main.go");
+
+        assert_eq!(to_package_run_target(workspace_root, target), ".");
+    }
+
+    #[test]
+    fn builds_standard_run_args_from_package_dir() {
+        let workspace_root = Path::new("C:/repo");
+        let target = Path::new("C:/repo/cmd/app/main.go");
+
+        assert_eq!(
+            build_go_run_args(workspace_root, target, RunMode::Standard),
+            vec!["run".to_string(), "./cmd/app".to_string()]
+        );
+    }
+
+    #[test]
+    fn builds_race_run_args_from_package_dir() {
+        let workspace_root = Path::new("C:/repo");
+        let target = Path::new("C:/repo/cmd/app/main.go");
+
+        assert_eq!(
+            build_go_run_args(workspace_root, target, RunMode::Race),
+            vec![
+                "run".to_string(),
+                "-race".to_string(),
+                "./cmd/app".to_string()
+            ]
+        );
+    }
 }
