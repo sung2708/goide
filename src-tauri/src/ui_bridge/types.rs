@@ -125,36 +125,6 @@ pub struct StartDebugSessionRequestDto {
     pub relative_path: String,
 }
 
-/// Frontend-facing lifecycle snapshot for the rebuilt debug flow.
-/// Keep this aligned with the existing lower-level `DebuggerStateDto`, which
-/// remains the active debugger session state used by current debugger controls.
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DebugFailureDto {
-    pub code: String,
-    pub title: String,
-    pub message: String,
-    pub details: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct DebugSessionSnapshotDto {
-    pub status: DebugSessionStatusDto,
-    pub failure: Option<DebugFailureDto>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub enum DebugSessionStatusDto {
-    Idle,
-    Starting,
-    Running,
-    Paused,
-    Stopping,
-    Failed,
-}
-
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
@@ -246,6 +216,27 @@ pub struct DebuggerStateDto {
     pub active_line: Option<usize>,
     pub active_column: Option<usize>,
     pub breakpoints: Vec<DebuggerBreakpointDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugFailureDto {
+    pub code: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSessionSnapshotDto {
+    pub status: String,
+    pub paused: bool,
+    pub active_relative_path: Option<String>,
+    pub active_line: Option<usize>,
+    pub active_column: Option<usize>,
+    pub breakpoints: Vec<DebuggerBreakpointDto>,
+    pub failure: Option<DebugFailureDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
