@@ -290,7 +290,7 @@ describe("EditorShell debug controller", () => {
 
   it("keeps debug start disabled while stop is in progress", async () => {
     const user = userEvent.setup();
-    let resolveStop: (() => void) | null = null;
+    let resolveStop: () => void = () => {};
     deactivateDeepTraceMock.mockImplementation(
       () =>
         new Promise((resolve) => {
@@ -312,7 +312,7 @@ describe("EditorShell debug controller", () => {
     fireEvent.keyDown(window, { key: "F5" });
     expect(vi.mocked(startDebugSession)).toHaveBeenCalledTimes(1);
 
-    resolveStop?.();
+    resolveStop();
   });
 
   it("recovers from stop errors without remaining in stopping state", async () => {
