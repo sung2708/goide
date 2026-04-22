@@ -1459,6 +1459,9 @@ function EditorShell() {
   );
   
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
+    if (debugUiState === "starting") {
+      return;
+    }
     if (!workspacePath || !activeFilePath) return;
     const isRaceRun = modeToRun === "race";
     const runId =
@@ -1533,7 +1536,7 @@ function EditorShell() {
         stream: "stderr"
       }]);
     }
-  }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent]);
+  }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent, debugUiState]);
 
   const handleRunFileStandard = useCallback(() => {
     void handleRunFile("standard");
@@ -1593,7 +1596,10 @@ function EditorShell() {
     debugStopInFlightRef.current = true;
     setDebugUiState("stopping");
     try {
-      await deactivateDeepTrace();
+      const deactivateResponse = await deactivateDeepTrace();
+      if (!deactivateResponse.ok) {
+        throw new Error(deactivateResponse.error?.message ?? "Failed to stop debug session.");
+      }
       setDebugUiState("idle");
       setRunStatus("done");
       setRunMode("standard");
@@ -2468,7 +2474,7 @@ function EditorShell() {
                   {activeFilePath && (
                     <button
                       className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
-                        runStatus === "running"
+                        runStatus === "running" || debugUiState === "starting"
                           ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.35)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[rgba(127,176,142,0.35)] bg-[rgba(127,176,142,0.14)] text-[var(--green)] hover:bg-[rgba(127,176,142,0.22)]"
                       }`}
@@ -2476,7 +2482,7 @@ function EditorShell() {
                       type="button"
                       aria-label="Run active Go file"
                       title="Run the active Go file and show output in the terminal panel."
-                      disabled={runStatus === "running"}
+                      disabled={runStatus === "running" || debugUiState === "starting"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                       {runStatus === "running" ? "Running..." : "Run"}
@@ -2485,7 +2491,9 @@ function EditorShell() {
                   {isGoFile(activeFilePath) && runMode !== "debug" && (
                     <button
                       className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
-                        runStatus === "running" || runtimeAvailability === "unavailable"
+                        runStatus === "running" ||
+                        debugUiState === "starting" ||
+                        runtimeAvailability === "unavailable"
                           ? "border-[rgba(113,125,144,0.25)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[rgba(126,162,220,0.4)] text-[var(--blue)] hover:bg-[rgba(126,162,220,0.12)]"
                       }`}
@@ -2493,7 +2501,11 @@ function EditorShell() {
                       type="button"
                       aria-label="Run active Go file with race detector"
                       title="Run the active Go file with the Go race detector and surface confirmed race findings."
-                      disabled={runStatus === "running" || runtimeAvailability === "unavailable"}
+                      disabled={
+                        runStatus === "running" ||
+                        debugUiState === "starting" ||
+                        runtimeAvailability === "unavailable"
+                      }
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
                       {runStatus === "running" && runMode === "race" ? "Race..." : "Run Race"}

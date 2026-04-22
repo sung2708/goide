@@ -268,6 +268,31 @@ describe("EditorShell debug controller", () => {
     });
   });
 
+  it("disables run and race actions while debug start is in progress", async () => {
+    const user = userEvent.setup();
+    let resolveStart: () => void = () => {};
+    vi.mocked(startDebugSession).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveStart = () =>
+            resolve({ ok: true, data: { mode: "deep-trace", scopeKey: "runtime_session" } });
+        })
+    );
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: /^run active go file$/i })).toBeDisabled()
+    );
+    expect(screen.getByRole("button", { name: /run active go file with race detector/i })).toBeDisabled();
+
+    resolveStart();
+  });
+
   it("renders step controls when the debug session is paused", async () => {
     const user = userEvent.setup();
     render(<EditorShell />);
@@ -327,6 +352,29 @@ describe("EditorShell debug controller", () => {
 
     await screen.findByRole("button", { name: /stop debugging/i });
     fireEvent.keyDown(window, { key: "F5", shiftKey: true });
+
+    await waitFor(() => {
+      expect(screen.queryByText(/^Stopping$/i)).toBeNull();
+      expect(screen.getByRole("button", { name: /stop debugging/i })).toBeInTheDocument();
+    });
+  });
+
+  it("stays in debug session when stop returns non-ok response", async () => {
+    const user = userEvent.setup();
+    deactivateDeepTraceMock.mockResolvedValueOnce({
+      ok: false,
+      error: { message: "failed to stop debug" },
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await screen.findByRole("button", { name: /stop debugging/i });
+
+    fireEvent.keyDown(window, { key: "F5", shiftKey: true });
+    await waitFor(() => expect(deactivateDeepTraceMock).toHaveBeenCalledTimes(1));
 
     await waitFor(() => {
       expect(screen.queryByText(/^Stopping$/i)).toBeNull();
