@@ -21,6 +21,11 @@ import type {
   WorkspaceGitSnapshot,
   WorkspaceSearchFile,
   SwitchWorkspaceBranchRequest,
+  EnsureShellSessionRequest,
+  EnsureShellSessionResponse,
+  ShellInputRequest,
+  ShellResizeRequest,
+  DisposeShellSessionRequest,
 } from "./types";
 
 function hasTauriInternals(): boolean {
@@ -377,4 +382,69 @@ export async function switchWorkspaceBranch(
   return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
     request,
   });
+}
+
+// ---- Shell session client wrappers ----
+
+/**
+ * Ensure a shell session exists for the given workspace + editor session.
+ * Creates a new PTY session or returns the existing one.
+ *
+ * NOTE: The Rust/Tauri backend for this command is implemented in Task 4.
+ * This wrapper is intentionally a no-op guard: in non-Tauri environments
+ * (tests, browser), it returns a stable mock response so the frontend can
+ * be wired and tested without the backend.
+ */
+export async function ensureShellSession(
+  request: EnsureShellSessionRequest
+): Promise<ApiResponse<EnsureShellSessionResponse>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        shellSessionId: `shell:${request.editorSessionKey}`,
+        reused: false,
+        replay: "",
+      },
+    };
+  }
+  return invoke<ApiResponse<EnsureShellSessionResponse>>("ensure_shell_session", {
+    request,
+  });
+}
+
+/**
+ * Write raw PTY input to an active shell session.
+ */
+export async function writeShellInput(
+  request: ShellInputRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("write_shell_input", { request });
+}
+
+/**
+ * Notify the backend of a terminal resize for an active shell session.
+ */
+export async function resizeShellSession(
+  request: ShellResizeRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("resize_shell_session", { request });
+}
+
+/**
+ * Dispose (terminate) an active shell session.
+ */
+export async function disposeShellSession(
+  request: DisposeShellSessionRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("dispose_shell_session", { request });
 }

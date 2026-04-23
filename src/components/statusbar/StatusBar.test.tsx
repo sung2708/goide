@@ -135,6 +135,20 @@ describe("StatusBar completion availability", () => {
   });
 });
 
+describe("StatusBar TERMINAL button", () => {
+  it("shows the TERMINAL button with a title referencing Logs and Shell", () => {
+    renderStatusBar();
+
+    const terminalButton = screen.getByRole("button", { name: /terminal panel/i });
+    expect(terminalButton).toBeInTheDocument();
+    expect(terminalButton).toHaveTextContent("TERMINAL");
+    expect(terminalButton).toHaveAttribute(
+      "title",
+      "Show or hide the Logs and Shell terminal panel for the active editor session."
+    );
+  });
+});
+
 describe("StatusBar branch trigger", () => {
   it("renders current branch as a clickable switch trigger", () => {
     const onToggleBranchPicker = vi.fn();

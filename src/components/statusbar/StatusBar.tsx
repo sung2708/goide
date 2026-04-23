@@ -192,7 +192,7 @@ function StatusBar({
           <button
             type="button"
             aria-label={isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"}
-            title="Show or hide run and debug output for the active Go file."
+            title="Show or hide the Logs and Shell terminal panel for the active editor session."
             className={cn(
               "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
               isBottomPanelOpen
