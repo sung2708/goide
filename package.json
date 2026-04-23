@@ -9,7 +9,13 @@
     "type": "git",
     "url": "https://github.com/sung2708/goide.git"
   },
-  "keywords": ["go", "ide", "tauri", "react", "debugger"],
+  "keywords": [
+    "go",
+    "ide",
+    "tauri",
+    "react",
+    "debugger"
+  ],
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -33,6 +39,8 @@
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@uiw/react-codemirror": "^4.25.9",
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -304,3 +304,51 @@ export type SwitchWorkspaceBranchRequest = {
   preSwitchAction: "none" | "commit" | "stash" | "discard";
   commitMessage?: string | null;
 };
+
+// ---- Shell session IPC types ----
+
+/** Identifies which tab in the BottomPanel is active. */
+export type BottomPanelTab = "logs" | "shell";
+
+/** Request to create or reuse a shell session for a given editor session. */
+export type EnsureShellSessionRequest = {
+  workspaceRoot: string;
+  editorSessionKey: string;
+  cwdRelativePath?: string;
+};
+
+/** Response from ensureShellSession. */
+export type EnsureShellSessionResponse = {
+  shellSessionId: string;
+  reused: boolean;
+  /**
+   * Buffered PTY output to replay into a fresh xterm surface.
+   * Non-empty when `reused` is true and the session has prior output.
+   * Empty string for brand-new sessions.
+   */
+  replay: string;
+};
+
+/** Send raw PTY input data to an active shell session. */
+export type ShellInputRequest = {
+  shellSessionId: string;
+  data: string;
+};
+
+/** Notify the backend of a terminal resize for an active shell session. */
+export type ShellResizeRequest = {
+  shellSessionId: string;
+  cols: number;
+  rows: number;
+};
+
+/** Dispose (terminate) an active shell session. */
+export type DisposeShellSessionRequest = {
+  shellSessionId: string;
+};
+
+/** Event payload for shell output arriving from the backend. */
+export type ShellOutputPayload = {
+  shellSessionId: string;
+  data: string;
+};
