@@ -411,3 +411,62 @@ pub struct DiagnosticsResponseDto {
     pub diagnostics: Vec<EditorDiagnosticDto>,
     pub tooling_availability: DiagnosticsToolingAvailabilityDto,
 }
+
+// ---------------------------------------------------------------------------
+// Shell session DTOs
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureShellSessionRequestDto {
+    pub workspace_root: String,
+    pub editor_session_key: String,
+    pub cwd_relative_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureShellSessionResponseDto {
+    pub shell_session_id: String,
+    pub reused: bool,
+    /// Buffered PTY output from the session to replay into a fresh xterm surface.
+    /// Empty string for brand-new sessions; contains prior output for reused sessions.
+    pub replay: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellInputRequestDto {
+    pub shell_session_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellResizeRequestDto {
+    pub shell_session_id: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DisposeShellSessionRequestDto {
+    pub shell_session_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellOutputPayloadDto {
+    pub shell_session_id: String,
+    pub data: String,
+}
+
+/// Event emitted when a PTY reader loop ends unexpectedly (shell exited on its
+/// own, not via an explicit dispose call).  The frontend uses this to surface
+/// a disconnected / retry state inside the Shell tab.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellExitPayloadDto {
+    pub shell_session_id: String,
+}

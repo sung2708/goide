@@ -40,7 +40,11 @@ pub fn run() {
             ui_bridge::commands::search_workspace_text,
             ui_bridge::commands::get_workspace_git_snapshot,
             ui_bridge::commands::get_workspace_branches,
-            ui_bridge::commands::switch_workspace_branch
+            ui_bridge::commands::switch_workspace_branch,
+            ui_bridge::commands::ensure_shell_session,
+            ui_bridge::commands::write_shell_input,
+            ui_bridge::commands::resize_shell_session,
+            ui_bridge::commands::dispose_shell_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

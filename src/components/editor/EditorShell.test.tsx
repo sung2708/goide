@@ -12,29 +12,60 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: vi.fn().mockResolvedValue(null),
 }));
 
+// xterm cannot run in jsdom (no matchMedia / canvas). Mock at the module level
+// so that LogsTerminalView (rendered inside BottomPanel) doesn't crash.
+vi.mock("@xterm/xterm", () => ({
+  Terminal: vi.fn().mockImplementation(() => ({
+    open: vi.fn(),
+    write: vi.fn(),
+    clear: vi.fn(),
+    loadAddon: vi.fn(),
+    dispose: vi.fn(),
+    onData: vi.fn(() => ({ dispose: vi.fn() })),
+    cols: 120,
+    rows: 40,
+  })),
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
+}));
+
 describe("EditorShell panels", () => {
   it("keeps optional panels hidden by default and toggles them on demand", async () => {
     const user = userEvent.setup();
 
     render(<EditorShell />);
 
+    // SummaryPeek is conditionally rendered (not in DOM when hidden)
     expect(screen.queryByTestId("summary-panel")).toBeNull();
-    expect(screen.queryByTestId("bottom-panel")).toBeNull();
+
+    // BottomPanel is always mounted to preserve ShellTerminalView's xterm
+    // instance across hide/show cycles.  When hidden, the wrapping div has
+    // the HTML `hidden` attribute; the section with data-testid="bottom-panel"
+    // is always in the DOM.
+    const bottomPanelEl = screen.getByTestId("bottom-panel");
+    expect(bottomPanelEl).toBeInTheDocument();
+    // The wrapping div added by EditorShell should be hidden initially
+    expect(bottomPanelEl.closest("[hidden]")).not.toBeNull();
 
     const summaryBtn = screen.getByRole("button", { name: /summary/i });
-    const bottomBtn = screen.getByRole("button", { name: /terminal/i });
+    const bottomBtn = screen.getByRole("button", { name: /show terminal panel/i });
 
     await user.click(summaryBtn);
     expect(screen.getByTestId("summary-panel")).toBeInTheDocument();
 
     await user.click(bottomBtn);
-    expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+    // After opening, the hidden wrapper is removed — panel is visible
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
     await user.click(screen.getAllByRole("button", { name: /hide/i })[0]);
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
+    // Click Hide inside the BottomPanel to close it
     await user.click(screen.getByRole("button", { name: /^hide$/i }));
-    expect(screen.queryByTestId("bottom-panel")).toBeNull();
+    // Panel is hidden again (wrapper div has hidden attribute)
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });
 
   it("shows default status indicators", () => {

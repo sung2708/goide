@@ -30,10 +30,12 @@ import {
   debuggerToggleBreakpoint,
   startDebugSession,
   searchWorkspaceText,
+  stopCurrentRun,
 } from "../../lib/ipc/client";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type {
   ApiResponse,
+  BottomPanelTab,
   CompletionItem,
   DeepTraceConstructKind,
   DebugFailure,
@@ -407,6 +409,7 @@ function EditorShell() {
   const [isReading, setIsReading] = useState(false);
   const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab>("logs");
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
     "quick-insight"
   );
@@ -1487,6 +1490,7 @@ function EditorShell() {
         };
         setRaceSignals([]);
         setIsBottomPanelOpen(true);
+        setBottomPanelTab("logs");
         setRunOutput([
           {
             runId,
@@ -1502,6 +1506,7 @@ function EditorShell() {
     setRunStatus("running");
     setRunMode(modeToRun);
     setIsBottomPanelOpen(true);
+    setBottomPanelTab("logs");
     raceRunCaptureRef.current = {
       isRaceRun,
       sawWarning: false,
@@ -1871,6 +1876,15 @@ function EditorShell() {
 
   const handleClearOutput = useCallback(() => {
     setRunOutput([]);
+    setBottomPanelTab("logs");
+  }, []);
+
+  const handleStopRun = useCallback(() => {
+    // Clear the active run ID immediately so trailing exit events from the
+    // stopped run cannot attach to the next run.
+    activeRunIdRef.current = null;
+    void stopCurrentRun();
+    setRunStatus((current) => (current === "running" ? "done" : current));
   }, []);
 
   useEffect(() => {
@@ -2283,6 +2297,38 @@ function EditorShell() {
     return `${baseName}${isDirty ? " *" : ""}`;
   }, [activeFilePath, isDirty]);
 
+  /**
+   * Stable session key for the shell tied to the currently open file.
+   * Format: `editor:<relativePath>` or null when no file is open.
+   *
+   * EDITOR-SESSION IDENTITY (current single-file UI):
+   * Until a real editor-tab model with persistent tab identifiers exists,
+   * `activeFilePath` serves as the session identity surrogate.  Opening the
+   * same file again after switching away will produce the same key and
+   * therefore restore the same backend PTY session (shell restoration).
+   * Switching to a different file changes the key and therefore switches to
+   * (or creates) a separate shell session for that file.  Disposal of known
+   * sessions is triggered at the workspace lifecycle level, not on file
+   * switches, so per-file shells remain alive across file changes within the
+   * same workspace.
+   */
+  const editorSessionKey = activeFilePath ? `editor:${activeFilePath}` : null;
+
+  /**
+   * The directory portion of activeFilePath, used as the shell's initial cwd.
+   * Falls back to "." when no path separator is found (root-level file).
+   */
+  const shellCwdRelativePath = useMemo(() => {
+    if (!activeFilePath) {
+      return ".";
+    }
+    const lastSep = Math.max(
+      activeFilePath.lastIndexOf("/"),
+      activeFilePath.lastIndexOf("\\")
+    );
+    return lastSep > 0 ? activeFilePath.slice(0, lastSep) : ".";
+  }, [activeFilePath]);
+
   return (
     <div
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
@@ -2674,17 +2720,27 @@ function EditorShell() {
             )}
           </div>
 
-          {isBottomPanelOpen && (
-            <BottomPanel 
-              onClose={() => setIsBottomPanelOpen(false)} 
-              output={runOutput}
+          {/* BottomPanel stays mounted across hide/show so ShellTerminalView
+              and its xterm instance survive panel visibility changes without
+              reconnecting.  Visibility is toggled via the `hidden` HTML
+              attribute rather than conditional rendering. */}
+          <div hidden={!isBottomPanelOpen}>
+            <BottomPanel
+              activeTab={bottomPanelTab}
+              onActiveTabChange={setBottomPanelTab}
+              logEntries={runOutput}
+              shellSessionKey={editorSessionKey}
+              shellCwdRelativePath={shellCwdRelativePath}
+              workspacePath={workspacePath}
+              onClose={() => setIsBottomPanelOpen(false)}
               isRunning={runStatus === "running"}
               onClear={handleClearOutput}
               onRun={handleRunFileStandard}
               onRunWithRace={handleRunFileWithRace}
+              onStop={handleStopRun}
               canRunWithRace={runtimeAvailability !== "unavailable"}
             />
-          )}
+          </div>
         </div>
       </div>
 

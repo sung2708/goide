@@ -6,6 +6,10 @@ use crate::integration::command::std_command;
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
+use crate::integration::shell::{
+    dispose_shell_session_inner, ensure_shell_session_inner, resize_shell_session_inner,
+    write_shell_input_inner, ShellSessionState, ShellSessionStore,
+};
 use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
@@ -19,6 +23,8 @@ use crate::ui_bridge::types::{
     ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto,
     WorkspaceGitChangedFileSummaryDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
     WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    DisposeShellSessionRequestDto, EnsureShellSessionRequestDto, EnsureShellSessionResponseDto,
+    ShellInputRequestDto, ShellResizeRequestDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -2314,6 +2320,83 @@ fn validate_workspace_scoped_go_path(
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Shell session – global store and Tauri commands
+// ---------------------------------------------------------------------------
+
+static SHELL_SESSIONS: std::sync::OnceLock<ShellSessionStore> = std::sync::OnceLock::new();
+
+fn get_shell_sessions_handle() -> ShellSessionStore {
+    SHELL_SESSIONS
+        .get_or_init(|| Arc::new(Mutex::new(ShellSessionState::default())))
+        .clone()
+}
+
+#[tauri::command]
+pub async fn ensure_shell_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: EnsureShellSessionRequestDto,
+) -> ApiResponse<EnsureShellSessionResponseDto> {
+    match ensure_shell_session_inner(
+        app,
+        get_shell_sessions_handle(),
+        &request.workspace_root,
+        &request.editor_session_key,
+        request.cwd_relative_path.as_deref(),
+    )
+    .await
+    {
+        Ok(response) => ApiResponse::ok(EnsureShellSessionResponseDto {
+            shell_session_id: response.shell_session_id,
+            reused: response.reused,
+            replay: response.replay,
+        }),
+        Err(error) => ApiResponse::err("shell_session_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn write_shell_input(request: ShellInputRequestDto) -> ApiResponse<()> {
+    match write_shell_input_inner(
+        get_shell_sessions_handle(),
+        &request.shell_session_id,
+        &request.data,
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_input_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn resize_shell_session(request: ShellResizeRequestDto) -> ApiResponse<()> {
+    match resize_shell_session_inner(
+        get_shell_sessions_handle(),
+        &request.shell_session_id,
+        request.cols,
+        request.rows,
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_resize_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn dispose_shell_session(request: DisposeShellSessionRequestDto) -> ApiResponse<()> {
+    match dispose_shell_session_inner(
+        get_shell_sessions_handle(),
+        &request.shell_session_id,
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_dispose_failed", &error.to_string()),
+    }
 }
 
 #[cfg(test)]
