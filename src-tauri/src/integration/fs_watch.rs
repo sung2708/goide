@@ -293,7 +293,6 @@ mod tests {
             .collect()
     }
 
-    #[test]
     #[tokio::test]
     async fn fs_watch_prefers_watch_when_watcher_starts_successfully() {
         let service = FsWatchService::new_for_test(true, false);
