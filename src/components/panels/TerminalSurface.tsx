@@ -21,6 +21,8 @@ const DEFAULT_OPTIONS: TerminalCtorOptions = {
   scrollback: 5000,
 };
 
+export type TerminalFocusOwner = "editor" | "terminal";
+
 export type TerminalSurfaceProps = {
   /** Called once the terminal is mounted, giving the caller access to the Terminal instance. */
   onMount?: (terminal: Terminal) => void;
@@ -30,6 +32,8 @@ export type TerminalSurfaceProps = {
   onData?: (data: string) => void;
   /** Optional callback invoked after each fit-addon resize cycle. */
   onResize?: (cols: number, rows: number) => void;
+  /** Optional callback for terminal/editor focus ownership transitions. */
+  onFocusOwnerChange?: (owner: TerminalFocusOwner) => void;
   /**
    * Optional terminal options merged on top of the component defaults.
    * Lets callers override individual settings (e.g. fontSize, scrollback)
@@ -68,6 +72,7 @@ function TerminalSurface({
   readOnly = false,
   onData,
   onResize,
+  onFocusOwnerChange,
   options,
   className,
 }: TerminalSurfaceProps) {
@@ -185,8 +190,11 @@ function TerminalSurface({
   return (
     <div
       ref={containerRef}
+      data-testid="terminal-surface-host"
       className={className}
       style={{ width: "100%", height: "100%" }}
+      onFocus={() => onFocusOwnerChange?.("terminal")}
+      onBlur={() => onFocusOwnerChange?.("editor")}
     />
   );
 }
