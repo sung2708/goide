@@ -15,6 +15,13 @@ export type FsEntry = {
   isDir: boolean;
 };
 
+export type WorkspaceFsSyncMode = "watch" | "polling";
+
+export type StartWorkspaceFsWatchResponse = {
+  workspaceRoot: string;
+  mode: WorkspaceFsSyncMode;
+};
+
 export type ConcurrencyConstructKind =
   | "channel"
   | "select"
