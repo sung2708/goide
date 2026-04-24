@@ -76,6 +76,8 @@ import BranchPicker from "../panels/BranchPicker";
 import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 import DebugFailureDialog from "../panels/DebugFailureDialog";
+import ResizableSplit from "../layout/ResizableSplit";
+import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceLayout } from "../../features/layout/useWorkspaceLayout";
 
 const DEBUG_UI_ENABLED = true;
 
@@ -478,6 +480,7 @@ function EditorShell() {
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
+  const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
     left: number;
@@ -2039,6 +2042,16 @@ function EditorShell() {
     }
   }, [paletteReturnFocusEl]);
 
+  const handleTerminalPaneResize = useCallback(
+    (size: number) => {
+      workspaceLayout.setSplitSizes({
+        left: workspaceLayout.splitSizes.left,
+        terminal: size,
+      });
+    },
+    [workspaceLayout]
+  );
+
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
       return;
@@ -2492,8 +2505,42 @@ function EditorShell() {
           )}
         </aside>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 overflow-hidden">
+        <div className="flex min-w-0 flex-1">
+          <ResizableSplit
+            orientation={workspaceLayout.dockMode === "bottom" ? "vertical" : "horizontal"}
+            className={
+              workspaceLayout.dockMode === "bottom"
+                ? "flex-1 flex-col-reverse"
+                : "flex-1 flex-row-reverse"
+            }
+            size={isBottomPanelOpen ? workspaceLayout.splitSizes.terminal : 0}
+            defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminal}
+            minSize={isBottomPanelOpen ? 240 : 0}
+            maxSize={workspaceLayout.dockMode === "bottom" ? 520 : 780}
+            onResize={handleTerminalPaneResize}
+            primary={
+              <div hidden={!isBottomPanelOpen} className="h-full min-h-0 min-w-0">
+                <BottomPanel
+                  activeTab={bottomPanelTab}
+                  onActiveTabChange={setBottomPanelTab}
+                  logEntries={runOutput}
+                  shellSessionKey={editorSessionKey}
+                  shellCwdRelativePath={shellCwdRelativePath}
+                  workspacePath={workspacePath}
+                  dockMode={workspaceLayout.dockMode}
+                  onDockModeChange={workspaceLayout.setDockMode}
+                  onClose={() => setIsBottomPanelOpen(false)}
+                  isRunning={runStatus === "running"}
+                  onClear={handleClearOutput}
+                  onRun={handleRunFileStandard}
+                  onRunWithRace={handleRunFileWithRace}
+                  onStop={handleStopRun}
+                  canRunWithRace={runtimeAvailability !== "unavailable"}
+                />
+              </div>
+            }
+            secondary={
+              <div className="flex min-h-0 flex-1 overflow-hidden">
             <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
                 <div className="flex items-center gap-2">
@@ -2718,29 +2765,9 @@ function EditorShell() {
                 onClose={() => setIsSummaryOpen(false)}
               />
             )}
-          </div>
-
-          {/* BottomPanel stays mounted across hide/show so ShellTerminalView
-              and its xterm instance survive panel visibility changes without
-              reconnecting.  Visibility is toggled via the `hidden` HTML
-              attribute rather than conditional rendering. */}
-          <div hidden={!isBottomPanelOpen}>
-            <BottomPanel
-              activeTab={bottomPanelTab}
-              onActiveTabChange={setBottomPanelTab}
-              logEntries={runOutput}
-              shellSessionKey={editorSessionKey}
-              shellCwdRelativePath={shellCwdRelativePath}
-              workspacePath={workspacePath}
-              onClose={() => setIsBottomPanelOpen(false)}
-              isRunning={runStatus === "running"}
-              onClear={handleClearOutput}
-              onRun={handleRunFileStandard}
-              onRunWithRace={handleRunFileWithRace}
-              onStop={handleStopRun}
-              canRunWithRace={runtimeAvailability !== "unavailable"}
-            />
-          </div>
+              </div>
+            }
+          />
         </div>
       </div>
 
