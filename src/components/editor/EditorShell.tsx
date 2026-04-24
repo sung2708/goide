@@ -465,7 +465,7 @@ function EditorShell() {
   const [completionAvailability, setCompletionAvailability] =
     useState<CompletionIndicatorState>("idle");
   const [isDirty, setIsDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
+  const [activeTab, setActiveTab] = useState<ActivityBarTab>("search");
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
