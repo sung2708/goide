@@ -7,7 +7,7 @@
  */
 
 import { render, screen, waitFor } from "@testing-library/react";
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -105,6 +105,9 @@ vi.mock("../panels/BottomPanel", () => ({
     const onActiveTabChange = props.onActiveTabChange as (tab: string) => void;
     const onStop = props.onStop as (() => void) | undefined;
     const onClose = props.onClose as (() => void) | undefined;
+    const onDockModeChange = props.onDockModeChange as
+      | ((mode: "bottom" | "right") => void)
+      | undefined;
     return (
       <div data-testid="bottom-panel">
         <span data-testid="active-tab">{activeTab}</span>
@@ -119,6 +122,36 @@ vi.mock("../panels/BottomPanel", () => ({
         <button type="button" onClick={() => onClose?.()} aria-label="Close bottom panel">
           Close
         </button>
+        <button
+          type="button"
+          onClick={() => onDockModeChange?.("right")}
+          aria-label="Dock right"
+        >
+          Dock Right
+        </button>
+      </div>
+    );
+  },
+}));
+
+vi.mock("../layout/ResizableSplit", () => ({
+  default: (props: Record<string, unknown>) => {
+    const onResize = props.onResize as (size: number) => void;
+    return (
+      <div
+        data-testid="resizable-split"
+        data-orientation={props.orientation as string}
+        data-size={String(props.size)}
+        data-default-size={String(props.defaultSize)}
+        data-min-size={String(props.minSize)}
+        data-max-size={String(props.maxSize)}
+        data-class-name={(props.className as string | undefined) ?? ""}
+      >
+        <div data-testid="split-primary">{props.primary as ReactNode}</div>
+        <button type="button" onClick={() => onResize(456)} aria-label="Resize terminal">
+          Resize
+        </button>
+        <div data-testid="split-secondary">{props.secondary as ReactNode}</div>
       </div>
     );
   },
@@ -128,6 +161,7 @@ describe("EditorShell terminal wiring", () => {
   beforeEach(() => {
     capturedBottomPanelProps = null;
     bottomPanelMountCount = 0;
+    localStorage.clear();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     getRuntimeAvailabilityMock.mockResolvedValue({
@@ -354,5 +388,67 @@ describe("EditorShell terminal wiring", () => {
 
     expect(screen.getByTestId("shell-session-key")).toHaveTextContent("editor:main.go");
     expect(capturedBottomPanelProps?.shellSessionKey).toBe("editor:main.go");
+  });
+
+  it("renders bottom-docked terminal through a vertical splitter with the default terminal size", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+
+    const split = await screen.findByTestId("resizable-split");
+    expect(split).toHaveAttribute("data-orientation", "vertical");
+    expect(split).toHaveAttribute("data-size", "320");
+    expect(split).toHaveAttribute("data-default-size", "320");
+    expect(split).toHaveAttribute("data-class-name", expect.stringContaining("flex-col-reverse"));
+    expect(capturedBottomPanelProps?.dockMode).toBe("bottom");
+    expect(capturedBottomPanelProps?.onDockModeChange).toEqual(expect.any(Function));
+  });
+
+  it("switches to right dock, uses horizontal splitter, and restores persisted terminal size", async () => {
+    const user = userEvent.setup();
+    const { unmount } = render(<EditorShell />);
+
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+
+    await user.click(screen.getByRole("button", { name: /dock right/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
+        "data-orientation",
+        "horizontal"
+      );
+    });
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "320");
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute(
+      "data-class-name",
+      expect.stringContaining("flex-row-reverse")
+    );
+    expect(capturedBottomPanelProps?.dockMode).toBe("right");
+
+    await user.click(screen.getByRole("button", { name: /resize terminal/i }));
+    await waitFor(() => {
+      expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
+    });
+
+    unmount();
+    capturedBottomPanelProps = null;
+
+    render(<EditorShell />);
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
+        "data-orientation",
+        "horizontal"
+      );
+    });
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
+    expect((capturedBottomPanelProps as { dockMode?: unknown } | null)?.dockMode).toBe("right");
   });
 });
