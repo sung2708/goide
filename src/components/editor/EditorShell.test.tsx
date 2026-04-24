@@ -3,6 +3,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -32,6 +33,21 @@ vi.mock("@xterm/addon-fit", () => ({
 }));
 
 describe("EditorShell panels", () => {
+  it("shows search panel by default and hides summary/runtime/git by default", () => {
+    render(<EditorShell />);
+
+    expect(screen.getByPlaceholderText(/search workspace/i)).toBeVisible();
+    expect(screen.queryByTestId("summary-panel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /git/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+    expect(screen.getByRole("button", { name: /concurrency signals/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+  });
+
   it("keeps optional panels hidden by default and toggles them on demand", async () => {
     const user = userEvent.setup();
 
@@ -59,7 +75,8 @@ describe("EditorShell panels", () => {
     // After opening, the hidden wrapper is removed — panel is visible
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
-    await user.click(screen.getAllByRole("button", { name: /hide/i })[0]);
+    const summaryPanel = screen.getByTestId("summary-panel");
+    await user.click(within(summaryPanel).getByRole("button", { name: /^hide$/i }));
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
     // Click Hide inside the BottomPanel to close it
