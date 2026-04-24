@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { cn } from "../../lib/utils/cn";
+import type { DockMode } from "../../features/layout/useWorkspaceLayout";
 import type { BottomPanelTab, RunOutputPayload } from "../../lib/ipc/types";
 import AlertDialog from "../primitives/AlertDialog";
 import LogsTerminalView from "./LogsTerminalView";
@@ -22,6 +23,8 @@ type BottomPanelProps = {
   onRunWithRace?: () => void;
   onStop?: () => void;
   canRunWithRace?: boolean;
+  dockMode?: DockMode;
+  onDockModeChange?: (mode: DockMode) => void;
 };
 
 function BottomPanel({
@@ -38,6 +41,8 @@ function BottomPanel({
   onRunWithRace,
   onStop,
   canRunWithRace = false,
+  dockMode = "bottom",
+  onDockModeChange,
 }: BottomPanelProps) {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
 
@@ -46,12 +51,23 @@ function BottomPanel({
   const tabActive = "bg-[var(--bg-active)] text-[var(--lavender)]";
   const tabInactive =
     "text-[var(--overlay1)] hover:text-[var(--subtext1)] hover:bg-[var(--bg-hover)]";
+  const dockButtonBase =
+    "rounded-sm border px-2 py-1 text-[11px] font-semibold transition-colors duration-100";
+  const dockButtonActive =
+    "border-[rgba(140,170,238,0.45)] bg-[rgba(140,170,238,0.12)] text-[var(--blue)]";
+  const dockButtonInactive =
+    "border-[var(--border-subtle)] text-[var(--overlay1)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]";
 
   return (
     <section
       id="bottom-panel"
       aria-label="Bottom panel"
-      className="relative z-40 flex max-h-[40vh] min-h-[11rem] flex-col border-t border-[var(--border-muted)] bg-[var(--mantle)]"
+      className={cn(
+        "relative z-40 flex flex-col bg-[var(--mantle)]",
+        dockMode === "right"
+          ? "h-full min-h-0 border-l border-[var(--border-muted)]"
+          : "max-h-[40vh] min-h-[11rem] border-t border-[var(--border-muted)]"
+      )}
       data-testid="bottom-panel"
     >
       {/* Header: tabs + logs-scoped action buttons */}
@@ -84,62 +100,95 @@ function BottomPanel({
           )}
         </div>
 
-        {/* Action buttons — only shown on the Logs tab */}
-        {activeTab === "logs" && (
-          <div className="flex max-w-full items-center gap-1.5 overflow-x-auto pb-0.5">
-            {onRun && !isRunning && (
+        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto pb-0.5">
+          {onDockModeChange && (
+            <div className="flex items-center gap-1" aria-label="Dock mode">
               <button
                 type="button"
-                className="cursor-pointer rounded border border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.16)]"
-                onClick={onRun}
-                title="Run the active Go file again."
+                aria-label="Dock bottom"
+                aria-pressed={dockMode === "bottom"}
+                className={cn(
+                  dockButtonBase,
+                  dockMode === "bottom" ? dockButtonActive : dockButtonInactive
+                )}
+                onClick={() => onDockModeChange("bottom")}
+                title="Dock terminal at bottom."
               >
-                Run Again
+                Bottom
               </button>
-            )}
-            {onRunWithRace && !isRunning && (
               <button
                 type="button"
-                className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.06)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.12)] disabled:cursor-not-allowed disabled:opacity-40"
-                onClick={onRunWithRace}
-                disabled={!canRunWithRace}
-                title="Run the active Go file with race detection."
+                aria-label="Dock right"
+                aria-pressed={dockMode === "right"}
+                className={cn(
+                  dockButtonBase,
+                  dockMode === "right" ? dockButtonActive : dockButtonInactive
+                )}
+                onClick={() => onDockModeChange("right")}
+                title="Dock terminal on right."
               >
-                Run Race
+                Right
               </button>
-            )}
-            {onStop && isRunning && (
-              <button
-                type="button"
-                className="cursor-pointer rounded border border-[rgba(231,130,132,0.3)] bg-[rgba(231,130,132,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.16)]"
-                onClick={onStop}
-                title="Stop the current run."
-              >
-                Stop
-              </button>
-            )}
-            {onClear && (
-              <button
-                type="button"
-                className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                onClick={() => setIsClearConfirmOpen(true)}
-                title="Clear terminal output."
-              >
-                Clear
-              </button>
-            )}
-            {onClose && (
-              <button
-                type="button"
-                className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                onClick={onClose}
-                title="Hide the terminal panel."
-              >
-                Hide
-              </button>
-            )}
-          </div>
-        )}
+            </div>
+          )}
+
+          {/* Logs-scoped action buttons */}
+          {activeTab === "logs" && (
+            <>
+              {onRun && !isRunning && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.16)]"
+                  onClick={onRun}
+                  title="Run the active Go file again."
+                >
+                  Run Again
+                </button>
+              )}
+              {onRunWithRace && !isRunning && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.06)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.12)] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={onRunWithRace}
+                  disabled={!canRunWithRace}
+                  title="Run the active Go file with race detection."
+                >
+                  Run Race
+                </button>
+              )}
+              {onStop && isRunning && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[rgba(231,130,132,0.3)] bg-[rgba(231,130,132,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.16)]"
+                  onClick={onStop}
+                  title="Stop the current run."
+                >
+                  Stop
+                </button>
+              )}
+              {onClear && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                  onClick={() => setIsClearConfirmOpen(true)}
+                  title="Clear terminal output."
+                >
+                  Clear
+                </button>
+              )}
+              {onClose && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                  onClick={onClose}
+                  title="Hide the terminal panel."
+                >
+                  Hide
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Tab content — both panels stay mounted so ShellTerminalView keeps its PTY
