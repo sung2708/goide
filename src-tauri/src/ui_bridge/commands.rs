@@ -4,6 +4,7 @@ use crate::core::analysis::causal::{
 use crate::integration::command::std_command;
 use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
+use crate::integration::fs_watch::{FsWatchMode, FsWatchService};
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
 use crate::integration::shell::{
@@ -20,11 +21,11 @@ use crate::ui_bridge::types::{
     EnsureShellSessionRequestDto, EnsureShellSessionResponseDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
     RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ShellInputRequestDto,
-    ShellResizeRequestDto, StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto,
-    ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
-    WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto, WorkspaceGitChangedFileDto,
-    WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
-    WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    ShellResizeRequestDto, StartDebugSessionRequestDto, StartWorkspaceFsWatchResponseDto,
+    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
+    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
+    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto,
+    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -47,6 +48,7 @@ static DAP_SESSION_HANDLE: std::sync::OnceLock<Arc<Mutex<Option<DapSessionHandle
     std::sync::OnceLock::new();
 static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<RuntimeSignalStore>>> =
     std::sync::OnceLock::new();
+static FS_WATCH_SERVICE: std::sync::OnceLock<FsWatchService> = std::sync::OnceLock::new();
 
 #[derive(Default)]
 struct RuntimeSignalStore {
@@ -91,6 +93,10 @@ fn get_runtime_signals_handle() -> Arc<Mutex<RuntimeSignalStore>> {
     RUNTIME_SIGNALS
         .get_or_init(|| Arc::new(Mutex::new(RuntimeSignalStore::default())))
         .clone()
+}
+
+fn get_fs_watch_service() -> FsWatchService {
+    FS_WATCH_SERVICE.get_or_init(FsWatchService::new).clone()
 }
 
 fn is_blocked_wait_reason(wait_reason: &str) -> bool {
@@ -217,6 +223,25 @@ pub async fn write_workspace_file(
         Ok(Ok(())) => ApiResponse::ok(()),
         Ok(Err(error)) => ApiResponse::err("fs_write_failed", &error.to_string()),
         Err(error) => ApiResponse::err("fs_write_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn start_workspace_fs_watch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_root: String,
+) -> ApiResponse<StartWorkspaceFsWatchResponseDto> {
+    let service = get_fs_watch_service();
+    let root = PathBuf::from(workspace_root);
+    match service.start(app, &root).await {
+        Ok(result) => ApiResponse::ok(StartWorkspaceFsWatchResponseDto {
+            workspace_root: result.workspace_root,
+            mode: match result.mode {
+                FsWatchMode::Watch => WorkspaceFsSyncModeDto::Watch,
+                FsWatchMode::Polling => WorkspaceFsSyncModeDto::Polling,
+            },
+        }),
+        Err(error) => ApiResponse::err("fs_watch_start_failed", &error.to_string()),
     }
 }
 

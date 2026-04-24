@@ -11,6 +11,7 @@ pub fn run() {
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
             ui_bridge::commands::write_workspace_file,
+            ui_bridge::commands::start_workspace_fs_watch,
             ui_bridge::commands::create_workspace_file,
             ui_bridge::commands::create_workspace_folder,
             ui_bridge::commands::delete_workspace_entry,

@@ -20,6 +20,7 @@ import {
   fetchWorkspaceDiagnostics,
   getWorkspaceGitSnapshot,
   getWorkspaceBranches,
+  startWorkspaceFsWatch,
   switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
@@ -153,6 +154,10 @@ function nextPollingDelay(failureCount: number): number {
 
 function normalizeRelativePath(path: string): string {
   return path.replace(/\\/g, "/").trim();
+}
+
+function normalizeWorkspaceRoot(path: string): string {
+  return normalizeRelativePath(path).toLowerCase();
 }
 
 function pathsReferToSameFile(pathA: string, pathB: string): boolean {
@@ -1950,6 +1955,59 @@ function EditorShell() {
       if (unlisten) unlisten();
     };
   }, []);
+
+  useEffect(() => {
+    if (!workspacePath) {
+      return;
+    }
+
+    let disposed = false;
+    let unlisten: (() => void) | null = null;
+    const expectedWorkspaceRoot = normalizeWorkspaceRoot(workspacePath);
+
+    const setupWorkspaceFsSync = async () => {
+      try {
+        await startWorkspaceFsWatch(workspacePath);
+      } catch (_error) {
+        // Best-effort watch bootstrap; fallback behavior is backend-owned.
+      }
+
+      try {
+        const dispose = await listen<{ workspaceRoot: string }>(
+          "workspace-fs-changed",
+          (event) => {
+            const activeWorkspaceRoot = workspacePathRef.current;
+            if (!activeWorkspaceRoot) {
+              return;
+            }
+            const payloadRoot = normalizeWorkspaceRoot(event.payload.workspaceRoot);
+            if (payloadRoot !== expectedWorkspaceRoot) {
+              return;
+            }
+            if (payloadRoot !== normalizeWorkspaceRoot(activeWorkspaceRoot)) {
+              return;
+            }
+            setExplorerRevision((prev) => prev + 1);
+          }
+        );
+        if (disposed) {
+          dispose();
+          return;
+        }
+        unlisten = dispose;
+      } catch (_error) {
+        // Event listener setup failed - Explorer remains refreshable manually.
+      }
+    };
+
+    void setupWorkspaceFsSync();
+    return () => {
+      disposed = true;
+      if (unlisten) {
+        unlisten();
+      }
+    };
+  }, [workspacePath]);
 
   const handleEditorChange = useCallback((value: string) => {
     latestEditorContentRef.current = value;

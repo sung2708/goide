@@ -6,7 +6,7 @@
  * panel should receive the correct shellSessionKey (editor:<relativePath>).
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,13 +18,15 @@ const openMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const runWorkspaceFileMock = vi.fn();
+const startWorkspaceFsWatchMock = vi.fn();
+const listenMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
-  listen: vi.fn(async () => () => {}),
+  listen: (...args: unknown[]) => listenMock(...args),
 }));
 
 const stopCurrentRunMock = vi.fn();
@@ -38,6 +40,8 @@ vi.mock("../../lib/ipc/client", async () => {
       getRuntimeAvailabilityMock(...args),
     runWorkspaceFile: (...args: unknown[]) => runWorkspaceFileMock(...args),
     stopCurrentRun: (...args: unknown[]) => stopCurrentRunMock(...args),
+    startWorkspaceFsWatch: (...args: unknown[]) =>
+      startWorkspaceFsWatchMock(...args),
     ensureShellSession: vi.fn().mockResolvedValue({
       ok: true,
       data: { shellSessionId: "session-x", reused: false },
@@ -61,11 +65,14 @@ vi.mock("../sidebar/Explorer", () => ({
   default: ({
     workspacePath,
     onOpenFile,
+    explorerRevision,
   }: {
     workspacePath: string | null;
     onOpenFile: (relativePath: string) => void;
+    explorerRevision?: number;
   }) => (
     <div>
+      <span data-testid="explorer-revision">{explorerRevision ?? 0}</span>
       {workspacePath ? (
         <>
           <button type="button" onClick={() => onOpenFile("main.go")}>
@@ -158,6 +165,13 @@ vi.mock("../layout/ResizableSplit", () => ({
 }));
 
 describe("EditorShell terminal wiring", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     capturedBottomPanelProps = null;
     bottomPanelMountCount = 0;
@@ -170,6 +184,11 @@ describe("EditorShell terminal wiring", () => {
     });
     runWorkspaceFileMock.mockResolvedValue({ ok: true });
     stopCurrentRunMock.mockResolvedValue({ ok: true });
+    startWorkspaceFsWatchMock.mockResolvedValue({
+      ok: true,
+      data: { workspaceRoot: "C:/workspace", mode: "watch" },
+    });
+    listenMock.mockResolvedValue(() => {});
   });
 
   it("opens workspace, opens file, clicks run, and BottomPanel receives shellSessionKey logs:editor:main.go", async () => {
@@ -177,7 +196,7 @@ describe("EditorShell terminal wiring", () => {
     render(<EditorShell />);
 
     // Open workspace
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
 
     // Open file
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
@@ -206,7 +225,7 @@ describe("EditorShell terminal wiring", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
 
@@ -221,7 +240,7 @@ describe("EditorShell terminal wiring", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
 
@@ -245,7 +264,7 @@ describe("EditorShell terminal wiring", () => {
     render(<EditorShell />);
 
     // Open workspace
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
 
     // Open main.go -> editorSessionKey becomes editor:main.go
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
@@ -294,7 +313,7 @@ describe("EditorShell terminal wiring", () => {
     render(<EditorShell />);
 
     // Open workspace and file
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Open the panel via run (sets logs tab + opens panel)
@@ -350,7 +369,7 @@ describe("EditorShell terminal wiring", () => {
     render(<EditorShell />);
 
     // Open workspace and file
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Start a run so the bottom panel opens on logs tab
@@ -394,7 +413,7 @@ describe("EditorShell terminal wiring", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
 
@@ -411,7 +430,7 @@ describe("EditorShell terminal wiring", () => {
     const user = userEvent.setup();
     const { unmount } = render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
 
@@ -438,7 +457,7 @@ describe("EditorShell terminal wiring", () => {
     capturedBottomPanelProps = null;
 
     render(<EditorShell />);
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
 
@@ -450,5 +469,45 @@ describe("EditorShell terminal wiring", () => {
     });
     expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
     expect((capturedBottomPanelProps as { dockMode?: unknown } | null)?.dockMode).toBe("right");
+  });
+
+  it("starts workspace fs sync and refreshes explorer only for active workspace changes", async () => {
+    const user = userEvent.setup();
+    let fsChangeHandler:
+      | ((event: { payload: { workspaceRoot: string } }) => void)
+      | null = null;
+    listenMock.mockImplementation(async (eventName, handler) => {
+      if (eventName === "workspace-fs-changed") {
+        fsChangeHandler = handler as typeof fsChangeHandler;
+      }
+      return () => {};
+    });
+
+    render(<EditorShell />);
+
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+    expect(screen.getByTestId("explorer-revision")).toHaveTextContent("0");
+    await openWorkspaceAndShowExplorer(user);
+
+    await waitFor(() => {
+      expect(startWorkspaceFsWatchMock).toHaveBeenCalledWith("C:/workspace");
+      expect(listenMock).toHaveBeenCalledWith(
+        "workspace-fs-changed",
+        expect.any(Function)
+      );
+    });
+
+    await act(async () => {
+      fsChangeHandler?.({ payload: { workspaceRoot: "C:/other" } });
+    });
+    expect(screen.getByTestId("explorer-revision")).toHaveTextContent("0");
+
+    await act(async () => {
+      fsChangeHandler?.({ payload: { workspaceRoot: "C:/workspace" } });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("explorer-revision")).toHaveTextContent("1");
+    });
   });
 });
