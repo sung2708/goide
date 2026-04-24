@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use crate::integration::command::std_command;
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -907,8 +907,10 @@ fn get_file_completions_via_lsp(
     file_content: &str,
 ) -> Result<Vec<CompletionItem>> {
     let session_handle = lsp_manager::get_lsp_session();
-    let mut guard = session_handle.lock().map_err(|_| anyhow!("LSP session lock poisoned"))?;
-    
+    let mut guard = session_handle
+        .lock()
+        .map_err(|_| anyhow!("LSP session lock poisoned"))?;
+
     let session = if let Some(s) = guard.as_mut() {
         if s.workspace_root == workspace_root {
             s
@@ -921,7 +923,7 @@ fn get_file_completions_via_lsp(
     };
 
     let target_uri = path_to_file_uri(target_path);
-    
+
     if !session.open_files.contains(&target_uri) {
         lsp_manager::write_lsp_notification_sync(
             &mut session.stdin,
