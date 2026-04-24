@@ -97,6 +97,32 @@ describe("TerminalSurface — normal render", () => {
     expect(openFn).toHaveBeenCalledTimes(1);
     expect(openFn).toHaveBeenCalledWith(expect.any(HTMLElement));
   });
+
+  it("reports terminal focus owner when the host receives focus", () => {
+    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+
+    const onFocusOwnerChange = vi.fn();
+    render(<TerminalSurface onFocusOwnerChange={onFocusOwnerChange} />);
+
+    const host = screen.getByTestId("terminal-surface-host");
+    host.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+
+    expect(onFocusOwnerChange).toHaveBeenCalledWith("terminal");
+  });
+
+  it("reports editor focus owner when the host loses focus", () => {
+    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+
+    const onFocusOwnerChange = vi.fn();
+    render(<TerminalSurface onFocusOwnerChange={onFocusOwnerChange} />);
+
+    const host = screen.getByTestId("terminal-surface-host");
+    host.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
+
+    expect(onFocusOwnerChange).toHaveBeenCalledWith("editor");
+  });
 });
 
 describe("TerminalSurface — init failure fallback", () => {

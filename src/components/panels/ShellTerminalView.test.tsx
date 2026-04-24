@@ -1,5 +1,5 @@
 import { render, screen, waitFor, act } from "@testing-library/react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -24,6 +24,7 @@ vi.mock("../../lib/ipc/client", async () => {
 let capturedOnData: ((data: string) => void) | null = null;
 let capturedOnResize: ((cols: number, rows: number) => void) | null = null;
 let capturedOnMount: ((terminal: { write: (data: string) => void }) => void) | null = null;
+let capturedOnFocusOwnerChange: ((owner: "editor" | "terminal") => void) | null = null;
 const terminalWriteMock = vi.fn();
 // Counts actual React mounts of TerminalSurface (useEffect fires on mount only).
 let terminalSurfaceMountCount = 0;
@@ -33,18 +34,22 @@ vi.mock("./TerminalSurface", () => ({
     onData,
     onResize,
     onMount,
+    onFocusOwnerChange,
     readOnly,
   }: {
     onData?: (data: string) => void;
     onResize?: (cols: number, rows: number) => void;
     onMount?: (terminal: { write: (data: string) => void }) => void;
+    onFocusOwnerChange?: (owner: "editor" | "terminal") => void;
     readOnly?: boolean;
   }) => {
-    capturedOnData = onData ?? null;
-    capturedOnResize = onResize ?? null;
-    capturedOnMount = onMount ?? null;
+    const mountCallbacksRef = useRef({ onData, onResize, onMount });
+    capturedOnFocusOwnerChange = onFocusOwnerChange ?? null;
     // useEffect with empty deps fires only on actual mount, not re-renders.
     useEffect(() => {
+      capturedOnData = mountCallbacksRef.current.onData ?? null;
+      capturedOnResize = mountCallbacksRef.current.onResize ?? null;
+      capturedOnMount = mountCallbacksRef.current.onMount ?? null;
       terminalSurfaceMountCount += 1;
     }, []);
     return (
@@ -97,6 +102,7 @@ describe("ShellTerminalView", () => {
     capturedOnData = null;
     capturedOnResize = null;
     capturedOnMount = null;
+    capturedOnFocusOwnerChange = null;
     shellOutputListener = null;
     shellExitListener = null;
     terminalSurfaceMountCount = 0;
@@ -196,6 +202,8 @@ describe("ShellTerminalView", () => {
       expect(ensureShellSessionMock).toHaveBeenCalled();
     });
 
+    capturedOnFocusOwnerChange?.("terminal");
+
     // Simulate terminal input via the mock button
     const sendBtn = screen.getByTestId("send-input-btn");
     sendBtn.click();
@@ -206,6 +214,26 @@ describe("ShellTerminalView", () => {
         data: "pwd\r",
       });
     });
+  });
+
+  it("does not forward onData input when focus owner is editor", async () => {
+    render(
+      <ShellTerminalView
+        workspacePath="/home/user/project"
+        editorSessionKey="editor:main.go"
+        cwdRelativePath="."
+      />
+    );
+
+    await waitFor(() => {
+      expect(ensureShellSessionMock).toHaveBeenCalled();
+    });
+
+    capturedOnFocusOwnerChange?.("editor");
+    screen.getByTestId("send-input-btn").click();
+
+    await new Promise((r) => setTimeout(r, 20));
+    expect(writeShellInputMock).not.toHaveBeenCalled();
   });
 
   it("listens to shell-output events and writes matching payloads into the terminal", async () => {

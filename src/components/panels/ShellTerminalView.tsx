@@ -9,6 +9,7 @@ import {
 } from "../../lib/ipc/client";
 import type { ShellOutputPayload } from "../../lib/ipc/types";
 import TerminalSurface from "./TerminalSurface";
+import type { TerminalFocusOwner } from "./TerminalSurface";
 
 type ShellTerminalViewProps = {
   workspacePath: string | null;
@@ -72,6 +73,7 @@ function ShellTerminalView({
    * `handleMount`.  Reset to empty string after the replay is delivered.
    */
   const pendingReplayRef = useRef<string>("");
+  const focusOwnerRef = useRef<TerminalFocusOwner>("editor");
 
   // Keep ref in sync so event listener closures always see current value
   shellSessionIdRef.current = shellSessionId;
@@ -300,22 +302,28 @@ function ShellTerminalView({
 
   const handleData = useCallback(
     (data: string) => {
-      if (!shellSessionId) {
+      const activeShellSessionId = shellSessionIdRef.current;
+      if (!activeShellSessionId || focusOwnerRef.current !== "terminal") {
         return;
       }
-      void writeShellInput({ shellSessionId, data });
+      void writeShellInput({ shellSessionId: activeShellSessionId, data });
     },
-    [shellSessionId]
+    []
   );
+
+  const handleFocusOwnerChange = useCallback((owner: TerminalFocusOwner) => {
+    focusOwnerRef.current = owner;
+  }, []);
 
   const handleResize = useCallback(
     (cols: number, rows: number) => {
-      if (!shellSessionId) {
+      const activeShellSessionId = shellSessionIdRef.current;
+      if (!activeShellSessionId) {
         return;
       }
-      void resizeShellSession({ shellSessionId, cols, rows });
+      void resizeShellSession({ shellSessionId: activeShellSessionId, cols, rows });
     },
-    [shellSessionId]
+    []
   );
 
   // ---- Empty state ----
@@ -359,6 +367,7 @@ function ShellTerminalView({
       onMount={handleMount}
       onData={handleData}
       onResize={handleResize}
+      onFocusOwnerChange={handleFocusOwnerChange}
       className="h-full"
     />
   );
