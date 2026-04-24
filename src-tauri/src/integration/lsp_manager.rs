@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use crate::integration::command::std_command;
+use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Write};
@@ -20,7 +20,9 @@ pub struct LspSession {
 static LSP_SESSION: OnceLock<Arc<Mutex<Option<LspSession>>>> = OnceLock::new();
 
 pub fn get_lsp_session() -> Arc<Mutex<Option<LspSession>>> {
-    LSP_SESSION.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+    LSP_SESSION
+        .get_or_init(|| Arc::new(Mutex::new(None)))
+        .clone()
 }
 
 pub fn start_new_lsp_session<'a>(
@@ -44,7 +46,7 @@ pub fn start_new_lsp_session<'a>(
         .stdout
         .take()
         .ok_or_else(|| anyhow!("gopls stdout unavailable"))?;
-    
+
     let (tx, rx) = mpsc::channel::<Value>();
     std::thread::spawn(move || {
         let mut reader = BufReader::new(stdout);
@@ -96,10 +98,10 @@ pub fn start_new_lsp_session<'a>(
             }
         }),
     )?;
-    
+
     ensure_lsp_response_success_sync(wait_lsp_response_sync(&new_session.rx, 0)?)?;
     write_lsp_notification_sync(&mut new_session.stdin, "initialized", json!({}))?;
-    
+
     write_lsp_notification_sync(
         &mut new_session.stdin,
         "workspace/didChangeConfiguration",
@@ -167,12 +169,7 @@ fn write_lsp_request_sync<W: Write>(
         "params": params,
     });
     let body = serde_json::to_string(&message)?;
-    write!(
-        writer,
-        "Content-Length: {}\r\n\r\n{}",
-        body.len(),
-        body
-    )?;
+    write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     writer.flush()?;
     Ok(())
 }
@@ -188,12 +185,7 @@ pub fn write_lsp_notification_sync<W: Write>(
         "params": params,
     });
     let body = serde_json::to_string(&message)?;
-    write!(
-        writer,
-        "Content-Length: {}\r\n\r\n{}",
-        body.len(),
-        body
-    )?;
+    write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     writer.flush()?;
     Ok(())
 }
@@ -219,5 +211,8 @@ pub fn ensure_lsp_response_success_sync(response: Value) -> Result<()> {
 }
 
 pub fn lsp_error_message_sync(response: &Value) -> Option<&str> {
-    response.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str())
+    response
+        .get("error")
+        .and_then(|e| e.get("message"))
+        .and_then(|m| m.as_str())
 }

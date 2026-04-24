@@ -1,8 +1,8 @@
 use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
-use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::command::std_command;
+use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
@@ -16,15 +16,15 @@ use crate::ui_bridge::types::{
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
     ConcurrencyConstructKindDto, DebuggerBreakpointDto, DebuggerStateDto,
     DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
-    DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
+    DiagnosticsToolingAvailabilityDto, DisposeShellSessionRequestDto, EditorDiagnosticDto,
+    EnsureShellSessionRequestDto, EnsureShellSessionResponseDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
-    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
-    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
-    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto,
-    WorkspaceGitChangedFileSummaryDto, WorkspaceGitChangedFileDto, WorkspaceGitCommitDto,
-    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
-    DisposeShellSessionRequestDto, EnsureShellSessionRequestDto, EnsureShellSessionResponseDto,
-    ShellInputRequestDto, ShellResizeRequestDto,
+    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ShellInputRequestDto,
+    ShellResizeRequestDto, StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto,
+    ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
+    WorkspaceBranchSnapshotDto, WorkspaceGitBranchDto, WorkspaceGitChangedFileDto,
+    WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
+    WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -73,10 +73,7 @@ enum DebuggerControlKind {
     StepOver,
     StepInto,
     StepOut,
-    ToggleBreakpoint {
-        relative_path: String,
-        line: usize,
-    },
+    ToggleBreakpoint { relative_path: String, line: usize },
 }
 
 struct DebuggerControlCommand {
@@ -926,10 +923,9 @@ pub(crate) async fn start_debug_session_internal_for_test(
 
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        std_command("dlv").arg("version").output()
-    })
-    .await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || std_command("dlv").arg("version").output())
+            .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -1028,9 +1024,10 @@ pub async fn create_workspace_folder(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || fs::create_folder(&workspace_root, &relative_path))
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::create_folder(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -1044,9 +1041,10 @@ pub async fn delete_workspace_entry(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || fs::delete_entry(&workspace_root, &relative_path))
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::delete_entry(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -1468,22 +1466,9 @@ fn should_search_file(path: &Path) -> bool {
         .and_then(|ext| ext.to_str())
         .map(|value| value.to_ascii_lowercase());
     match extension.as_deref() {
-        Some("go")
-        | Some("mod")
-        | Some("sum")
-        | Some("md")
-        | Some("txt")
-        | Some("json")
-        | Some("yaml")
-        | Some("yml")
-        | Some("toml")
-        | Some("rs")
-        | Some("ts")
-        | Some("tsx")
-        | Some("js")
-        | Some("jsx")
-        | Some("css")
-        | Some("html") => true,
+        Some("go") | Some("mod") | Some("sum") | Some("md") | Some("txt") | Some("json")
+        | Some("yaml") | Some("yml") | Some("toml") | Some("rs") | Some("ts") | Some("tsx")
+        | Some("js") | Some("jsx") | Some("css") | Some("html") => true,
         _ => false,
     }
 }
@@ -1523,7 +1508,7 @@ fn collect_search_results(
         if !file_type.is_file() || !should_search_file(&path) {
             continue;
         }
-        
+
         // Skip large files (> 1MB) for search performance
         if let Ok(metadata) = path.metadata() {
             if metadata.len() > 1_000_000 {
@@ -1561,10 +1546,7 @@ fn collect_search_results(
     }
 }
 
-fn search_with_git_grep(
-    root: &Path,
-    query: &str,
-) -> Result<Vec<WorkspaceSearchFileDto>, String> {
+fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchFileDto>, String> {
     let output = std_command("git")
         .arg("grep")
         .arg("-i")
@@ -1582,21 +1564,21 @@ fn search_with_git_grep(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut file_map: HashMap<String, Vec<WorkspaceSearchMatchDto>> = HashMap::new();
-    
+
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(3, ':').collect();
         if parts.len() < 3 {
             continue;
         }
-        
+
         let path = parts[0].replace('\\', "/");
         let line_num = parts[1].parse::<usize>().unwrap_or(0);
         let preview = parts[2].trim().to_string();
-        
+
         if line_num == 0 {
             continue;
         }
-        
+
         let matches = file_map.entry(path).or_insert_with(Vec::new);
         if matches.len() < 10 {
             matches.push(WorkspaceSearchMatchDto {
@@ -1613,14 +1595,14 @@ fn search_with_git_grep(
             matches,
         })
         .collect();
-    
+
     results.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    
+
     // Limit to 100 files for git grep to maintain UI performance
     if results.len() > 100 {
         results.truncate(100);
     }
-    
+
     Ok(results)
 }
 
@@ -1642,17 +1624,19 @@ pub async fn search_workspace_text(
     let query_clone = trimmed.clone();
     let root_clone = root.clone();
 
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
-        if is_git {
-            if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
-                return Ok(results);
+    let result = tauri::async_runtime::spawn_blocking(
+        move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
+            if is_git {
+                if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
+                    return Ok(results);
+                }
             }
-        }
-        
-        let mut files = Vec::new();
-        collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
-        Ok(files)
-    })
+
+            let mut files = Vec::new();
+            collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
+            Ok(files)
+        },
+    )
     .await;
 
     match result {
@@ -1844,11 +1828,7 @@ where
 
     let remote_raw = git_runner(
         root,
-        &[
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/remotes/",
-        ],
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
     )
     .map_err(|error| format!("git_remote_branches_failed::{error}"))?;
 
@@ -1860,7 +1840,11 @@ where
     for line in remote_raw.lines() {
         if let Some((remote, branch)) = parse_remote_ref(line.trim()) {
             remote_branch_names.insert(branch.to_string());
-            remote_refs.push((branch.to_string(), remote.to_string(), line.trim().to_string()));
+            remote_refs.push((
+                branch.to_string(),
+                remote.to_string(),
+                line.trim().to_string(),
+            ));
         }
     }
 
@@ -2047,20 +2031,14 @@ fn find_remote_ref_for_branch(root: &Path, branch: &str) -> Option<String> {
     // was supplied by the caller.
     let output = git_output(
         root,
-        &[
-            "for-each-ref",
-            "--format=%(refname:short)",
-            "refs/remotes/",
-        ],
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
     )
     .ok()?;
-    output
-        .lines()
-        .find_map(|line| {
-            parse_remote_ref(line.trim())
-                .filter(|(_, b)| *b == branch)
-                .map(|_| line.trim().to_string())
-        })
+    output.lines().find_map(|line| {
+        parse_remote_ref(line.trim())
+            .filter(|(_, b)| *b == branch)
+            .map(|_| line.trim().to_string())
+    })
 }
 
 fn execute_branch_switch(
@@ -2240,8 +2218,10 @@ fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
         return Err("not a runnable Go package: directory contains no .go files".to_string());
     }
 
-    Err("not a runnable Go package: package is a library (no 'package main' declaration found)"
-        .to_string())
+    Err(
+        "not a runnable Go package: package is a library (no 'package main' declaration found)"
+            .to_string(),
+    )
 }
 
 /// Resolved debug target, holding the package directory and the Go package
@@ -2266,9 +2246,7 @@ pub fn resolve_debug_target(
         .canonicalize()
         .map_err(|error| format!("workspace root does not exist: {error}"))?;
     let absolute = canonical_root.join(active_relative_path);
-    let canonical = absolute
-        .canonicalize()
-        .map_err(|error| error.to_string())?;
+    let canonical = absolute.canonicalize().map_err(|error| error.to_string())?;
     let package_dir = canonical
         .parent()
         .ok_or_else(|| "active file has no parent directory".to_string())?;
@@ -2279,10 +2257,7 @@ pub fn resolve_debug_target(
     let package_pattern = if relative_dir.as_os_str().is_empty() {
         ".".to_string()
     } else {
-        format!(
-            "./{}",
-            relative_dir.to_string_lossy().replace('\\', "/")
-        )
+        format!("./{}", relative_dir.to_string_lossy().replace('\\', "/"))
     };
 
     validate_runnable_go_package(package_dir)?;
@@ -2351,6 +2326,8 @@ pub async fn ensure_shell_session<R: tauri::Runtime>(
         Ok(response) => ApiResponse::ok(EnsureShellSessionResponseDto {
             shell_session_id: response.shell_session_id,
             reused: response.reused,
+            shell_health: response.shell_health,
+            selected_shell: response.selected_shell,
             replay: response.replay,
         }),
         Err(error) => ApiResponse::err("shell_session_failed", &error.to_string()),
@@ -2388,11 +2365,7 @@ pub async fn resize_shell_session(request: ShellResizeRequestDto) -> ApiResponse
 
 #[tauri::command]
 pub async fn dispose_shell_session(request: DisposeShellSessionRequestDto) -> ApiResponse<()> {
-    match dispose_shell_session_inner(
-        get_shell_sessions_handle(),
-        &request.shell_session_id,
-    )
-    .await
+    match dispose_shell_session_inner(get_shell_sessions_handle(), &request.shell_session_id).await
     {
         Ok(()) => ApiResponse::ok(()),
         Err(error) => ApiResponse::err("shell_dispose_failed", &error.to_string()),
@@ -2479,7 +2452,15 @@ mod tests {
     fn add_remote(dir: &std::path::PathBuf, name: &str) -> std::path::PathBuf {
         let remote_dir = create_temp_workspace(&format!("remote_{name}"));
         git(&remote_dir, &["init", "--bare"]);
-        git(dir, &["remote", "add", name, remote_dir.to_str().expect("remote path")]);
+        git(
+            dir,
+            &[
+                "remote",
+                "add",
+                name,
+                remote_dir.to_str().expect("remote path"),
+            ],
+        );
         remote_dir
     }
 
@@ -2507,25 +2488,16 @@ mod tests {
         git(local, &["config", "user.name", "GoIDE Test"]);
     }
 
-    fn git_output_in_test(
-        dir: &std::path::PathBuf,
-        args: &[&str],
-    ) -> Result<String, String> {
+    fn git_output_in_test(dir: &std::path::PathBuf, args: &[&str]) -> Result<String, String> {
         let output = Command::new("git")
             .args(args)
             .current_dir(dir)
             .output()
             .map_err(|e| e.to_string())?;
         if !output.status.success() {
-            return Err(
-                String::from_utf8_lossy(&output.stderr)
-                    .trim()
-                    .to_string(),
-            );
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
         }
-        Ok(String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string())
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
     fn create_dirty_git_repo(label: &str) -> std::path::PathBuf {
@@ -2545,8 +2517,8 @@ mod tests {
     }
 
     fn assert_clean_worktree(dir: &std::path::PathBuf) {
-        let status = git_output_in_test(dir, &["status", "--porcelain"])
-            .expect("status should be readable");
+        let status =
+            git_output_in_test(dir, &["status", "--porcelain"]).expect("status should be readable");
         assert!(status.is_empty(), "expected clean worktree, got: {status}");
     }
 
@@ -2562,7 +2534,12 @@ mod tests {
 
         let feature_branch_name = "feature/remote-only";
         git(&repo_dir, &["checkout", "-b", feature_branch_name]);
-        add_commit(&repo_dir, "feature.txt", "remote feature\n", "add remote feature");
+        add_commit(
+            &repo_dir,
+            "feature.txt",
+            "remote feature\n",
+            "add remote feature",
+        );
         git(&repo_dir, &["push", "-u", "origin", feature_branch_name]);
         git(&repo_dir, &["checkout", "main"]);
         git(&repo_dir, &["branch", "-D", feature_branch_name]);
@@ -2600,7 +2577,10 @@ mod tests {
             })
             .collect();
 
-        assert_eq!(branch_map.get("main"), Some(&("current", true, Some("origin/main"))));
+        assert_eq!(
+            branch_map.get("main"),
+            Some(&("current", true, Some("origin/main")))
+        );
         assert_eq!(branch_map.get("develop"), Some(&("local", false, None)));
         assert_eq!(
             branch_map.get("feature/remote-only"),
@@ -2839,7 +2819,10 @@ mod tests {
             line: 12,
         })
         .await;
-        assert!(first.ok, "should allow storing breakpoints before debug starts");
+        assert!(
+            first.ok,
+            "should allow storing breakpoints before debug starts"
+        );
         let first_state = first.data.expect("state payload should be returned");
         assert!(!first_state.session_active);
         assert_eq!(first_state.breakpoints.len(), 1);
@@ -2875,7 +2858,10 @@ mod tests {
         }
 
         let response = deactivate_deep_trace().await;
-        assert!(response.ok, "deactivate should succeed without a live session");
+        assert!(
+            response.ok,
+            "deactivate should succeed without a live session"
+        );
 
         let store = signals_handle.lock().await;
         assert_eq!(store.breakpoints.get("main.go"), Some(&vec![7, 9]));
@@ -2911,8 +2897,7 @@ mod tests {
 
         assert!(response.ok, "switch to remote-only branch should succeed");
         let current =
-            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-                .expect("head");
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
         assert_eq!(current, "develop");
     }
 
@@ -2929,7 +2914,10 @@ mod tests {
         })
         .await;
 
-        assert!(!response.ok, "dirty worktree with 'none' action should fail");
+        assert!(
+            !response.ok,
+            "dirty worktree with 'none' action should fail"
+        );
         assert_eq!(
             response.error.expect("error").code,
             "git_branch_dirty_action_required"
@@ -3018,7 +3006,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching() {
+    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching(
+    ) {
         let repo_dir = create_temp_workspace("branch_switch_discard_action");
         init_git_repo(&repo_dir);
         add_commit(&repo_dir, "README.md", "initial\n", "init");
@@ -3085,9 +3074,12 @@ mod tests {
         })
         .await;
 
-        assert!(response.ok, "switch using explicit non-origin remote_ref should succeed");
-        let current = git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .expect("head");
+        assert!(
+            response.ok,
+            "switch using explicit non-origin remote_ref should succeed"
+        );
+        let current =
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
         assert_eq!(current, "develop");
         // Verify that the new local branch tracks the upstream remote.
         let tracking = git_output_in_test(
@@ -3154,7 +3146,9 @@ mod tests {
     #[test]
     fn strip_error_prefix_removes_code_prefix_from_message() {
         assert_eq!(
-            strip_error_prefix("git_branches_failed::workspace root does not exist: No such file or directory"),
+            strip_error_prefix(
+                "git_branches_failed::workspace root does not exist: No such file or directory"
+            ),
             "workspace root does not exist: No such file or directory"
         );
     }
@@ -3178,7 +3172,10 @@ mod tests {
 
     #[test]
     fn parse_remote_ref_returns_remote_and_branch() {
-        assert_eq!(parse_remote_ref("origin/develop"), Some(("origin", "develop")));
+        assert_eq!(
+            parse_remote_ref("origin/develop"),
+            Some(("origin", "develop"))
+        );
         assert_eq!(
             parse_remote_ref("upstream/feature/my-feat"),
             Some(("upstream", "feature/my-feat"))
@@ -3234,10 +3231,9 @@ mod tests {
     async fn get_workspace_branches_error_message_is_sanitized() {
         // Supplying a non-existent workspace root should surface a clean error
         // without the internal "git_branches_failed::" prefix in the message.
-        let response = get_workspace_branches(
-            "/this/path/does/absolutely/not/exist/anywhere".to_string(),
-        )
-        .await;
+        let response =
+            get_workspace_branches("/this/path/does/absolutely/not/exist/anywhere".to_string())
+                .await;
 
         assert!(!response.ok, "non-existent workspace should fail");
         let error = response.error.expect("error payload must be present");
@@ -3262,7 +3258,10 @@ mod tests {
     async fn start_debug_session_resolves_cmd_package_target() {
         let workspace = create_temp_workspace("debug_cmd_target");
         init_git_repo(&workspace);
-        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
         std::fs::create_dir_all(workspace.join("cmd/app")).unwrap();
         write_file(
             workspace.join("cmd/app/main.go"),
@@ -3271,7 +3270,10 @@ mod tests {
 
         let resolved = resolve_debug_target(&workspace, "cmd/app/main.go").expect("target");
 
-        assert_eq!(resolved.package_dir, workspace.join("cmd/app").canonicalize().unwrap());
+        assert_eq!(
+            resolved.package_dir,
+            workspace.join("cmd/app").canonicalize().unwrap()
+        );
         assert_eq!(resolved.package_pattern, "./cmd/app");
     }
 
@@ -3279,11 +3281,11 @@ mod tests {
     async fn start_debug_session_resolves_root_package_target() {
         let workspace = create_temp_workspace("debug_root_target");
         init_git_repo(&workspace);
-        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
         write_file(
-            workspace.join("main.go"),
-            "package main\nfunc main() {}\n",
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
         );
+        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
 
         let resolved = resolve_debug_target(&workspace, "main.go").expect("target");
 
@@ -3295,7 +3297,10 @@ mod tests {
     async fn start_debug_session_rejects_non_runnable_target() {
         let workspace = create_temp_workspace("debug_invalid_target");
         init_git_repo(&workspace);
-        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
         std::fs::create_dir_all(workspace.join("internal/logger")).unwrap();
         write_file(
             workspace.join("internal/logger/logger.go"),
@@ -3314,7 +3319,10 @@ mod tests {
     async fn start_debug_session_returns_user_facing_failure_when_delve_is_missing() {
         let workspace = create_temp_workspace("debug_missing_dlv");
         init_git_repo(&workspace);
-        write_file(workspace.join("go.mod"), "module example.com/app\n\ngo 1.22\n");
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
         write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
 
         let response = start_debug_session_internal_for_test(
@@ -3356,8 +3364,7 @@ mod tests {
         assert_eq!(failure.title, "Debug session failed");
         // The message field must contain only the human part, not the prefix.
         assert_eq!(
-            failure.message,
-            "Delve binary not found in PATH",
+            failure.message, "Delve binary not found in PATH",
             "map_debug_failure must strip the code:: prefix; got: {}",
             failure.message
         );
@@ -3410,7 +3417,10 @@ mod tests {
         let paused_snapshot = map_debugger_state_snapshot(&paused_store, true, None);
         assert_eq!(paused_snapshot.status, "paused");
         assert!(paused_snapshot.paused);
-        assert_eq!(paused_snapshot.active_relative_path.as_deref(), Some("main.go"));
+        assert_eq!(
+            paused_snapshot.active_relative_path.as_deref(),
+            Some("main.go")
+        );
 
         // failed: failure payload overrides session_active
         let failure = map_debug_failure("debug_session_start_failed", "spawn error");

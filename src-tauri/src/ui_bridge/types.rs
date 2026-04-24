@@ -429,6 +429,8 @@ pub struct EnsureShellSessionRequestDto {
 pub struct EnsureShellSessionResponseDto {
     pub shell_session_id: String,
     pub reused: bool,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: Option<String>,
     /// Buffered PTY output from the session to replay into a fresh xterm surface.
     /// Empty string for brand-new sessions; contains prior output for reused sessions.
     pub replay: String,
@@ -462,6 +464,14 @@ pub struct ShellOutputPayloadDto {
     pub data: String,
 }
 
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellHealthDto {
+    Launch,
+    Degraded,
+    Exit,
+}
+
 /// Event emitted when a PTY reader loop ends unexpectedly (shell exited on its
 /// own, not via an explicit dispose call).  The frontend uses this to surface
 /// a disconnected / retry state inside the Shell tab.
@@ -469,4 +479,25 @@ pub struct ShellOutputPayloadDto {
 #[serde(rename_all = "camelCase")]
 pub struct ShellExitPayloadDto {
     pub shell_session_id: String,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ShellExitPayloadDto, ShellHealthDto};
+
+    #[test]
+    fn shell_exit_payload_serializes_health_and_selected_shell() {
+        let payload = ShellExitPayloadDto {
+            shell_session_id: "shell:abc".to_string(),
+            shell_health: ShellHealthDto::Exit,
+            selected_shell: Some("pwsh".to_string()),
+        };
+
+        let json = serde_json::to_value(payload).expect("payload should serialize");
+        assert_eq!(json["shellSessionId"], "shell:abc");
+        assert_eq!(json["shellHealth"], "exit");
+        assert_eq!(json["selectedShell"], "pwsh");
+    }
 }
