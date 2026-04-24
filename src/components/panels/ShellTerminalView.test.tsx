@@ -262,6 +262,126 @@ describe("ShellTerminalView", () => {
     });
   });
 
+  it("batches terminal writes into animation-frame flushes", async () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback): number => {
+        rafQueue.push(callback);
+        return rafQueue.length;
+      });
+    const cafSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation(() => {});
+
+    try {
+      render(
+        <ShellTerminalView
+          workspacePath="/home/user/project"
+          editorSessionKey="editor:main.go"
+          cwdRelativePath="."
+        />
+      );
+
+      await waitFor(() => {
+        expect(ensureShellSessionMock).toHaveBeenCalled();
+      });
+
+      capturedOnMount?.({ write: terminalWriteMock });
+      await waitFor(() =>
+        expect(listenMock).toHaveBeenCalledWith("shell-output", expect.any(Function))
+      );
+
+      shellOutputListener?.({ payload: { shellSessionId: "session-abc", data: "one" } });
+      shellOutputListener?.({ payload: { shellSessionId: "session-abc", data: "two" } });
+
+      expect(terminalWriteMock).not.toHaveBeenCalled();
+      expect(rafQueue).toHaveLength(1);
+      rafQueue[0](16);
+      expect(terminalWriteMock).toHaveBeenCalledTimes(1);
+      expect(terminalWriteMock).toHaveBeenCalledWith("onetwo");
+    } finally {
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    }
+  });
+
+  it("clears pending buffered output when switching terminal session keys", async () => {
+    ensureShellSessionMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { shellSessionId: "session-main", reused: false },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: { shellSessionId: "session-other", reused: false },
+      });
+
+    let nextFrameId = 1;
+    const rafQueue = new Map<number, FrameRequestCallback>();
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((callback: FrameRequestCallback): number => {
+        const frameId = nextFrameId++;
+        rafQueue.set(frameId, callback);
+        return frameId;
+      });
+    const cafSpy = vi
+      .spyOn(window, "cancelAnimationFrame")
+      .mockImplementation((frameId: number) => {
+        rafQueue.delete(frameId);
+      });
+
+    try {
+      const { rerender } = render(
+        <ShellTerminalView
+          workspacePath="/home/user/project"
+          editorSessionKey="editor:main.go"
+          cwdRelativePath="."
+        />
+      );
+
+      await waitFor(() => {
+        expect(ensureShellSessionMock).toHaveBeenCalledWith({
+          workspaceRoot: "/home/user/project",
+          editorSessionKey: "editor:main.go",
+          cwdRelativePath: ".",
+        });
+      });
+
+      const secondSessionWrite = vi.fn();
+      shellOutputListener?.({ payload: { shellSessionId: "session-main", data: "stale-main" } });
+
+      rerender(
+        <ShellTerminalView
+          workspacePath="/home/user/project"
+          editorSessionKey="editor:other.go"
+          cwdRelativePath="."
+        />
+      );
+
+      await waitFor(() => {
+        expect(ensureShellSessionMock).toHaveBeenCalledWith({
+          workspaceRoot: "/home/user/project",
+          editorSessionKey: "editor:other.go",
+          cwdRelativePath: ".",
+        });
+      });
+
+      capturedOnMount?.({ write: secondSessionWrite });
+
+      // Flush any queued animation frames that survived cancel.
+      for (const callback of rafQueue.values()) {
+        callback(performance.now());
+      }
+
+      expect(secondSessionWrite).not.toHaveBeenCalledWith("stale-main");
+    } finally {
+      rafSpy.mockRestore();
+      cafSpy.mockRestore();
+    }
+  });
+
   it("ignores shell-output events for a different sessionId", async () => {
     render(
       <ShellTerminalView

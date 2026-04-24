@@ -523,6 +523,8 @@ function EditorShell() {
   const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const diagnosticPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRunOutputBufferRef = useRef<RunOutputPayload[]>([]);
+  const pendingRunOutputFlushHandleRef = useRef<number | null>(null);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -588,6 +590,11 @@ function EditorShell() {
       if (autoSaveDebounceRef.current !== null) {
         clearTimeout(autoSaveDebounceRef.current);
       }
+      if (pendingRunOutputFlushHandleRef.current !== null) {
+        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+        pendingRunOutputFlushHandleRef.current = null;
+      }
+      pendingRunOutputBufferRef.current = [];
     };
   }, []);
 
@@ -1481,6 +1488,11 @@ function EditorShell() {
     activeRunIdRef.current = runId;
     activeRunModeRef.current = modeToRun;
     activeRunTargetFilePathRef.current = activeFilePath;
+    if (pendingRunOutputFlushHandleRef.current !== null) {
+      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+      pendingRunOutputFlushHandleRef.current = null;
+    }
+    pendingRunOutputBufferRef.current = [];
 
     const contentToRun = latestEditorContentRef.current ?? activeFileContent;
     if (isDirty && typeof contentToRun === "string") {
@@ -1549,7 +1561,14 @@ function EditorShell() {
         stream: "stderr"
       }]);
     }
-  }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent, debugUiState]);
+  }, [
+    workspacePath,
+    activeFilePath,
+    activeFileContent,
+    isDirty,
+    persistActiveFileContent,
+    debugUiState,
+  ]);
 
   const handleRunFileStandard = useCallback(() => {
     void handleRunFile("standard");
@@ -1597,6 +1616,11 @@ function EditorShell() {
       setRunStatus("running");
       setRunMode("debug");
       setIsBottomPanelOpen(true);
+      if (pendingRunOutputFlushHandleRef.current !== null) {
+        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+        pendingRunOutputFlushHandleRef.current = null;
+      }
+      pendingRunOutputBufferRef.current = [];
       setRunOutput([]);
       activeRunIdRef.current = "debug-" + Date.now();
     }
@@ -1882,18 +1906,47 @@ function EditorShell() {
     void handleRunFile("race");
   }, [handleRunFile, runtimeAvailability]);
 
+  const flushRunOutputBuffer = useCallback(() => {
+    pendingRunOutputFlushHandleRef.current = null;
+    const buffered = pendingRunOutputBufferRef.current;
+    if (buffered.length === 0) {
+      return;
+    }
+    pendingRunOutputBufferRef.current = [];
+    setRunOutput((prev) => [...prev, ...buffered]);
+  }, []);
+
+  const clearPendingRunOutputBuffer = useCallback(() => {
+    if (pendingRunOutputFlushHandleRef.current !== null) {
+      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+      pendingRunOutputFlushHandleRef.current = null;
+    }
+    pendingRunOutputBufferRef.current = [];
+  }, []);
+
+  const scheduleRunOutputFlush = useCallback(() => {
+    if (pendingRunOutputFlushHandleRef.current !== null) {
+      return;
+    }
+    pendingRunOutputFlushHandleRef.current = window.requestAnimationFrame(() => {
+      flushRunOutputBuffer();
+    });
+  }, [flushRunOutputBuffer]);
+
   const handleClearOutput = useCallback(() => {
+    clearPendingRunOutputBuffer();
     setRunOutput([]);
     setBottomPanelTab("logs");
-  }, []);
+  }, [clearPendingRunOutputBuffer]);
 
   const handleStopRun = useCallback(() => {
     // Clear the active run ID immediately so trailing exit events from the
     // stopped run cannot attach to the next run.
     activeRunIdRef.current = null;
+    clearPendingRunOutputBuffer();
     void stopCurrentRun();
     setRunStatus((current) => (current === "running" ? "done" : current));
-  }, []);
+  }, [clearPendingRunOutputBuffer]);
 
   useEffect(() => {
     let unlisten: (() => void) | null = null;
@@ -1937,7 +1990,8 @@ function EditorShell() {
           }
         }
 
-        setRunOutput((prev) => [...prev, event.payload]);
+        pendingRunOutputBufferRef.current.push(event.payload);
+        scheduleRunOutputFlush();
         if (event.payload.stream === "exit") {
           setRunStatus(event.payload.exitCode === 0 ? "done" : "error");
         }
@@ -1953,8 +2007,13 @@ function EditorShell() {
     return () => {
       isUnmounted = true;
       if (unlisten) unlisten();
+      if (pendingRunOutputFlushHandleRef.current !== null) {
+        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+        pendingRunOutputFlushHandleRef.current = null;
+      }
+      pendingRunOutputBufferRef.current = [];
     };
-  }, []);
+  }, [scheduleRunOutputFlush]);
 
   useEffect(() => {
     if (!workspacePath) {
@@ -2272,6 +2331,11 @@ function EditorShell() {
 
     setDiagnostics([]);
     setDebuggerState(null);
+    if (pendingRunOutputFlushHandleRef.current !== null) {
+      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
+      pendingRunOutputFlushHandleRef.current = null;
+    }
+    pendingRunOutputBufferRef.current = [];
     setRunOutput([]);
     setWorkspaceSearchResults([]);
 

@@ -8,6 +8,7 @@ import {
   resizeShellSession,
 } from "../../lib/ipc/client";
 import type { ShellOutputPayload } from "../../lib/ipc/types";
+import { createLatencyMetrics } from "../../features/perf/latencyMetrics";
 import TerminalSurface from "./TerminalSurface";
 import type { TerminalFocusOwner } from "./TerminalSurface";
 
@@ -74,9 +75,62 @@ function ShellTerminalView({
    */
   const pendingReplayRef = useRef<string>("");
   const focusOwnerRef = useRef<TerminalFocusOwner>("editor");
+  const pendingOutputBufferRef = useRef<string[]>([]);
+  const pendingOutputFlushHandleRef = useRef<number | null>(null);
+  const pendingInputTokensRef = useRef<string[]>([]);
+  const inputTokenCounterRef = useRef(0);
+  const latencyMetricsRef = useRef(createLatencyMetrics());
 
   // Keep ref in sync so event listener closures always see current value
   shellSessionIdRef.current = shellSessionId;
+
+  const flushTerminalWrites = useCallback(() => {
+    pendingOutputFlushHandleRef.current = null;
+    const terminal = terminalRef.current;
+    if (!terminal) {
+      return;
+    }
+    const chunks = pendingOutputBufferRef.current;
+    if (chunks.length === 0) {
+      return;
+    }
+    pendingOutputBufferRef.current = [];
+    terminal.write(chunks.join(""));
+  }, []);
+
+  const scheduleTerminalFlush = useCallback(() => {
+    if (pendingOutputFlushHandleRef.current !== null) {
+      return;
+    }
+    pendingOutputFlushHandleRef.current = window.requestAnimationFrame(() => {
+      flushTerminalWrites();
+    });
+  }, [flushTerminalWrites]);
+
+  const enqueueTerminalWrite = useCallback(
+    (chunk: string) => {
+      if (!chunk) {
+        return;
+      }
+      pendingOutputBufferRef.current.push(chunk);
+      scheduleTerminalFlush();
+    },
+    [scheduleTerminalFlush]
+  );
+
+  const clearPendingTerminalWrites = useCallback(() => {
+    if (pendingOutputFlushHandleRef.current !== null) {
+      window.cancelAnimationFrame(pendingOutputFlushHandleRef.current);
+      pendingOutputFlushHandleRef.current = null;
+    }
+    pendingOutputBufferRef.current = [];
+  }, []);
+
+  const resetLatencyTracking = useCallback(() => {
+    pendingInputTokensRef.current = [];
+    inputTokenCounterRef.current = 0;
+    latencyMetricsRef.current.reset();
+  }, []);
 
   /**
    * Tracks all shell session IDs created under the current workspacePath.
@@ -132,6 +186,8 @@ function ShellTerminalView({
       //     correctly stashes replay in pendingReplayRef for handleMount to pick
       //     up once the fresh TerminalSurface mounts.
       pendingReplayRef.current = "";
+      clearPendingTerminalWrites();
+      resetLatencyTracking();
       terminalRef.current = null;
       setSurfaceKey((k) => k + 1);
     }
@@ -165,12 +221,7 @@ function ShellTerminalView({
         //      causing a fresh TerminalSurface mount that fires handleMount
         //      shortly after): stash replay so handleMount can deliver it.
         if (replay) {
-          const terminal = terminalRef.current;
-          if (terminal) {
-            terminal.write(replay);
-          } else {
-            pendingReplayRef.current = replay;
-          }
+          pendingReplayRef.current = replay;
         }
       } else {
         setShellError(response.error?.message ?? "Failed to start shell session.");
@@ -182,7 +233,7 @@ function ShellTerminalView({
     return () => {
       cancelled = true;
     };
-  }, [workspacePath, editorSessionKey, cwdRelativePath]);
+  }, [workspacePath, editorSessionKey, cwdRelativePath, clearPendingTerminalWrites, resetLatencyTracking]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -236,10 +287,13 @@ function ShellTerminalView({
         if (event.payload.shellSessionId !== shellSessionIdRef.current) {
           return;
         }
-        const terminal = terminalRef.current;
-        if (terminal) {
-          terminal.write(event.payload.data);
+        if (event.payload.data.length > 0) {
+          const token = pendingInputTokensRef.current.shift();
+          if (token) {
+            latencyMetricsRef.current.markEcho(token);
+          }
         }
+        enqueueTerminalWrite(event.payload.data);
       });
 
       if (isUnmounted) {
@@ -256,8 +310,10 @@ function ShellTerminalView({
       if (unlisten) {
         unlisten();
       }
+      clearPendingTerminalWrites();
+      resetLatencyTracking();
     };
-  }, []);
+  }, [enqueueTerminalWrite, clearPendingTerminalWrites, resetLatencyTracking]);
 
   // ---- Retry handler ----
 
@@ -267,6 +323,7 @@ function ShellTerminalView({
     }
     setIsRetrying(true);
     setShellError(null);
+    resetLatencyTracking();
     try {
       const response = await ensureShellSession({
         workspaceRoot: workspacePath,
@@ -285,7 +342,7 @@ function ShellTerminalView({
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, editorSessionKey, cwdRelativePath, isRetrying]);
+  }, [workspacePath, editorSessionKey, cwdRelativePath, isRetrying, resetLatencyTracking]);
 
   // ---- Terminal callbacks ----
 
@@ -296,9 +353,12 @@ function ShellTerminalView({
     const replay = pendingReplayRef.current;
     if (replay) {
       pendingReplayRef.current = "";
-      terminal.write(replay);
+      enqueueTerminalWrite(replay);
     }
-  }, []);
+    if (pendingOutputBufferRef.current.length > 0) {
+      scheduleTerminalFlush();
+    }
+  }, [enqueueTerminalWrite, scheduleTerminalFlush]);
 
   const handleData = useCallback(
     (data: string) => {
@@ -306,6 +366,10 @@ function ShellTerminalView({
       if (!activeShellSessionId || focusOwnerRef.current !== "terminal") {
         return;
       }
+      const token = `input-${inputTokenCounterRef.current}`;
+      inputTokenCounterRef.current += 1;
+      pendingInputTokensRef.current.push(token);
+      latencyMetricsRef.current.markKeyDown(token);
       void writeShellInput({ shellSessionId: activeShellSessionId, data });
     },
     []

@@ -95,6 +95,7 @@ function TerminalSurface({
     let fitAddon: FitAddon | null = null;
     let dataDisposable: { dispose: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let resizeFrameHandle: number | null = null;
 
     try {
       const resolvedOptions: TerminalCtorOptions = {
@@ -129,14 +130,20 @@ function TerminalSurface({
 
       // Resize observer to re-fit when the container changes size
       resizeObserver = new ResizeObserver(() => {
-        try {
-          fitAddon?.fit();
-          if (terminal) {
-            onResize?.(terminal.cols, terminal.rows);
-          }
-        } catch {
-          // safe to ignore in test environments
+        if (resizeFrameHandle !== null) {
+          return;
         }
+        resizeFrameHandle = window.requestAnimationFrame(() => {
+          resizeFrameHandle = null;
+          try {
+            fitAddon?.fit();
+            if (terminal) {
+              onResize?.(terminal.cols, terminal.rows);
+            }
+          } catch {
+            // safe to ignore in test environments
+          }
+        });
       });
       resizeObserver.observe(container);
     } catch (err) {
@@ -158,6 +165,10 @@ function TerminalSurface({
     return () => {
       dataDisposable?.dispose();
       resizeObserver?.disconnect();
+      if (resizeFrameHandle !== null) {
+        window.cancelAnimationFrame(resizeFrameHandle);
+        resizeFrameHandle = null;
+      }
       if (terminalRef.current) {
         terminalRef.current.dispose();
         terminalRef.current = null;
