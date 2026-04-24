@@ -2,9 +2,9 @@
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 #[cfg(windows)]
 use std::env;
-use std::path::PathBuf;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 
 #[cfg(windows)]
 fn resolve_windows_go_tool(program: &str) -> PathBuf {
@@ -29,7 +29,10 @@ fn resolve_windows_go_tool(program: &str) -> PathBuf {
     }
 
     if let Ok(user_profile) = env::var("USERPROFILE") {
-        let candidate = PathBuf::from(&user_profile).join("go").join("bin").join(&executable);
+        let candidate = PathBuf::from(&user_profile)
+            .join("go")
+            .join("bin")
+            .join(&executable);
         if candidate.exists() {
             return candidate;
         }

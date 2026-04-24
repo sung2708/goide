@@ -8,7 +8,7 @@ use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
-use crate::ui_bridge::types::{ShellExitPayloadDto, ShellOutputPayloadDto};
+use crate::ui_bridge::types::{ShellExitPayloadDto, ShellHealthDto, ShellOutputPayloadDto};
 
 /// Maximum number of bytes retained in a session's scrollback buffer.
 /// 256 KiB is more than enough to fill a typical terminal viewport many times.
@@ -19,6 +19,8 @@ const SCROLLBACK_LIMIT: usize = 256 * 1024;
 pub struct EnsureShellSessionResponse {
     pub shell_session_id: String,
     pub reused: bool,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: Option<String>,
     /// Buffered PTY output to replay into a fresh xterm surface.
     /// Non-empty when `reused == true` and the session has prior output.
     /// Empty string for brand-new sessions.
@@ -52,6 +54,8 @@ pub struct ShellSessionHandle {
     /// Shared with the reader task so the task can append without locking the
     /// outer store.
     pub scrollback: Arc<Mutex<String>>,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: String,
 }
 
 impl ShellSessionHandle {
@@ -133,14 +137,17 @@ fn windows_shell_spawn_order(preferred: &'static str) -> [&'static str; 3] {
 }
 
 #[cfg(windows)]
-fn spawn_windows_shell_with_fallback<T, F>(preferred: &'static str, mut spawn: F) -> Result<T>
+fn spawn_windows_shell_with_fallback<T, F>(
+    preferred: &'static str,
+    mut spawn: F,
+) -> Result<(T, &'static str)>
 where
     F: FnMut(&'static str) -> Result<T>,
 {
     let mut errors = Vec::new();
     for shell in windows_shell_spawn_order(preferred) {
         match spawn(shell) {
-            Ok(child) => return Ok(child),
+            Ok(child) => return Ok((child, shell)),
             Err(err) => errors.push(format!("{shell}: {err:#}")),
         }
     }
@@ -166,10 +173,7 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     // --- Validate workspace_root before any PTY work ---
     let root_path = Path::new(workspace_root);
     if !root_path.exists() {
-        return Err(anyhow!(
-            "workspace root does not exist: {}",
-            workspace_root
-        ));
+        return Err(anyhow!("workspace root does not exist: {}", workspace_root));
     }
     if !root_path.is_dir() {
         return Err(anyhow!(
@@ -189,6 +193,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             return Ok(EnsureShellSessionResponse {
                 shell_session_id: existing_id,
                 reused: true,
+                shell_health: existing_handle.shell_health.clone(),
+                selected_shell: Some(existing_handle.selected_shell.clone()),
                 replay,
             });
         }
@@ -214,21 +220,33 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     };
 
     #[cfg(windows)]
-    let child = spawn_windows_shell_with_fallback(resolve_windows_shell(), |shell| {
-        let mut command = CommandBuilder::new(shell);
-        command.cwd(&cwd);
-        pair.slave
-            .spawn_command(command)
-            .with_context(|| format!("failed to spawn shell `{shell}`"))
-    })?;
+    let (child, shell_health, selected_shell) = {
+        let preferred_shell = resolve_windows_shell();
+        let (child, selected_shell) =
+            spawn_windows_shell_with_fallback(preferred_shell, |shell| {
+                let mut command = CommandBuilder::new(shell);
+                command.cwd(&cwd);
+                pair.slave
+                    .spawn_command(command)
+                    .with_context(|| format!("failed to spawn shell `{shell}`"))
+            })?;
+        let shell_health = if selected_shell == preferred_shell {
+            ShellHealthDto::Launch
+        } else {
+            ShellHealthDto::Degraded
+        };
+        (child, shell_health, selected_shell.to_string())
+    };
 
     #[cfg(not(windows))]
-    let child = {
+    let (child, shell_health, selected_shell) = {
         let mut command = shell_command();
         command.cwd(&cwd);
-        pair.slave
+        let child = pair
+            .slave
             .spawn_command(command)
-            .context("failed to spawn shell")?
+            .context("failed to spawn shell")?;
+        (child, ShellHealthDto::Launch, "bash".to_string())
     };
 
     let writer = pair
@@ -257,6 +275,7 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     let output_session_id = shell_session_id.clone();
     let output_app = app_handle.clone();
     let exit_store = store.clone();
+    let exit_selected_shell = selected_shell.clone();
     let reader_task = tokio::task::spawn_blocking(move || {
         let mut buffer = [0_u8; 4096];
         loop {
@@ -305,9 +324,7 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             .map(|handle| {
                 handle.block_on(async {
                     let mut guard = exit_store.lock().await;
-                    guard
-                        .editor_to_shell
-                        .retain(|_, v| v != &output_session_id);
+                    guard.editor_to_shell.retain(|_, v| v != &output_session_id);
                     guard.sessions.remove(&output_session_id).is_some()
                 })
             })
@@ -320,6 +337,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
                 "shell-exit",
                 ShellExitPayloadDto {
                     shell_session_id: output_session_id,
+                    shell_health: ShellHealthDto::Exit,
+                    selected_shell: Some(exit_selected_shell),
                 },
             );
         }
@@ -332,6 +351,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
         child,
         reader_task,
         scrollback,
+        shell_health: shell_health.clone(),
+        selected_shell: selected_shell.clone(),
     };
 
     guard
@@ -342,6 +363,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     Ok(EnsureShellSessionResponse {
         shell_session_id,
         reused: false,
+        shell_health,
+        selected_shell: Some(selected_shell),
         replay: String::new(),
     })
 }
@@ -402,9 +425,7 @@ pub async fn dispose_shell_session_inner(
     shell_session_id: &str,
 ) -> Result<()> {
     let mut guard = store.lock().await;
-    guard
-        .editor_to_shell
-        .retain(|_, v| v != shell_session_id);
+    guard.editor_to_shell.retain(|_, v| v != shell_session_id);
     if let Some(handle) = guard.sessions.remove(shell_session_id) {
         // Release the store lock before running potentially-blocking cleanup.
         drop(guard);
@@ -506,6 +527,8 @@ pub async fn ensure_shell_session_for_test(
             return Ok(EnsureShellSessionResponse {
                 shell_session_id: existing_id,
                 reused: true,
+                shell_health: existing_handle.shell_health.clone(),
+                selected_shell: Some(existing_handle.selected_shell.clone()),
                 replay,
             });
         }
@@ -522,6 +545,8 @@ pub async fn ensure_shell_session_for_test(
         child: Box::new(NullChild),
         reader_task,
         scrollback: Arc::new(Mutex::new(String::new())),
+        shell_health: ShellHealthDto::Launch,
+        selected_shell: "test-shell".to_string(),
     };
 
     guard
@@ -532,6 +557,8 @@ pub async fn ensure_shell_session_for_test(
     Ok(EnsureShellSessionResponse {
         shell_session_id,
         reused: false,
+        shell_health: ShellHealthDto::Launch,
+        selected_shell: Some("test-shell".to_string()),
         replay: String::new(),
     })
 }
@@ -556,12 +583,12 @@ mod tests {
         SCROLLBACK_LIMIT,
     };
     #[cfg(windows)]
-    use anyhow::anyhow;
-    #[cfg(windows)]
     use super::{
         resolve_windows_shell_with, resolve_windows_shell_with_cached,
         spawn_windows_shell_with_fallback,
     };
+    #[cfg(windows)]
+    use anyhow::anyhow;
     #[cfg(windows)]
     use std::sync::atomic::{AtomicUsize, Ordering};
     #[cfg(windows)]
@@ -622,10 +649,9 @@ mod tests {
         let store = ShellSessionStore::default();
 
         // Create the session.
-        let first =
-            ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
-                .await
-                .expect("first");
+        let first = ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
+            .await
+            .expect("first");
 
         // Manually populate the scrollback buffer to simulate PTY output.
         {
@@ -639,10 +665,9 @@ mod tests {
         }
 
         // Ensure again — should reuse and carry the scrollback as replay.
-        let second =
-            ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
-                .await
-                .expect("second");
+        let second = ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
+            .await
+            .expect("second");
 
         assert!(second.reused);
         assert_eq!(second.replay, "$ ls\r\nmain.go\r\n");
@@ -652,10 +677,9 @@ mod tests {
     async fn scrollback_is_empty_after_disposal_and_new_session() {
         let store = ShellSessionStore::default();
 
-        let first =
-            ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
-                .await
-                .expect("first");
+        let first = ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
+            .await
+            .expect("first");
 
         // Populate scrollback.
         {
@@ -669,10 +693,9 @@ mod tests {
             .expect("dispose");
 
         // New session: replay must be empty.
-        let second =
-            ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
-                .await
-                .expect("second");
+        let second = ensure_shell_session_for_test(&store, "C:/workspace", "editor:main.go", None)
+            .await
+            .expect("second");
 
         assert!(!second.reused);
         assert!(second.replay.is_empty());
@@ -727,7 +750,7 @@ mod tests {
     #[test]
     fn retries_next_windows_candidate_when_preferred_fails_to_spawn() {
         let mut attempts = Vec::new();
-        let chosen = spawn_windows_shell_with_fallback("pwsh", |shell| {
+        let (_child, chosen) = spawn_windows_shell_with_fallback("pwsh", |shell| {
             attempts.push(shell);
             if shell == "powershell.exe" {
                 Ok(shell)
@@ -745,7 +768,7 @@ mod tests {
     #[test]
     fn retries_to_cmd_when_both_powershell_variants_fail_to_spawn() {
         let mut attempts = Vec::new();
-        let chosen = spawn_windows_shell_with_fallback("pwsh", |shell| {
+        let (_child, chosen) = spawn_windows_shell_with_fallback("pwsh", |shell| {
             attempts.push(shell);
             if shell == "cmd" {
                 Ok(shell)
@@ -779,4 +802,3 @@ mod tests {
         assert_eq!(checks.load(Ordering::SeqCst), 1);
     }
 }
-

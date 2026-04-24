@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use crate::integration::command::tokio_command;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -260,13 +260,17 @@ impl DapClient {
     }
 
     pub async fn pause_thread(&mut self, thread_id: i64) -> Result<()> {
-        let response = self.request("pause", json!({ "threadId": thread_id })).await?;
+        let response = self
+            .request("pause", json!({ "threadId": thread_id }))
+            .await?;
         ensure_success("pause", &response)?;
         Ok(())
     }
 
     pub async fn next(&mut self, thread_id: i64) -> Result<()> {
-        let response = self.request("next", json!({ "threadId": thread_id })).await?;
+        let response = self
+            .request("next", json!({ "threadId": thread_id }))
+            .await?;
         ensure_success("next", &response)?;
         Ok(())
     }
