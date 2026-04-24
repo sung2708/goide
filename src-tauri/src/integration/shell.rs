@@ -3,7 +3,7 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use tauri::Emitter;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -67,7 +67,7 @@ impl ShellSessionHandle {
 fn shell_command() -> CommandBuilder {
     #[cfg(windows)]
     {
-        CommandBuilder::new("powershell.exe")
+        CommandBuilder::new(resolve_windows_shell())
     }
     #[cfg(not(windows))]
     {
@@ -75,6 +75,80 @@ fn shell_command() -> CommandBuilder {
         cmd.arg("-l");
         cmd
     }
+}
+
+#[cfg(windows)]
+const WINDOWS_SHELL_FALLBACK_ORDER: [&str; 3] = ["pwsh", "powershell.exe", "cmd"];
+
+#[cfg(windows)]
+static WINDOWS_SHELL_CACHE: OnceLock<&'static str> = OnceLock::new();
+
+#[cfg(windows)]
+fn resolve_windows_shell() -> &'static str {
+    resolve_windows_shell_with_cached(&WINDOWS_SHELL_CACHE, is_windows_shell_available)
+}
+
+#[cfg(windows)]
+fn resolve_windows_shell_with_cached<F>(
+    cache: &OnceLock<&'static str>,
+    is_available: F,
+) -> &'static str
+where
+    F: Fn(&str) -> bool,
+{
+    *cache.get_or_init(|| resolve_windows_shell_with(is_available))
+}
+
+#[cfg(windows)]
+fn is_windows_shell_available(shell: &str) -> bool {
+    std::process::Command::new("where")
+        .arg(shell)
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn resolve_windows_shell_with<F>(is_available: F) -> &'static str
+where
+    F: Fn(&str) -> bool,
+{
+    if is_available("pwsh") {
+        return "pwsh";
+    }
+    if is_available("powershell.exe") {
+        return "powershell.exe";
+    }
+    "cmd"
+}
+
+#[cfg(windows)]
+fn windows_shell_spawn_order(preferred: &'static str) -> [&'static str; 3] {
+    match preferred {
+        "pwsh" => WINDOWS_SHELL_FALLBACK_ORDER,
+        "powershell.exe" => ["powershell.exe", "cmd", "pwsh"],
+        "cmd" => ["cmd", "pwsh", "powershell.exe"],
+        _ => WINDOWS_SHELL_FALLBACK_ORDER,
+    }
+}
+
+#[cfg(windows)]
+fn spawn_windows_shell_with_fallback<T, F>(preferred: &'static str, mut spawn: F) -> Result<T>
+where
+    F: FnMut(&'static str) -> Result<T>,
+{
+    let mut errors = Vec::new();
+    for shell in windows_shell_spawn_order(preferred) {
+        match spawn(shell) {
+            Ok(child) => return Ok(child),
+            Err(err) => errors.push(format!("{shell}: {err:#}")),
+        }
+    }
+
+    Err(anyhow!(
+        "failed to spawn shell; attempted {}",
+        errors.join(" | ")
+    ))
 }
 
 /// Public entry-point for Tauri commands.
@@ -134,17 +208,28 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
         })
         .context("failed to create pseudo terminal")?;
 
-    let mut command = shell_command();
     let cwd = match cwd_relative_path {
         Some(rel) if !rel.is_empty() && rel != "." => root_path.join(rel),
         _ => root_path.to_path_buf(),
     };
-    command.cwd(&cwd);
 
-    let child = pair
-        .slave
-        .spawn_command(command)
-        .context("failed to spawn shell")?;
+    #[cfg(windows)]
+    let child = spawn_windows_shell_with_fallback(resolve_windows_shell(), |shell| {
+        let mut command = CommandBuilder::new(shell);
+        command.cwd(&cwd);
+        pair.slave
+            .spawn_command(command)
+            .with_context(|| format!("failed to spawn shell `{shell}`"))
+    })?;
+
+    #[cfg(not(windows))]
+    let child = {
+        let mut command = shell_command();
+        command.cwd(&cwd);
+        pair.slave
+            .spawn_command(command)
+            .context("failed to spawn shell")?
+    };
 
     let writer = pair
         .master
@@ -470,6 +555,17 @@ mod tests {
         dispose_shell_session_for_test, ensure_shell_session_for_test, ShellSessionStore,
         SCROLLBACK_LIMIT,
     };
+    #[cfg(windows)]
+    use anyhow::anyhow;
+    #[cfg(windows)]
+    use super::{
+        resolve_windows_shell_with, resolve_windows_shell_with_cached,
+        spawn_windows_shell_with_fallback,
+    };
+    #[cfg(windows)]
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    #[cfg(windows)]
+    use std::sync::OnceLock;
 
     #[tokio::test]
     async fn reuses_existing_shell_session_for_the_same_editor_key() {
@@ -605,4 +701,82 @@ mod tests {
 
         assert!(sb.len() <= SCROLLBACK_LIMIT);
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn resolves_pwsh_first_when_available() {
+        let shell = resolve_windows_shell_with(|name| matches!(name, "pwsh"));
+        assert_eq!(shell, "pwsh");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn falls_back_to_windows_powershell_when_pwsh_missing() {
+        let shell = resolve_windows_shell_with(|name| matches!(name, "powershell.exe"));
+        assert_eq!(shell, "powershell.exe");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn falls_back_to_cmd_when_no_powershell_is_available() {
+        let shell = resolve_windows_shell_with(|_| false);
+        assert_eq!(shell, "cmd");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retries_next_windows_candidate_when_preferred_fails_to_spawn() {
+        let mut attempts = Vec::new();
+        let chosen = spawn_windows_shell_with_fallback("pwsh", |shell| {
+            attempts.push(shell);
+            if shell == "powershell.exe" {
+                Ok(shell)
+            } else {
+                Err(anyhow!("spawn failed"))
+            }
+        })
+        .expect("powershell should be retried and selected");
+
+        assert_eq!(chosen, "powershell.exe");
+        assert_eq!(attempts, vec!["pwsh", "powershell.exe"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn retries_to_cmd_when_both_powershell_variants_fail_to_spawn() {
+        let mut attempts = Vec::new();
+        let chosen = spawn_windows_shell_with_fallback("pwsh", |shell| {
+            attempts.push(shell);
+            if shell == "cmd" {
+                Ok(shell)
+            } else {
+                Err(anyhow!("spawn failed"))
+            }
+        })
+        .expect("cmd should be the final retry candidate");
+
+        assert_eq!(chosen, "cmd");
+        assert_eq!(attempts, vec!["pwsh", "powershell.exe", "cmd"]);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn caches_windows_shell_resolution_after_first_lookup() {
+        let cache = OnceLock::new();
+        let checks = AtomicUsize::new(0);
+
+        let first = resolve_windows_shell_with_cached(&cache, |name| {
+            checks.fetch_add(1, Ordering::SeqCst);
+            name == "pwsh"
+        });
+        let second = resolve_windows_shell_with_cached(&cache, |_name| {
+            checks.fetch_add(100, Ordering::SeqCst);
+            false
+        });
+
+        assert_eq!(first, "pwsh");
+        assert_eq!(second, "pwsh");
+        assert_eq!(checks.load(Ordering::SeqCst), 1);
+    }
 }
+
