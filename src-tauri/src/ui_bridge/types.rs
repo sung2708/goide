@@ -46,6 +46,20 @@ pub struct FsEntryDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum WorkspaceFsSyncModeDto {
+    Watch,
+    Polling,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartWorkspaceFsWatchResponseDto {
+    pub workspace_root: String,
+    pub mode: WorkspaceFsSyncModeDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum ConcurrencyConfidenceDto {
     Predicted,
     Likely,

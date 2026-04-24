@@ -11,6 +11,7 @@ import type {
   DiagnosticsResponse,
   DebuggerState,
   FsEntry,
+  StartWorkspaceFsWatchResponse,
   RuntimeAvailabilityResponse,
   RuntimePanelSnapshot,
   RuntimeTopologySnapshot,
@@ -61,6 +62,20 @@ export async function writeWorkspaceFile(
     workspaceRoot,
     relativePath,
     content,
+  });
+}
+
+export async function startWorkspaceFsWatch(
+  workspaceRoot: string
+): Promise<ApiResponse<StartWorkspaceFsWatchResponse>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: { workspaceRoot, mode: "watch" },
+    };
+  }
+  return invoke<ApiResponse<StartWorkspaceFsWatchResponse>>("start_workspace_fs_watch", {
+    workspaceRoot,
   });
 }
 
