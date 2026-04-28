@@ -8,17 +8,22 @@ type TerminalCtorOptions = ITerminalOptions & ITerminalInitOnlyOptions;
 const DEFAULT_OPTIONS: TerminalCtorOptions = {
   convertEol: true,
   cursorBlink: true,
+  allowTransparency: false,
+  drawBoldTextInBrightColors: false,
+  minimumContrastRatio: 4.5,
   fontSize: 13,
-  fontFamily: '"Fira Code", "Cascadia Code", "Menlo", monospace',
+  lineHeight: 1.35,
+  letterSpacing: 0,
+  fontFamily: '"Cascadia Mono", "Cascadia Code", "Fira Code", monospace',
   theme: {
-    background: "#1e1e2e",
+    background: "#11111b",
     foreground: "#cdd6f4",
     cursor: "#f5e0dc",
-    selectionBackground: "#585b70",
+    selectionBackground: "#45475a",
   },
   cols: 120,
   rows: 40,
-  scrollback: 5000,
+  scrollback: 10000,
 };
 
 export type TerminalFocusOwner = "editor" | "terminal";
@@ -87,9 +92,7 @@ function TerminalSurface({
 
     // Clear any stale xterm DOM from a previous mount (handles StrictMode
     // double-invocation and any other scenario where the container is reused).
-    while (container.firstChild) {
-      container.removeChild(container.firstChild);
-    }
+    container.replaceChildren();
 
     let terminal: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
@@ -111,13 +114,6 @@ function TerminalSurface({
       terminal.loadAddon(fitAddon);
       terminal.open(container);
 
-      // Fit after open so the terminal sizes to its container
-      try {
-        fitAddon.fit();
-      } catch {
-        // fit() can throw in jsdom/test environments — safe to ignore
-      }
-
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
 
@@ -128,7 +124,19 @@ function TerminalSurface({
 
       onMount?.(terminal);
 
-      // Resize observer to re-fit when the container changes size
+      // Fit after open via requestAnimationFrame so the terminal sizes to its
+      // container once the browser has performed layout.
+      resizeFrameHandle = window.requestAnimationFrame(() => {
+        resizeFrameHandle = null;
+        try {
+          fitAddon?.fit();
+        } catch {
+          // fit() can throw in jsdom/test environments — safe to ignore
+        }
+      });
+
+      // Resize observer to re-fit when the container changes size.
+      // One fit is scheduled per animation frame (debounced).
       resizeObserver = new ResizeObserver(() => {
         if (resizeFrameHandle !== null) {
           return;
@@ -203,7 +211,7 @@ function TerminalSurface({
       ref={containerRef}
       data-testid="terminal-surface-host"
       className={className}
-      style={{ width: "100%", height: "100%" }}
+      style={{ width: "100%", height: "100%", touchAction: "none" }}
       onFocus={() => onFocusOwnerChange?.("terminal")}
       onBlur={() => onFocusOwnerChange?.("editor")}
     />

@@ -5,9 +5,10 @@ import {
   faMagnifyingGlass,
   faCodeBranch,
   faShareNodes,
+  faBug,
 } from "@fortawesome/free-solid-svg-icons";
-import { 
-  faFolder 
+import {
+  faFolder
 } from "@fortawesome/free-regular-svg-icons";
 
 // Map the icons to the names the user requested
@@ -16,48 +17,58 @@ const byPrefixAndName = {
     'magnifying-glass': faMagnifyingGlass,
     'code-branch': faCodeBranch,
     'share-nodes': faShareNodes,
+    'bug': faBug,
   },
   far: {
     'folder': faFolder,
   },
 };
 
-export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency";
+export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency" | "debug";
 
 interface ActivityBarProps {
   activeTab: ActivityBarTab;
   onTabChange: (tab: ActivityBarTab) => void;
   signalCount?: number;
+  showDebugTab?: boolean;
 }
 
-const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signalCount = 0 }) => {
+const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signalCount = 0, showDebugTab = false }) => {
   return (
     <div className="flex w-12 flex-col items-center border-r border-[var(--border-muted)] bg-[var(--crust)] py-4 gap-4">
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.far['folder']} />} 
-        active={activeTab === "explorer"} 
-        onClick={() => onTabChange("explorer")} 
+      <ActivityItem
+        icon={<FontAwesomeIcon icon={byPrefixAndName.far['folder']} />}
+        active={activeTab === "explorer"}
+        onClick={() => onTabChange("explorer")}
         title="Explorer"
       />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['magnifying-glass']} />} 
-        active={activeTab === "search"} 
-        onClick={() => onTabChange("search")} 
+      <ActivityItem
+        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['magnifying-glass']} />}
+        active={activeTab === "search"}
+        onClick={() => onTabChange("search")}
         title="Search"
       />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['code-branch']} />} 
-        active={activeTab === "git"} 
-        onClick={() => onTabChange("git")} 
+      <ActivityItem
+        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['code-branch']} />}
+        active={activeTab === "git"}
+        onClick={() => onTabChange("git")}
         title="Git"
       />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['share-nodes']} />} 
-        active={activeTab === "concurrency"} 
-        onClick={() => onTabChange("concurrency")} 
+      <ActivityItem
+        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['share-nodes']} />}
+        active={activeTab === "concurrency"}
+        onClick={() => onTabChange("concurrency")}
         title="Concurrency Signals"
         badge={signalCount > 0 ? signalCount : undefined}
       />
+      {showDebugTab && (
+        <ActivityItem
+          icon={<FontAwesomeIcon icon={byPrefixAndName.fas['bug']} />}
+          active={activeTab === "debug"}
+          onClick={() => onTabChange("debug")}
+          title="Debug"
+        />
+      )}
       <div className="mt-auto" />
     </div>
   );

@@ -373,6 +373,8 @@ describe("EditorShell branch switching", () => {
       expect(screen.getByRole("button", { name: /switch branch/i })).toBeInTheDocument();
     });
 
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+
     const explorerBefore = Number(
       screen.getByTestId("mock-explorer").getAttribute("data-explorer-revision")
     );

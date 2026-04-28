@@ -402,10 +402,9 @@ export async function switchWorkspaceBranch(
 // ---- Shell session client wrappers ----
 
 /**
- * Ensure a shell session exists for the given workspace + editor session.
+ * Ensure a shell session exists for the given workspace surface.
  * Creates a new PTY session or returns the existing one.
  *
- * NOTE: The Rust/Tauri backend for this command is implemented in Task 4.
  * This wrapper is intentionally a no-op guard: in non-Tauri environments
  * (tests, browser), it returns a stable mock response so the frontend can
  * be wired and tested without the backend.
@@ -417,8 +416,10 @@ export async function ensureShellSession(
     return {
       ok: true,
       data: {
-        shellSessionId: `shell:${request.editorSessionKey}`,
+        shellSessionId: `shell:${request.surfaceKey}`,
         reused: false,
+        shellHealth: "launch",
+        selectedShell: null,
         replay: "",
       },
     };
