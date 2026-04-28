@@ -1078,7 +1078,8 @@ function CodeEditor({
     }
 
     const handleWheel = (event: WheelEvent) => {
-      if (event.ctrlKey) {
+      const target = event.target as Node | null;
+      if (!target || !container.contains(target) || event.ctrlKey) {
         return;
       }
       if (event.deltaX === 0 && event.deltaY === 0) {
@@ -1099,7 +1100,7 @@ function CodeEditor({
       requestMeasure();
     });
     resizeObserver.observe(container);
-    container.addEventListener("wheel", handleWheel, { passive: false, capture: true });
+    document.addEventListener("wheel", handleWheel, { passive: false, capture: true });
 
     const fonts = document.fonts;
     void fonts.ready.then(() => {
@@ -1110,7 +1111,7 @@ function CodeEditor({
 
     return () => {
       resizeObserver.disconnect();
-      container.removeEventListener("wheel", handleWheel, true);
+      document.removeEventListener("wheel", handleWheel, true);
     };
   }, [value]);
 
