@@ -1069,12 +1069,37 @@ function CodeEditor({
       emitViewportRange(view);
     };
 
+    const scrollElement = view.scrollDOM as Partial<HTMLElement> & {
+      scrollBy?: (options: ScrollToOptions) => void;
+      style?: CSSStyleDeclaration;
+    };
+    if (scrollElement.style) {
+      scrollElement.style.overscrollBehavior = "contain";
+    }
+
+    const handleWheel = (event: WheelEvent) => {
+      if (event.ctrlKey) {
+        return;
+      }
+      if (event.deltaX === 0 && event.deltaY === 0) {
+        return;
+      }
+      scrollElement.scrollBy?.({
+        left: event.deltaX,
+        top: event.deltaY,
+        behavior: "auto",
+      });
+      emitViewportRange(view);
+      event.preventDefault();
+    };
+
     requestMeasure();
 
     const resizeObserver = new ResizeObserver(() => {
       requestMeasure();
     });
     resizeObserver.observe(container);
+    container.addEventListener("wheel", handleWheel, { passive: false, capture: true });
 
     const fonts = document.fonts;
     void fonts.ready.then(() => {
@@ -1085,6 +1110,7 @@ function CodeEditor({
 
     return () => {
       resizeObserver.disconnect();
+      container.removeEventListener("wheel", handleWheel, true);
     };
   }, [value]);
 
@@ -1178,24 +1204,6 @@ function CodeEditor({
     <div
       ref={containerRef}
       className="h-full min-h-0 w-full"
-      onWheel={(event) => {
-        const view = viewRef.current;
-        if (!view || event.ctrlKey) {
-          return;
-        }
-
-        if (event.deltaX === 0 && event.deltaY === 0) {
-          return;
-        }
-
-        view.scrollDOM.scrollBy({
-          left: event.deltaX,
-          top: event.deltaY,
-          behavior: "auto",
-        });
-        emitViewportRange(view);
-        event.preventDefault();
-      }}
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {

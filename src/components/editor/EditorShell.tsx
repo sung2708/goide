@@ -2631,7 +2631,10 @@ function EditorShell() {
             maxSize={workspaceLayout.dockMode === "bottom" ? 520 : 780}
             onResize={handleTerminalPaneResize}
             primary={
-              <div hidden={!isBottomPanelOpen} className="h-full min-h-0 min-w-0">
+              <div
+                hidden={!isBottomPanelOpen}
+                className="h-full min-h-0 min-w-0"
+              >
                 <BottomPanel
                   activeTab={bottomPanelTab}
                   onActiveTabChange={setBottomPanelTab}

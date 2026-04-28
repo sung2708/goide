@@ -156,7 +156,7 @@ type TreeRowProps = {
   isDropTarget: boolean;
   draggingPath: string | null;
   decoration: FileDecoration | undefined;
-  rowRef: (element: HTMLButtonElement | null) => void;
+  rowRef: (element: HTMLDivElement | null) => void;
   onClick: (entryPath: string, isDir: boolean) => void;
   onContextMenu: (entryPath: string, x: number, y: number) => void;
   onDragStart: (entryPath: string) => void;
@@ -181,9 +181,12 @@ const TreeRow = memo(function TreeRow({
   const gitBadge = gitStatusLabel(decoration?.gitStatus);
 
   return (
-    <button
+    <div
       ref={rowRef}
-      type="button"
+      role="treeitem"
+      aria-selected={isSelected}
+      aria-expanded={entry.isDir ? isExpanded : undefined}
+      tabIndex={-1}
       draggable
       onDragStart={(event) => {
         onDragStart(entry.path);
@@ -209,6 +212,12 @@ const TreeRow = memo(function TreeRow({
         onContextMenu(entry.path, event.clientX, event.clientY);
       }}
       onClick={() => onClick(entry.path, entry.isDir)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick(entry.path, entry.isDir);
+        }
+      }}
       title={entry.path}
       className={cn(
         "group flex w-full items-center gap-1.5 rounded px-2 py-[5px] text-left text-[13px] transition-colors duration-75",
@@ -292,7 +301,7 @@ const TreeRow = memo(function TreeRow({
           )}
         </span>
       )}
-    </button>
+    </div>
   );
 });
 
@@ -320,7 +329,7 @@ function Explorer({
   const workspacePathRef = useRef(workspacePath);
   const treeRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const typeAheadRef = useRef<{ query: string; resetTimer: number | null }>({
     query: "",
     resetTimer: null,

@@ -39,6 +39,8 @@ export type TerminalSurfaceProps = {
   onResize?: (cols: number, rows: number) => void;
   /** Optional callback for terminal/editor focus ownership transitions. */
   onFocusOwnerChange?: (owner: TerminalFocusOwner) => void;
+  /** Optional signal to force a re-fit when a parent tab/panel becomes visible. */
+  fitRequestKey?: number;
   /**
    * Optional terminal options merged on top of the component defaults.
    * Lets callers override individual settings (e.g. fontSize, scrollback)
@@ -78,6 +80,7 @@ function TerminalSurface({
   onData,
   onResize,
   onFocusOwnerChange,
+  fitRequestKey,
   options,
   className,
 }: TerminalSurfaceProps) {
@@ -188,6 +191,28 @@ function TerminalSurface({
       }
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (fitRequestKey === undefined) {
+      return;
+    }
+    const terminal = terminalRef.current;
+    const fitAddon = fitAddonRef.current;
+    if (!terminal || !fitAddon) {
+      return;
+    }
+    const handle = window.requestAnimationFrame(() => {
+      try {
+        fitAddon.fit();
+        onResize?.(terminal.cols, terminal.rows);
+      } catch {
+        // safe to ignore in test environments
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(handle);
+    };
+  }, [fitRequestKey, onResize]);
 
   if (initError !== null) {
     return (

@@ -43,6 +43,7 @@ function BottomPanel({
   onDockModeChange,
 }: BottomPanelProps) {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [shellFitRequestKey, setShellFitRequestKey] = useState(0);
   const [isOverflowOpen, setIsOverflowOpen] = useState(false);
   const overflowRef = useRef<HTMLDivElement>(null);
 
@@ -75,6 +76,12 @@ function BottomPanel({
       onClear !== undefined ||
       onClose !== undefined);
 
+  useEffect(() => {
+    if (activeTab === "shell") {
+      setShellFitRequestKey((current) => current + 1);
+    }
+  }, [activeTab]);
+
   const tabBase =
     "rounded-sm px-3 py-1 text-[12px] font-semibold transition-colors duration-100";
   const tabActive = "bg-[var(--bg-active)] text-[var(--lavender)]";
@@ -95,7 +102,7 @@ function BottomPanel({
         "relative z-40 flex flex-col bg-[var(--mantle)]",
         dockMode === "right"
           ? "h-full min-h-0 border-l border-[var(--border-muted)]"
-          : "max-h-[40vh] min-h-[11rem] border-t border-[var(--border-muted)]"
+          : "h-full min-h-[11rem] border-t border-[var(--border-muted)]"
       )}
       data-testid="bottom-panel"
     >
@@ -261,14 +268,27 @@ function BottomPanel({
       {/* Tab content — both panels stay mounted so ShellTerminalView keeps its PTY
           session alive across tab switches. Visibility is toggled via the HTML
           `hidden` attribute rather than conditional rendering. */}
-      <div className="flex-1 overflow-hidden">
-        <div hidden={activeTab !== "logs"} className="h-full">
+      <div className="relative flex-1 min-h-0 overflow-hidden">
+        <div
+          aria-hidden={activeTab !== "logs"}
+          className={cn(
+            "absolute inset-0 h-full min-h-0",
+            activeTab !== "logs" && "pointer-events-none opacity-0"
+          )}
+        >
           <LogsTerminalView entries={logEntries} className="h-full" />
         </div>
-        <div hidden={activeTab !== "shell"} className="h-full">
+        <div
+          aria-hidden={activeTab !== "shell"}
+          className={cn(
+            "absolute inset-0 h-full min-h-0",
+            activeTab !== "shell" && "pointer-events-none opacity-0"
+          )}
+        >
           <ShellTerminalView
             workspacePath={workspacePath}
             surfaceKey={surfaceKey}
+            fitRequestKey={shellFitRequestKey}
           />
         </div>
       </div>

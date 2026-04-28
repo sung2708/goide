@@ -87,8 +87,8 @@ describe("ResizableSplit — pointer capture while dragging", () => {
 
     const hitZone = screen.getByTestId("separator-hit-zone");
     fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 320 });
-    fireEvent.pointerCancel(window, { pointerId: 7 });
-    fireEvent.pointerMove(window, { clientX: 400 });
+    fireEvent.pointerCancel(hitZone, { pointerId: 7 });
+    fireEvent.pointerMove(hitZone, { clientX: 400 });
 
     expect(onResize).not.toHaveBeenCalled();
   });
@@ -105,12 +105,11 @@ describe("ResizableSplit — hit target", () => {
     expect(hitZone).toContainElement(screen.getByRole("separator"));
   });
 
-  it("hit-zone is wider than 1px for vertical orientation (larger touch target)", () => {
+  it("hit-zone is the focusable separator for vertical orientation (larger touch target)", () => {
     renderSplit({ orientation: "vertical" });
     const hitZone = screen.getByTestId("separator-hit-zone");
-    // The hit zone must have a meaningful width class larger than 1px.
-    // We just confirm it exists and is not the separator itself.
-    expect(hitZone).not.toBe(screen.getByRole("separator"));
+    expect(hitZone).toBe(screen.getByRole("separator"));
+    expect(hitZone).toHaveAttribute("tabindex", "0");
   });
 });
 

@@ -52,13 +52,15 @@ describe("BottomPanel", () => {
     // Both panels stay mounted; only visibility differs
     const shellView = screen.getByTestId("shell-terminal-view");
     expect(shellView).toBeInTheDocument();
-    // The shell panel's wrapper should NOT be hidden when shell is active
-    expect(shellView.closest("[hidden]")).toBeNull();
+    // The shell panel's wrapper should be active when shell is selected
+    expect(shellView.parentElement).toHaveAttribute("aria-hidden", "false");
+    expect(shellView.parentElement).not.toHaveClass("pointer-events-none", "opacity-0");
 
     const logsView = screen.getByTestId("logs-terminal-view");
     expect(logsView).toBeInTheDocument();
-    // The logs panel's wrapper should be hidden when shell is active
-    expect(logsView.closest("[hidden]")).not.toBeNull();
+    // The logs panel stays mounted but becomes inactive when shell is selected
+    expect(logsView.parentElement).toHaveAttribute("aria-hidden", "true");
+    expect(logsView.parentElement).toHaveClass("pointer-events-none", "opacity-0");
   });
 
   it("logs tab is selected by default when activeTab is logs", () => {
@@ -250,7 +252,7 @@ describe("BottomPanel", () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the panel height bounded for long output", () => {
+  it("keeps a minimum panel height without forcing a capped shell height in bottom dock", () => {
     render(
       <BottomPanel
         activeTab="logs"
@@ -261,7 +263,7 @@ describe("BottomPanel", () => {
       />
     );
 
-    expect(screen.getByTestId("bottom-panel")).toHaveClass("max-h-[40vh]");
+    expect(screen.getByTestId("bottom-panel")).not.toHaveClass("max-h-[40vh]");
     expect(screen.getByTestId("bottom-panel")).toHaveClass("min-h-[11rem]");
   });
 
@@ -308,7 +310,8 @@ describe("BottomPanel", () => {
     const shellView = screen.getByTestId("shell-terminal-view");
     expect(shellView).toBeInTheDocument();
     expect(shellView).toHaveTextContent("shell:editor:main.go");
-    expect(shellView.closest("[hidden]")).toBeNull();
+    expect(shellView.parentElement).toHaveAttribute("aria-hidden", "false");
+    expect(shellView.parentElement).not.toHaveClass("pointer-events-none", "opacity-0");
 
     // Log clear action must not appear when shell tab is active
     expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();

@@ -16,6 +16,7 @@ type ShellTerminalViewProps = {
   workspacePath: string | null;
   surfaceKey: string | null;
   cwdRelativePath?: string | null;
+  fitRequestKey?: number;
 };
 
 /**
@@ -49,6 +50,7 @@ function ShellTerminalView({
   workspacePath,
   surfaceKey,
   cwdRelativePath,
+  fitRequestKey,
 }: ShellTerminalViewProps) {
   const [shellSessionId, setShellSessionId] = useState<string | null>(null);
   const [shellError, setShellError] = useState<string | null>(null);
@@ -449,6 +451,7 @@ function ShellTerminalView({
       onData={handleData}
       onResize={handleResize}
       onFocusOwnerChange={handleFocusOwnerChange}
+      fitRequestKey={fitRequestKey}
       className="h-full"
     />
   );
