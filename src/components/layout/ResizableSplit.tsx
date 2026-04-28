@@ -181,7 +181,7 @@ function ResizableSplit({
         tabIndex={0}
         data-testid="separator-hit-zone"
         className={cn(
-          "relative z-20 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
+          "relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
           isHorizontal ? "-mx-2 w-5 cursor-col-resize" : "-my-2 h-5 cursor-row-resize"
         )}
         style={{ touchAction: "none" }}
