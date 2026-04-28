@@ -138,6 +138,22 @@ async function toggleMockBreakpointAtLine(line: number) {
 }
 
 describe("EditorShell debug controller", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
+  const openWorkspaceOpenGoFileAndSwitchToDebugTab = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    // The debug tab should now be visible since main.go is a .go file
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     openMock.mockResolvedValue("C:/workspace");
@@ -196,7 +212,7 @@ describe("EditorShell debug controller", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
@@ -211,7 +227,7 @@ describe("EditorShell debug controller", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
@@ -233,7 +249,7 @@ describe("EditorShell debug controller", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
@@ -257,7 +273,7 @@ describe("EditorShell debug controller", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
@@ -268,7 +284,7 @@ describe("EditorShell debug controller", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await toggleMockBreakpointAtLine(12);
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
@@ -300,7 +316,7 @@ describe("EditorShell debug controller", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
 
@@ -323,9 +339,11 @@ describe("EditorShell debug controller", () => {
       breakpoints: [],
     });
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    // Navigate to the Debug sidebar tab to see session controls
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
     expect(await screen.findByRole("button", { name: /step over/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /step into/i })).toBeInTheDocument();
@@ -341,12 +359,16 @@ describe("EditorShell debug controller", () => {
           resolveStop = () => resolve({ ok: true, data: null });
         })
     );
+    // Keep session alive so stop controls stay visible
+    setMockDebuggerState({ sessionActive: true, paused: false });
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    // Navigate to the Debug sidebar tab to see session controls
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
     expect(vi.mocked(startDebugSession)).toHaveBeenCalledTimes(1);
     await screen.findByRole("button", { name: /stop debugging/i });
@@ -362,12 +384,16 @@ describe("EditorShell debug controller", () => {
   it("recovers from stop errors without remaining in stopping state", async () => {
     const user = userEvent.setup();
     deactivateDeepTraceMock.mockRejectedValueOnce(new Error("stop failed"));
+    // Keep session alive so stop controls stay visible
+    setMockDebuggerState({ sessionActive: true, paused: false });
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    // Navigate to the Debug sidebar tab to see session controls
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
     await screen.findByRole("button", { name: /stop debugging/i });
     fireEvent.keyDown(window, { key: "F5", shiftKey: true });
@@ -384,12 +410,16 @@ describe("EditorShell debug controller", () => {
       ok: false,
       error: { message: "failed to stop debug" },
     });
+    // Keep session alive so stop controls stay visible
+    setMockDebuggerState({ sessionActive: true, paused: false });
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    // Navigate to the Debug sidebar tab to see session controls
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
     await screen.findByRole("button", { name: /stop debugging/i });
 
     fireEvent.keyDown(window, { key: "F5", shiftKey: true });
@@ -399,5 +429,65 @@ describe("EditorShell debug controller", () => {
       expect(screen.queryByText(/^Stopping$/i)).toBeNull();
       expect(screen.getByRole("button", { name: /stop debugging/i })).toBeInTheDocument();
     });
+  });
+
+  // ---- New tests for Task 7: contextual debug sidebar tab ----
+
+  it("does not show the Debug activity item when no workspace or file is open", async () => {
+    render(<EditorShell />);
+    expect(screen.queryByRole("button", { name: /^debug$/i })).toBeNull();
+  });
+
+  it("does not show the Debug activity item after opening a workspace but no file", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    // workspace open but no file selected
+    expect(screen.queryByRole("button", { name: /^debug$/i })).toBeNull();
+  });
+
+  it("shows the Debug activity item after a .go file is opened", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    // main.go is a .go file → debug tab should appear
+    expect(await screen.findByRole("button", { name: /^debug$/i })).toBeInTheDocument();
+  });
+
+  it("does not show debug controls in the sidebar when the Explorer tab is active", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    // Stay on explorer tab — debug sidebar section must not be visible
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+    expect(screen.queryByText(/runtime session/i)).toBeNull();
+  });
+
+  it("shows debug controls in the sidebar when the Debug tab is active", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
+    // The debug sidebar section must now be visible
+    expect(screen.getByText(/runtime session/i)).toBeInTheDocument();
+  });
+
+  it("hides debug controls when switching from Debug tab back to Explorer", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
+    // Confirm debug panel is showing
+    expect(screen.getByText(/runtime session/i)).toBeInTheDocument();
+    // Switch back to Explorer
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+    expect(screen.queryByText(/runtime session/i)).toBeNull();
+  });
+
+  it("Start Debug Session button is present in the debug sidebar when no session is running", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+    await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
+    expect(screen.getByRole("button", { name: /start debug session/i })).toBeInTheDocument();
   });
 });

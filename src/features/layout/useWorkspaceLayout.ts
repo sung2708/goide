@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 export type DockMode = "bottom" | "right";
 
 export type WorkspaceSplitSizes = {
   left: number;
-  terminal: number;
+  terminalBottom: number;
+  terminalRight: number;
 };
 
 type StoredWorkspaceLayout = {
@@ -16,7 +17,8 @@ export const DEFAULT_WORKSPACE_LAYOUT = {
   dockMode: "bottom" as DockMode,
   splitSizes: {
     left: 240,
-    terminal: 320,
+    terminalBottom: 320,
+    terminalRight: 480,
   },
 };
 
@@ -59,10 +61,14 @@ function readStoredLayout(storageKey: string): {
           typeof parsed.splitSizes?.left === "number"
             ? parsed.splitSizes.left
             : DEFAULT_WORKSPACE_LAYOUT.splitSizes.left,
-        terminal:
-          typeof parsed.splitSizes?.terminal === "number"
-            ? parsed.splitSizes.terminal
-            : DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminal,
+        terminalBottom:
+          typeof parsed.splitSizes?.terminalBottom === "number"
+            ? parsed.splitSizes.terminalBottom
+            : DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom,
+        terminalRight:
+          typeof parsed.splitSizes?.terminalRight === "number"
+            ? parsed.splitSizes.terminalRight
+            : DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalRight,
       },
     };
   } catch {
@@ -90,6 +96,10 @@ export function useWorkspaceLayout(workspacePath: string | null) {
   const [splitSizes, setSplitSizesState] = useState<WorkspaceSplitSizes>(() => {
     return readStoredLayout(storageKey).splitSizes;
   });
+  // Keep a ref of current dockMode so setTerminalSize can read it without
+  // nesting state-setter calls (which is unreliable in test environments).
+  const dockModeRef = useRef(dockMode);
+  dockModeRef.current = dockMode;
 
   useEffect(() => {
     const stored = readStoredLayout(storageKey);
@@ -119,6 +129,31 @@ export function useWorkspaceLayout(workspacePath: string | null) {
     [storageKey]
   );
 
+  /**
+   * Derived terminal size for the current dock mode.
+   * Reads terminalBottom when dockMode === "bottom", terminalRight otherwise.
+   */
+  const terminalSize = dockMode === "bottom" ? splitSizes.terminalBottom : splitSizes.terminalRight;
+
+  /**
+   * Set the terminal size for the current dock mode only.
+   * The other dock mode's size is preserved unchanged.
+   */
+  const setTerminalSize = useCallback(
+    (nextSize: number) => {
+      const currentDockMode = dockModeRef.current;
+      setSplitSizesState((currentSizes) => {
+        const nextSizes: WorkspaceSplitSizes =
+          currentDockMode === "bottom"
+            ? { ...currentSizes, terminalBottom: nextSize }
+            : { ...currentSizes, terminalRight: nextSize };
+        persistLayout(storageKey, currentDockMode, nextSizes);
+        return nextSizes;
+      });
+    },
+    [storageKey]
+  );
+
   const resetLayout = useCallback(() => {
     const defaults = defaultWorkspaceLayout();
     setDockModeState(defaults.dockMode);
@@ -131,6 +166,8 @@ export function useWorkspaceLayout(workspacePath: string | null) {
     setDockMode,
     splitSizes,
     setSplitSizes,
+    terminalSize,
+    setTerminalSize,
     resetLayout,
   };
 }

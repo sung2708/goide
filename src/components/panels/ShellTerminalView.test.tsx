@@ -108,7 +108,7 @@ describe("ShellTerminalView", () => {
     terminalSurfaceMountCount = 0;
     ensureShellSessionMock.mockResolvedValue({
       ok: true,
-      data: { shellSessionId: "session-abc", reused: false },
+      data: { shellSessionId: "session-abc", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
     });
     writeShellInputMock.mockResolvedValue({ ok: true });
     resizeShellSessionMock.mockResolvedValue({ ok: true });
@@ -116,25 +116,25 @@ describe("ShellTerminalView", () => {
     terminalWriteMock.mockClear();
   });
 
-  it("shows empty state when no workspacePath or editorSessionKey", () => {
+  it("shows empty state when no workspacePath or surfaceKey", () => {
     render(
       <ShellTerminalView
         workspacePath={null}
-        editorSessionKey={null}
+        surfaceKey={null}
       />
     );
 
     expect(
-      screen.getByText(/open a file to start a shell session/i)
+      screen.getByText(/open a workspace to start a shell session/i)
     ).toBeInTheDocument();
     expect(ensureShellSessionMock).not.toHaveBeenCalled();
   });
 
-  it("calls ensureShellSession with workspaceRoot, editorSessionKey, and cwdRelativePath on mount", async () => {
+  it("calls ensureShellSession with workspaceRoot, surfaceKey, and cwdRelativePath on mount", async () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -142,7 +142,7 @@ describe("ShellTerminalView", () => {
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith({
         workspaceRoot: "/home/user/project",
-        editorSessionKey: "editor:main.go",
+        surfaceKey: "editor:main.go",
         cwdRelativePath: ".",
       });
     });
@@ -152,14 +152,14 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith({
         workspaceRoot: "/home/user/project",
-        editorSessionKey: "editor:main.go",
+        surfaceKey: "editor:main.go",
         cwdRelativePath: undefined,
       });
     });
@@ -169,7 +169,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="src"
       />
     );
@@ -193,7 +193,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -220,7 +220,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -240,7 +240,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -278,7 +278,7 @@ describe("ShellTerminalView", () => {
       render(
         <ShellTerminalView
           workspacePath="/home/user/project"
-          editorSessionKey="editor:main.go"
+          surfaceKey="editor:main.go"
           cwdRelativePath="."
         />
       );
@@ -314,7 +314,7 @@ describe("ShellTerminalView", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        data: { shellSessionId: "session-other", reused: false },
+        data: { shellSessionId: "session-other", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
       });
 
     let nextFrameId = 1;
@@ -336,7 +336,7 @@ describe("ShellTerminalView", () => {
       const { rerender } = render(
         <ShellTerminalView
           workspacePath="/home/user/project"
-          editorSessionKey="editor:main.go"
+          surfaceKey="editor:main.go"
           cwdRelativePath="."
         />
       );
@@ -344,7 +344,7 @@ describe("ShellTerminalView", () => {
       await waitFor(() => {
         expect(ensureShellSessionMock).toHaveBeenCalledWith({
           workspaceRoot: "/home/user/project",
-          editorSessionKey: "editor:main.go",
+          surfaceKey: "editor:main.go",
           cwdRelativePath: ".",
         });
       });
@@ -355,7 +355,7 @@ describe("ShellTerminalView", () => {
       rerender(
         <ShellTerminalView
           workspacePath="/home/user/project"
-          editorSessionKey="editor:other.go"
+          surfaceKey="editor:other.go"
           cwdRelativePath="."
         />
       );
@@ -363,7 +363,7 @@ describe("ShellTerminalView", () => {
       await waitFor(() => {
         expect(ensureShellSessionMock).toHaveBeenCalledWith({
           workspaceRoot: "/home/user/project",
-          editorSessionKey: "editor:other.go",
+          surfaceKey: "editor:other.go",
           cwdRelativePath: ".",
         });
       });
@@ -386,7 +386,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -408,7 +408,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -439,7 +439,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
       />
     );
 
@@ -458,7 +458,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
       />
     );
 
@@ -483,7 +483,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
       />
     );
 
@@ -506,7 +506,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -539,7 +539,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -566,7 +566,7 @@ describe("ShellTerminalView", () => {
     ensureShellSessionMock
       .mockResolvedValueOnce({
         ok: true,
-        data: { shellSessionId: "session-abc", reused: false },
+        data: { shellSessionId: "session-abc", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
       })
       .mockResolvedValueOnce({
         ok: true,
@@ -576,7 +576,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -603,7 +603,7 @@ describe("ShellTerminalView", () => {
     expect(ensureShellSessionMock).toHaveBeenCalledTimes(2);
     expect(ensureShellSessionMock).toHaveBeenLastCalledWith({
       workspaceRoot: "/home/user/project",
-      editorSessionKey: "editor:main.go",
+      surfaceKey: "editor:main.go",
       cwdRelativePath: ".",
     });
   });
@@ -614,7 +614,7 @@ describe("ShellTerminalView", () => {
     const { rerender } = render(
       <ShellTerminalView
         workspacePath="/home/user/project-a"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -628,13 +628,13 @@ describe("ShellTerminalView", () => {
     // Switch workspace
     ensureShellSessionMock.mockResolvedValue({
       ok: true,
-      data: { shellSessionId: "session-b", reused: false },
+      data: { shellSessionId: "session-b", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
     });
 
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project-b"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -647,38 +647,38 @@ describe("ShellTerminalView", () => {
     });
   });
 
-  it("does NOT dispose sessions when only editorSessionKey changes (file switch within workspace)", async () => {
+  it("does NOT dispose sessions when only surfaceKey changes (file switch within workspace)", async () => {
     const { rerender } = render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:main.go" })
+        expect.objectContaining({ surfaceKey: "editor:main.go" })
       );
     });
 
     // Switch to a different file (same workspace)
     ensureShellSessionMock.mockResolvedValue({
       ok: true,
-      data: { shellSessionId: "session-other", reused: false },
+      data: { shellSessionId: "session-other", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
     });
 
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:other.go"
+        surfaceKey="editor:other.go"
         cwdRelativePath="."
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:other.go" })
+        expect.objectContaining({ surfaceKey: "editor:other.go" })
       );
     });
 
@@ -689,19 +689,19 @@ describe("ShellTerminalView", () => {
   // ---- BLOCKER FIX — B: renderer reset on session switch ----
 
   /**
-   * When the active editorSessionKey changes (user switched to a different
+   * When the active surfaceKey changes (user switched to a different
    * file), the TerminalSurface must be reset so stale output from the previous
    * session is not visible.
    *
    * Implementation: ShellTerminalView bumps an internal `surfaceKey` whenever
-   * editorSessionKey changes, which changes the React `key` on TerminalSurface
+   * surfaceKey changes, which changes the React `key` on TerminalSurface
    * and forces a full remount with a clean xterm instance.
    *
    * Observable in tests: `terminalSurfaceMountCount` increments a second time
    * after the session key switch (the useEffect in the mock fires on the new
    * mount), and ensureShellSession is called for the new session key.
    */
-  it("resets the terminal renderer when editorSessionKey changes to a new session", async () => {
+  it("resets the terminal renderer when surfaceKey changes to a new session", async () => {
     ensureShellSessionMock
       .mockResolvedValueOnce({
         ok: true,
@@ -709,13 +709,13 @@ describe("ShellTerminalView", () => {
       })
       .mockResolvedValueOnce({
         ok: true,
-        data: { shellSessionId: "session-other", reused: false },
+        data: { shellSessionId: "session-other", reused: false, shellHealth: "launch", selectedShell: null, replay: "" },
       });
 
     const { rerender } = render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -723,7 +723,7 @@ describe("ShellTerminalView", () => {
     // Wait for first session to establish and terminal to mount
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:main.go" })
+        expect.objectContaining({ surfaceKey: "editor:main.go" })
       );
     });
 
@@ -739,7 +739,7 @@ describe("ShellTerminalView", () => {
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:other.go"
+        surfaceKey="editor:other.go"
         cwdRelativePath="."
       />
     );
@@ -747,7 +747,7 @@ describe("ShellTerminalView", () => {
     // The new session should be established
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:other.go" })
+        expect.objectContaining({ surfaceKey: "editor:other.go" })
       );
     });
 
@@ -774,18 +774,18 @@ describe("ShellTerminalView", () => {
     });
   });
 
-  it("does NOT reset the terminal renderer when editorSessionKey stays the same", async () => {
+  it("does NOT reset the terminal renderer when surfaceKey stays the same", async () => {
     const { rerender } = render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:main.go" })
+        expect.objectContaining({ surfaceKey: "editor:main.go" })
       );
     });
 
@@ -795,19 +795,22 @@ describe("ShellTerminalView", () => {
     });
     const mountCountAfterInit = terminalSurfaceMountCount;
 
-    // Rerender with the same session key (e.g. only cwdRelativePath changed)
+    // Rerender with the same session key (e.g. only cwdRelativePath changed).
+    // The session effect must NOT re-fire — cwdRelativePath is only used on the
+    // initial ensureShellSession call and does not drive session re-initialization.
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="src"
       />
     );
 
-    // Small tick to let effects run
-    await waitFor(() => {
-      expect(ensureShellSessionMock).toHaveBeenCalledTimes(2);
-    });
+    // Small tick to let any pending effects run
+    await new Promise((r) => setTimeout(r, 30));
+
+    // ensureShellSession must NOT have been called again — surfaceKey is stable
+    expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
 
     // Mount count must NOT have changed — surfaceKey did not increment so
     // TerminalSurface was not remounted, only re-rendered.
@@ -831,7 +834,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -857,7 +860,7 @@ describe("ShellTerminalView", () => {
     render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
@@ -871,6 +874,63 @@ describe("ShellTerminalView", () => {
     // Small settle — no write should occur
     await new Promise((r) => setTimeout(r, 20));
     expect(terminalWriteMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * TASK 2 — workspace-owned surfaceKey stability:
+   * When the component is rerendered with the same workspacePath AND the same
+   * surfaceKey (workspace-shell), it must NOT call ensureShellSession a second
+   * time and must NOT reset/remount the terminal surface.
+   *
+   * This is the key invariant that makes "keep one shell alive across file
+   * switches" work: because EditorShell now passes `workspace-shell` as the
+   * stable key, switching files only changes props on EditorShell but passes
+   * the same surfaceKey down to ShellTerminalView, so the shell stays live.
+   */
+  it("does not call ensureShellSession again or reset the surface when workspacePath and surfaceKey are unchanged", async () => {
+    const { rerender } = render(
+      <ShellTerminalView
+        workspacePath="/home/user/project"
+        surfaceKey="workspace-shell"
+        cwdRelativePath="."
+      />
+    );
+
+    await waitFor(() => {
+      expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+      expect(ensureShellSessionMock).toHaveBeenCalledWith({
+        workspaceRoot: "/home/user/project",
+        surfaceKey: "workspace-shell",
+        cwdRelativePath: ".",
+      });
+    });
+
+    await waitFor(() => {
+      expect(terminalSurfaceMountCount).toBeGreaterThanOrEqual(1);
+    });
+    const mountCountAfterInit = terminalSurfaceMountCount;
+
+    // Rerender as if the user switched to a different file — cwdRelativePath
+    // might change but workspacePath and surfaceKey stay the same.
+    rerender(
+      <ShellTerminalView
+        workspacePath="/home/user/project"
+        surfaceKey="workspace-shell"
+        cwdRelativePath="pkg/server"
+      />
+    );
+
+    // Allow any pending effects to run
+    await new Promise((r) => setTimeout(r, 30));
+
+    // ensureShellSession must NOT have been called again
+    expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+
+    // TerminalSurface must NOT have been remounted
+    expect(terminalSurfaceMountCount).toBe(mountCountAfterInit);
+
+    // The surface is still visible
+    expect(screen.getByTestId("terminal-surface")).toBeInTheDocument();
   });
 
   /**
@@ -891,14 +951,14 @@ describe("ShellTerminalView", () => {
     const { rerender } = render(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:main.go" })
+        expect.objectContaining({ surfaceKey: "editor:main.go" })
       );
     });
 
@@ -916,14 +976,14 @@ describe("ShellTerminalView", () => {
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:other.go"
+        surfaceKey="editor:other.go"
         cwdRelativePath="."
       />
     );
 
     await waitFor(() => {
       expect(ensureShellSessionMock).toHaveBeenCalledWith(
-        expect.objectContaining({ editorSessionKey: "editor:other.go" })
+        expect.objectContaining({ surfaceKey: "editor:other.go" })
       );
     });
 
@@ -945,7 +1005,7 @@ describe("ShellTerminalView", () => {
     rerender(
       <ShellTerminalView
         workspacePath="/home/user/project"
-        editorSessionKey="editor:main.go"
+        surfaceKey="editor:main.go"
         cwdRelativePath="."
       />
     );

@@ -434,7 +434,7 @@ pub struct DiagnosticsResponseDto {
 #[serde(rename_all = "camelCase")]
 pub struct EnsureShellSessionRequestDto {
     pub workspace_root: String,
-    pub editor_session_key: String,
+    pub surface_key: String,
     pub cwd_relative_path: Option<String>,
 }
 
@@ -499,7 +499,7 @@ pub struct ShellExitPayloadDto {
 
 #[cfg(test)]
 mod tests {
-    use super::{ShellExitPayloadDto, ShellHealthDto};
+    use super::{EnsureShellSessionRequestDto, ShellExitPayloadDto, ShellHealthDto};
 
     #[test]
     fn shell_exit_payload_serializes_health_and_selected_shell() {
@@ -513,5 +513,27 @@ mod tests {
         assert_eq!(json["shellSessionId"], "shell:abc");
         assert_eq!(json["shellHealth"], "exit");
         assert_eq!(json["selectedShell"], "pwsh");
+    }
+
+    /// Verify that EnsureShellSessionRequestDto serializes to camelCase `surfaceKey`
+    /// and does NOT include any `editorSessionKey` field in the JSON output.
+    #[test]
+    fn ensure_shell_session_request_dto_serializes_surface_key() {
+        let dto = EnsureShellSessionRequestDto {
+            workspace_root: "/workspace".to_string(),
+            surface_key: "panel:shell".to_string(),
+            cwd_relative_path: None,
+        };
+
+        let json = serde_json::to_value(&dto).expect("dto should serialize");
+        assert_eq!(
+            json["surfaceKey"], "panel:shell",
+            "expected surfaceKey field in JSON"
+        );
+        assert!(
+            json.get("editorSessionKey").is_none(),
+            "editorSessionKey must not appear in JSON after rename"
+        );
+        assert_eq!(json["workspaceRoot"], "/workspace");
     }
 }

@@ -30,11 +30,11 @@ pub struct EnsureShellSessionResponse {
 /// Thread-safe store shared between the Tauri commands.
 pub type ShellSessionStore = Arc<Mutex<ShellSessionState>>;
 
-/// Inner state: a map from editor key -> session id, and session id -> handle.
+/// Inner state: a map from surface key -> session id, and session id -> handle.
 #[derive(Default)]
 pub struct ShellSessionState {
-    /// Maps `editor_session_key` to an active `shell_session_id`.
-    pub editor_to_shell: HashMap<String, String>,
+    /// Maps `surface_key` to an active `shell_session_id`.
+    pub surface_to_shell: HashMap<String, String>,
     /// Maps `shell_session_id` to the live session handle.
     pub sessions: HashMap<String, ShellSessionHandle>,
 }
@@ -161,13 +161,13 @@ where
 /// Public entry-point for Tauri commands.
 ///
 /// The store lock is held across PTY creation **and** the insert so that two
-/// concurrent calls for the same `editor_session_key` cannot each decide the
+/// concurrent calls for the same `surface_key` cannot each decide the
 /// session is absent, then both spawn a PTY.
 pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     app_handle: tauri::AppHandle<R>,
     store: ShellSessionStore,
     workspace_root: &str,
-    editor_session_key: &str,
+    surface_key: &str,
     cwd_relative_path: Option<&str>,
 ) -> Result<EnsureShellSessionResponse> {
     // --- Validate workspace_root before any PTY work ---
@@ -185,8 +185,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     // Acquire the lock and hold it for the entire create+insert sequence.
     let mut guard = store.lock().await;
 
-    // Fast-path: session already exists for this editor key.
-    if let Some(existing_id) = guard.editor_to_shell.get(editor_session_key).cloned() {
+    // Fast-path: session already exists for this surface key.
+    if let Some(existing_id) = guard.surface_to_shell.get(surface_key).cloned() {
         if let Some(existing_handle) = guard.sessions.get(&existing_id) {
             // Snapshot the scrollback for replay without holding the full store lock.
             let replay = existing_handle.scrollback.lock().await.clone();
@@ -324,7 +324,7 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             .map(|handle| {
                 handle.block_on(async {
                     let mut guard = exit_store.lock().await;
-                    guard.editor_to_shell.retain(|_, v| v != &output_session_id);
+                    guard.surface_to_shell.retain(|_, v| v != &output_session_id);
                     guard.sessions.remove(&output_session_id).is_some()
                 })
             })
@@ -356,8 +356,8 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     };
 
     guard
-        .editor_to_shell
-        .insert(editor_session_key.to_string(), shell_session_id.clone());
+        .surface_to_shell
+        .insert(surface_key.to_string(), shell_session_id.clone());
     guard.sessions.insert(shell_session_id.clone(), handle);
 
     Ok(EnsureShellSessionResponse {
@@ -425,7 +425,7 @@ pub async fn dispose_shell_session_inner(
     shell_session_id: &str,
 ) -> Result<()> {
     let mut guard = store.lock().await;
-    guard.editor_to_shell.retain(|_, v| v != shell_session_id);
+    guard.surface_to_shell.retain(|_, v| v != shell_session_id);
     if let Some(handle) = guard.sessions.remove(shell_session_id) {
         // Release the store lock before running potentially-blocking cleanup.
         drop(guard);
@@ -515,13 +515,13 @@ impl portable_pty::Child for NullChild {
 pub async fn ensure_shell_session_for_test(
     store: &ShellSessionStore,
     workspace_root: &str,
-    editor_session_key: &str,
+    surface_key: &str,
     _cwd_relative_path: Option<&str>,
 ) -> Result<EnsureShellSessionResponse> {
     let _ = workspace_root; // not used in the test stub; real path logic is covered by integration tests
     let mut guard = store.lock().await;
 
-    if let Some(existing_id) = guard.editor_to_shell.get(editor_session_key).cloned() {
+    if let Some(existing_id) = guard.surface_to_shell.get(surface_key).cloned() {
         if let Some(existing_handle) = guard.sessions.get(&existing_id) {
             let replay = existing_handle.scrollback.lock().await.clone();
             return Ok(EnsureShellSessionResponse {
@@ -550,8 +550,8 @@ pub async fn ensure_shell_session_for_test(
     };
 
     guard
-        .editor_to_shell
-        .insert(editor_session_key.to_string(), shell_session_id.clone());
+        .surface_to_shell
+        .insert(surface_key.to_string(), shell_session_id.clone());
     guard.sessions.insert(shell_session_id.clone(), handle);
 
     Ok(EnsureShellSessionResponse {
@@ -609,6 +609,38 @@ mod tests {
 
         assert_eq!(first.shell_session_id, second.shell_session_id);
         assert!(second.reused);
+    }
+
+    /// Verify the surface key reuse contract: calling ensure with the same surface
+    /// key twice returns the same shell session id and marks the second response
+    /// as reused.  Also verifies that the store uses `surface_to_shell` naming.
+    #[tokio::test]
+    async fn same_surface_key_reuses_shell_session() {
+        let store = ShellSessionStore::default();
+
+        let first =
+            ensure_shell_session_for_test(&store, "C:/workspace", "surface:panel-shell", Some("."))
+                .await
+                .expect("first session");
+        let second =
+            ensure_shell_session_for_test(&store, "C:/workspace", "surface:panel-shell", Some("."))
+                .await
+                .expect("second session");
+
+        assert_eq!(
+            first.shell_session_id, second.shell_session_id,
+            "same surface key must yield the same shell session id"
+        );
+        assert!(second.reused, "second call must be marked as reused");
+
+        // Verify the underlying map uses `surface_to_shell` naming.
+        let guard = store.lock().await;
+        assert!(
+            guard
+                .surface_to_shell
+                .contains_key("surface:panel-shell"),
+            "surface_to_shell map must contain the registered surface key"
+        );
     }
 
     #[tokio::test]

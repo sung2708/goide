@@ -2343,7 +2343,7 @@ pub async fn ensure_shell_session<R: tauri::Runtime>(
         app,
         get_shell_sessions_handle(),
         &request.workspace_root,
-        &request.editor_session_key,
+        &request.surface_key,
         request.cwd_relative_path.as_deref(),
     )
     .await

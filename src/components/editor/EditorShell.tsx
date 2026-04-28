@@ -1820,6 +1820,27 @@ function EditorShell() {
   const isDebugSessionBusy =
     isDebugSessionRunning || debugUiState === "starting" || debugUiState === "stopping";
 
+  const showDebugTab =
+    isDebugSessionRunning ||
+    Boolean(workspacePath && activeFilePath && activeFilePath.toLowerCase().endsWith(".go"));
+
+  const handleToggleDebugPause = useCallback(() => {
+    if (isDebugPaused) {
+      setDebugUiState("running");
+      void debuggerContinue();
+      return;
+    }
+    setDebugUiState("paused");
+    void debuggerPause();
+  }, [isDebugPaused]);
+
+  // Fall back to explorer when the debug tab becomes unavailable while active.
+  useEffect(() => {
+    if (activeTab === "debug" && !showDebugTab) {
+      setActiveTab("explorer");
+    }
+  }, [activeTab, showDebugTab]);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const canStartDebug =
@@ -1839,17 +1860,11 @@ function EditorShell() {
         e.preventDefault();
         if (!isDebugSessionRunning) {
           if (canStartDebug) {
-            handleStartDebug();
+            void handleStartDebug();
           }
           return;
         }
-        if (isDebugPaused) {
-          setDebugUiState("running");
-          void debuggerContinue();
-        } else {
-          setDebugUiState("paused");
-          void debuggerPause();
-        }
+        handleToggleDebugPause();
         return;
       }
 
@@ -2161,10 +2176,7 @@ function EditorShell() {
 
   const handleTerminalPaneResize = useCallback(
     (size: number) => {
-      workspaceLayout.setSplitSizes({
-        left: workspaceLayout.splitSizes.left,
-        terminal: size,
-      });
+      workspaceLayout.setTerminalSize(size);
     },
     [workspaceLayout]
   );
@@ -2433,46 +2445,28 @@ function EditorShell() {
   }, [activeFilePath, isDirty]);
 
   /**
-   * Stable session key for the shell tied to the currently open file.
-   * Format: `editor:<relativePath>` or null when no file is open.
+   * Stable session key for the workspace-owned interactive shell.
    *
-   * EDITOR-SESSION IDENTITY (current single-file UI):
-   * Until a real editor-tab model with persistent tab identifiers exists,
-   * `activeFilePath` serves as the session identity surrogate.  Opening the
-   * same file again after switching away will produce the same key and
-   * therefore restore the same backend PTY session (shell restoration).
-   * Switching to a different file changes the key and therefore switches to
-   * (or creates) a separate shell session for that file.  Disposal of known
-   * sessions is triggered at the workspace lifecycle level, not on file
-   * switches, so per-file shells remain alive across file changes within the
-   * same workspace.
+   * WORKSPACE-OWNED SHELL IDENTITY:
+   * One shell session is kept alive for the entire workspace, independent of
+   * which file is currently active in the editor.  The key is fixed to
+   * `workspace-shell` (when a workspace is open), so switching files does not
+   * change the surfaceKey and therefore does not remount or reset the shell
+   * panel.  Backend disposal is triggered only at the workspace lifecycle
+   * level (when the workspace changes or is closed).
    */
-  const editorSessionKey = activeFilePath ? `editor:${activeFilePath}` : null;
-
-  /**
-   * The directory portion of activeFilePath, used as the shell's initial cwd.
-   * Falls back to "." when no path separator is found (root-level file).
-   */
-  const shellCwdRelativePath = useMemo(() => {
-    if (!activeFilePath) {
-      return ".";
-    }
-    const lastSep = Math.max(
-      activeFilePath.lastIndexOf("/"),
-      activeFilePath.lastIndexOf("\\")
-    );
-    return lastSep > 0 ? activeFilePath.slice(0, lastSep) : ".";
-  }, [activeFilePath]);
+  const surfaceKey = workspacePath ? "workspace-shell" : null;
 
   return (
     <div
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="flex min-w-0 flex-1 overflow-hidden">
-        <ActivityBar 
-          activeTab={activeTab} 
-          onTabChange={setActiveTab} 
-          signalCount={raceSignals.length} 
+        <ActivityBar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          signalCount={raceSignals.length}
+          showDebugTab={showDebugTab}
         />
         <aside className="flex w-[clamp(180px,22vw,320px)] min-w-[180px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
           {activeTab === "explorer" && (
@@ -2519,7 +2513,7 @@ function EditorShell() {
               error={runtimeTopologyError}
             />
           )}
-          {DEBUG_UI_ENABLED && (
+          {DEBUG_UI_ENABLED && activeTab === "debug" && (
             <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
@@ -2563,15 +2557,7 @@ function EditorShell() {
                       type="button"
                       aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
-                      onClick={() => {
-                        if (isDebugPaused) {
-                          setDebugUiState("running");
-                          void debuggerContinue();
-                          return;
-                        }
-                        setDebugUiState("paused");
-                        void debuggerPause();
-                      }}
+                      onClick={handleToggleDebugPause}
                     >
                       {isDebugPaused ? "Continue" : "Pause"}
                     </button>
@@ -2635,8 +2621,12 @@ function EditorShell() {
                 ? "flex-1 flex-col-reverse"
                 : "flex-1 flex-row-reverse"
             }
-            size={isBottomPanelOpen ? workspaceLayout.splitSizes.terminal : 0}
-            defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminal}
+            size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
+            defaultSize={
+              workspaceLayout.dockMode === "bottom"
+                ? DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom
+                : DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalRight
+            }
             minSize={isBottomPanelOpen ? 240 : 0}
             maxSize={workspaceLayout.dockMode === "bottom" ? 520 : 780}
             onResize={handleTerminalPaneResize}
@@ -2646,8 +2636,7 @@ function EditorShell() {
                   activeTab={bottomPanelTab}
                   onActiveTabChange={setBottomPanelTab}
                   logEntries={runOutput}
-                  shellSessionKey={editorSessionKey}
-                  shellCwdRelativePath={shellCwdRelativePath}
+                  surfaceKey={surfaceKey}
                   workspacePath={workspacePath}
                   dockMode={workspaceLayout.dockMode}
                   onDockModeChange={workspaceLayout.setDockMode}
@@ -2663,7 +2652,7 @@ function EditorShell() {
             }
             secondary={
               <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
+            <section data-testid="editor-workbench" className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
               <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>

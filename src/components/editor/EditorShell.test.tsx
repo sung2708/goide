@@ -79,8 +79,9 @@ describe("EditorShell panels", () => {
     await user.click(within(summaryPanel).getByRole("button", { name: /^hide$/i }));
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
-    // Click Hide inside the BottomPanel to close it
-    await user.click(screen.getByRole("button", { name: /^hide$/i }));
+    // Hide moved into BottomPanel overflow menu
+    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
+    await user.click(screen.getByRole("menuitem", { name: /hide panel/i }));
     // Panel is hidden again (wrapper div has hidden attribute)
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });

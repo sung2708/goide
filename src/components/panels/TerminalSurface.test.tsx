@@ -59,6 +59,156 @@ function makeFitAddonInstance(): any {
   return { fit: vi.fn(), dispose: vi.fn() };
 }
 
+describe("TerminalSurface — default terminal options", () => {
+  afterEach(() => {
+    MockedTerminal.mockReset();
+    MockedFitAddon.mockReset();
+    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+  });
+
+  it("constructs terminal with IDE-aligned default options", () => {
+    // Capture the options passed to the Terminal constructor
+    let capturedOptions: Record<string, unknown> | undefined;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    MockedTerminal.mockImplementation((...args: any[]) => {
+      capturedOptions = args[0] as Record<string, unknown>;
+      return makeTerminalInstance();
+    });
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+
+    render(<TerminalSurface />);
+
+    expect(capturedOptions).toBeDefined();
+    expect(capturedOptions?.allowTransparency).toBe(false);
+    expect(capturedOptions?.drawBoldTextInBrightColors).toBe(false);
+    expect(capturedOptions?.minimumContrastRatio).toBe(4.5);
+    expect(capturedOptions?.fontSize).toBe(13);
+    expect(capturedOptions?.lineHeight).toBe(1.35);
+    expect(capturedOptions?.letterSpacing).toBe(0);
+    expect(capturedOptions?.fontFamily).toBe('"Cascadia Mono", "Cascadia Code", "Fira Code", monospace');
+    expect(capturedOptions?.scrollback).toBe(10000);
+    expect((capturedOptions?.theme as Record<string, unknown>)?.background).toBe("#11111b");
+    expect((capturedOptions?.theme as Record<string, unknown>)?.selectionBackground).toBe("#45475a");
+  });
+});
+
+describe("TerminalSurface — fit scheduling", () => {
+  afterEach(() => {
+    MockedTerminal.mockReset();
+    MockedFitAddon.mockReset();
+    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+  });
+
+  it("schedules a fit via requestAnimationFrame after mount", () => {
+    const rafQueue: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback): number => {
+        rafQueue.push(cb);
+        return rafQueue.length;
+      });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    const fitFn = vi.fn();
+    MockedFitAddon.mockImplementation(() => ({ fit: fitFn, dispose: vi.fn() }));
+    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+
+    try {
+      render(<TerminalSurface />);
+
+      // A requestAnimationFrame should have been scheduled for the post-open fit
+      expect(rafQueue.length).toBeGreaterThanOrEqual(1);
+
+      // Before frame fires, fit should not have run yet
+      expect(fitFn).not.toHaveBeenCalled();
+
+      // Fire the first frame
+      rafQueue[0](16);
+
+      expect(fitFn).toHaveBeenCalledTimes(1);
+    } finally {
+      rafSpy.mockRestore();
+      vi.spyOn(window, "cancelAnimationFrame").mockRestore();
+    }
+  });
+
+  it("schedules one fit per frame on resize observer notification and calls onResize after fit", () => {
+    // Use a wrapper object to avoid TypeScript narrowing issues with reassignable
+    // callback variables.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const observer: { callback: ((...args: any[]) => void) | null } = { callback: null };
+
+    // Intercept ResizeObserver to capture the callback
+    const OriginalResizeObserver = window.ResizeObserver;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const MockResizeObserver = vi.fn((callback: (...args: any[]) => void) => {
+      observer.callback = callback;
+      return {
+        observe: vi.fn(),
+        disconnect: vi.fn(),
+        unobserve: vi.fn(),
+      };
+    });
+    window.ResizeObserver = MockResizeObserver as unknown as typeof ResizeObserver;
+
+    const rafQueue: FrameRequestCallback[] = [];
+    const rafSpy = vi
+      .spyOn(window, "requestAnimationFrame")
+      .mockImplementation((cb: FrameRequestCallback): number => {
+        rafQueue.push(cb);
+        return rafQueue.length;
+      });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+
+    const fitFn = vi.fn();
+    const instance = makeTerminalInstance();
+    instance.cols = 80;
+    instance.rows = 24;
+    MockedFitAddon.mockImplementation(() => ({ fit: fitFn, dispose: vi.fn() }));
+    MockedTerminal.mockImplementation(() => instance);
+
+    const onResize = vi.fn();
+
+    try {
+      render(<TerminalSurface onResize={onResize} />);
+
+      // Clear any mount-time RAF entries (fit-after-open)
+      const mountFrameCount = rafQueue.length;
+      // Flush mount frames
+      for (let i = 0; i < mountFrameCount; i++) {
+        rafQueue[i](16);
+      }
+      fitFn.mockClear();
+      onResize.mockClear();
+      rafQueue.splice(0);
+
+      // Simulate two rapid resize observer notifications
+      observer.callback?.([]);
+      observer.callback?.([]);
+
+      // Only one RAF should be queued (debounced / one-per-frame)
+      expect(rafQueue.length).toBe(1);
+
+      // Before frame fires, fit and onResize should not have been called
+      expect(fitFn).not.toHaveBeenCalled();
+      expect(onResize).not.toHaveBeenCalled();
+
+      // Fire the frame
+      rafQueue[0](16);
+
+      expect(fitFn).toHaveBeenCalledTimes(1);
+      expect(onResize).toHaveBeenCalledTimes(1);
+      expect(onResize).toHaveBeenCalledWith(80, 24);
+    } finally {
+      rafSpy.mockRestore();
+      vi.spyOn(window, "cancelAnimationFrame").mockRestore();
+      window.ResizeObserver = OriginalResizeObserver;
+    }
+  });
+});
+
 describe("TerminalSurface — normal render", () => {
   afterEach(() => {
     MockedTerminal.mockReset();

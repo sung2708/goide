@@ -317,10 +317,10 @@ export type SwitchWorkspaceBranchRequest = {
 /** Identifies which tab in the BottomPanel is active. */
 export type BottomPanelTab = "logs" | "shell";
 
-/** Request to create or reuse a shell session for a given editor session. */
+/** Request to create or reuse a shell session for a given workspace surface. */
 export type EnsureShellSessionRequest = {
   workspaceRoot: string;
-  editorSessionKey: string;
+  surfaceKey: string;
   cwdRelativePath?: string;
 };
 
@@ -328,6 +328,8 @@ export type EnsureShellSessionRequest = {
 export type EnsureShellSessionResponse = {
   shellSessionId: string;
   reused: boolean;
+  shellHealth: "launch" | "degraded" | "exit";
+  selectedShell: string | null;
   /**
    * Buffered PTY output to replay into a fresh xterm surface.
    * Non-empty when `reused` is true and the session has prior output.
