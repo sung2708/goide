@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/utils/cn";
 import type { DockMode } from "../../features/layout/useWorkspaceLayout";
 import type { BottomPanelTab, RunOutputPayload } from "../../lib/ipc/types";
@@ -12,9 +12,8 @@ type BottomPanelProps = {
   activeTab: BottomPanelTab;
   onActiveTabChange: (tab: BottomPanelTab) => void;
   logEntries: RunOutputPayload[];
-  shellSessionKey: string | null;
+  surfaceKey: string | null;
   workspacePath: string | null;
-  shellCwdRelativePath?: string | null;
   // Logs-scoped actions
   onClose?: () => void;
   isRunning?: boolean;
@@ -31,9 +30,8 @@ function BottomPanel({
   activeTab,
   onActiveTabChange,
   logEntries,
-  shellSessionKey,
+  surfaceKey,
   workspacePath,
-  shellCwdRelativePath,
   onClose,
   isRunning = false,
   onClear,
@@ -45,6 +43,37 @@ function BottomPanel({
   onDockModeChange,
 }: BottomPanelProps) {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
+  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
+  const overflowRef = useRef<HTMLDivElement>(null);
+
+  // Close overflow menu when clicking outside
+  useEffect(() => {
+    if (!isOverflowOpen) return;
+    function handlePointerDown(e: PointerEvent) {
+      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
+        setIsOverflowOpen(false);
+      }
+    }
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [isOverflowOpen]);
+
+  // Close overflow menu on Escape
+  useEffect(() => {
+    if (!isOverflowOpen) return;
+    function handleKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setIsOverflowOpen(false);
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [isOverflowOpen]);
+
+  // Whether there are any overflow items to show
+  const hasOverflowItems =
+    activeTab === "logs" &&
+    ((!isRunning && onRunWithRace !== undefined) ||
+      onClear !== undefined ||
+      onClose !== undefined);
 
   const tabBase =
     "rounded-sm px-3 py-1 text-[12px] font-semibold transition-colors duration-100";
@@ -135,6 +164,7 @@ function BottomPanel({
           {/* Logs-scoped action buttons */}
           {activeTab === "logs" && (
             <>
+              {/* Primary inline actions */}
               {onRun && !isRunning && (
                 <button
                   type="button"
@@ -143,17 +173,6 @@ function BottomPanel({
                   title="Run the active Go file again."
                 >
                   Run Again
-                </button>
-              )}
-              {onRunWithRace && !isRunning && (
-                <button
-                  type="button"
-                  className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.06)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.12)] disabled:cursor-not-allowed disabled:opacity-40"
-                  onClick={onRunWithRace}
-                  disabled={!canRunWithRace}
-                  title="Run the active Go file with race detection."
-                >
-                  Run Race
                 </button>
               )}
               {onStop && isRunning && (
@@ -166,25 +185,73 @@ function BottomPanel({
                   Stop
                 </button>
               )}
-              {onClear && (
-                <button
-                  type="button"
-                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                  onClick={() => setIsClearConfirmOpen(true)}
-                  title="Clear terminal output."
-                >
-                  Clear
-                </button>
-              )}
-              {onClose && (
-                <button
-                  type="button"
-                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                  onClick={onClose}
-                  title="Hide the terminal panel."
-                >
-                  Hide
-                </button>
+
+              {/* Overflow / More button — secondary actions */}
+              {hasOverflowItems && (
+                <div ref={overflowRef} className="relative">
+                  <button
+                    type="button"
+                    aria-label="More panel actions"
+                    aria-haspopup="menu"
+                    aria-expanded={isOverflowOpen}
+                    className="cursor-pointer rounded border border-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                    onClick={() => setIsOverflowOpen((o) => !o)}
+                    title="More panel actions."
+                  >
+                    •••
+                  </button>
+                  {isOverflowOpen && (
+                    <div
+                      role="menu"
+                      aria-label="Panel actions menu"
+                      className="absolute right-0 top-full z-50 mt-1 min-w-[9rem] rounded border border-[var(--border-muted)] bg-[var(--mantle)] py-1 shadow-[var(--panel-shadow)]"
+                    >
+                      {onRunWithRace && !isRunning && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+                          onClick={() => {
+                            setIsOverflowOpen(false);
+                            onRunWithRace();
+                          }}
+                          disabled={!canRunWithRace}
+                          title="Run the active Go file with race detection."
+                        >
+                          Run Race
+                        </button>
+                      )}
+                      {onClear && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                          onClick={() => {
+                            setIsOverflowOpen(false);
+                            setIsClearConfirmOpen(true);
+                          }}
+                          title="Clear terminal output."
+                        >
+                          Clear
+                        </button>
+                      )}
+                      {onClose && (
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                          onClick={() => {
+                            setIsOverflowOpen(false);
+                            onClose();
+                          }}
+                          title="Hide the terminal panel."
+                        >
+                          Hide Panel
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -201,8 +268,7 @@ function BottomPanel({
         <div hidden={activeTab !== "shell"} className="h-full">
           <ShellTerminalView
             workspacePath={workspacePath}
-            editorSessionKey={shellSessionKey}
-            cwdRelativePath={shellCwdRelativePath}
+            surfaceKey={surfaceKey}
           />
         </div>
       </div>

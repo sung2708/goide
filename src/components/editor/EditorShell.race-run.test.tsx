@@ -128,6 +128,13 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell race run", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     runOutputListener = null;
@@ -156,7 +163,7 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -213,7 +220,7 @@ describe("EditorShell race run", () => {
     mockConstructs = [];
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -252,7 +259,7 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -297,7 +304,7 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -349,7 +356,7 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -391,7 +398,7 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -456,7 +463,7 @@ describe("EditorShell race run", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     expect(

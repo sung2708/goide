@@ -14,14 +14,14 @@ import type { TerminalFocusOwner } from "./TerminalSurface";
 
 type ShellTerminalViewProps = {
   workspacePath: string | null;
-  editorSessionKey: string | null;
+  surfaceKey: string | null;
   cwdRelativePath?: string | null;
 };
 
 /**
  * ShellTerminalView — interactive shell terminal wired to the frontend IPC layer.
  *
- * On mount (when workspacePath and editorSessionKey are available), calls
+ * On mount (when workspacePath and surfaceKey are available), calls
  * ensureShellSession to create or reuse a PTY session.  Listens to
  * `shell-output` events from the backend and writes matching payloads into
  * the xterm terminal surface.  Forwards user input via writeShellInput and
@@ -47,25 +47,33 @@ type ShellTerminalViewProps = {
  */
 function ShellTerminalView({
   workspacePath,
-  editorSessionKey,
+  surfaceKey,
   cwdRelativePath,
 }: ShellTerminalViewProps) {
   const [shellSessionId, setShellSessionId] = useState<string | null>(null);
   const [shellError, setShellError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   /**
-   * surfaceKey increments each time the active session identity changes so
+   * surfaceVersion increments each time the active session identity changes so
    * that TerminalSurface is forced to remount with a clean xterm instance.
    * This prevents stale output from a previous session being visible after
-   * switching files (i.e. switching editorSessionKey).
+   * switching files (i.e. switching surfaceKey).
    */
-  const [surfaceKey, setSurfaceKey] = useState(0);
+  const [surfaceVersion, setSurfaceVersion] = useState(0);
 
   const terminalRef = useRef<Terminal | null>(null);
   const shellSessionIdRef = useRef<string | null>(null);
   /**
-   * Tracks the editorSessionKey for which the current xterm surface was
-   * initialized. When it changes we bump surfaceKey to reset the renderer.
+   * Tracks the current cwdRelativePath without making it a session lifecycle
+   * dep.  The cwd is only meaningful as an initial hint on the first
+   * ensureShellSession call for a given surfaceKey.  Changing it after the
+   * session is established should not reset the running shell.
+   */
+  const cwdRelativePathRef = useRef(cwdRelativePath);
+  cwdRelativePathRef.current = cwdRelativePath;
+  /**
+   * Tracks the surface key for which the current xterm surface was
+   * initialized. When it changes we bump surfaceVersion to reset the renderer.
    */
   const renderedSessionKeyRef = useRef<string | null>(null);
   /**
@@ -136,7 +144,7 @@ function ShellTerminalView({
    * Tracks all shell session IDs created under the current workspacePath.
    * Used to dispose all known sessions when the workspace changes or closes.
    *
-   * Map key: editorSessionKey, value: shellSessionId.
+   * Map key: surfaceKey, value: shellSessionId.
    * Sessions are NOT removed on file/key switches — only on workspace change.
    */
   const sessionMapRef = useRef<Map<string, string>>(new Map());
@@ -169,7 +177,7 @@ function ShellTerminalView({
   // ---- Session lifecycle ----
 
   useEffect(() => {
-    if (!workspacePath || !editorSessionKey) {
+    if (!workspacePath || !surfaceKey) {
       setShellSessionId(null);
       setShellError(null);
       return;
@@ -177,10 +185,10 @@ function ShellTerminalView({
 
     // When the session identity changes, reset the xterm renderer so no
     // stale output from the previous session remains visible.
-    if (renderedSessionKeyRef.current !== editorSessionKey) {
-      renderedSessionKeyRef.current = editorSessionKey;
+    if (renderedSessionKeyRef.current !== surfaceKey) {
+      renderedSessionKeyRef.current = surfaceKey;
       // Clear any stale pending replay and the terminal ref from the previous
-      // session before bumping the surface key.  This ensures:
+      // session before bumping the surface key. This ensures:
       //   - No old replay bleeds into the new surface.
       //   - startSession's replay logic sees terminalRef.current === null and
       //     correctly stashes replay in pendingReplayRef for handleMount to pick
@@ -189,7 +197,7 @@ function ShellTerminalView({
       clearPendingTerminalWrites();
       resetLatencyTracking();
       terminalRef.current = null;
-      setSurfaceKey((k) => k + 1);
+      setSurfaceVersion((k) => k + 1);
     }
 
     let cancelled = false;
@@ -198,8 +206,8 @@ function ShellTerminalView({
       setShellError(null);
       const response = await ensureShellSession({
         workspaceRoot: workspacePath,
-        editorSessionKey,
-        cwdRelativePath: cwdRelativePath ?? undefined,
+        surfaceKey: surfaceKey,
+        cwdRelativePath: cwdRelativePathRef.current ?? undefined,
       });
 
       if (cancelled) {
@@ -211,17 +219,21 @@ function ShellTerminalView({
         const replay = response.data.replay ?? "";
         setShellSessionId(newSessionId);
         // Record this session in the workspace-scoped map.
-        sessionMapRef.current.set(editorSessionKey, newSessionId);
+        sessionMapRef.current.set(surfaceKey, newSessionId);
 
         // Replay scrollback into the terminal surface.
         // Two cases:
         //   1. The terminal is already mounted (same session key reuse, rare
-        //      but possible if surfaceKey did not increment): write immediately.
+        //      but possible if surfaceVersion did not increment): write immediately.
         //   2. The terminal is not yet mounted (surfaceKey just incremented,
         //      causing a fresh TerminalSurface mount that fires handleMount
         //      shortly after): stash replay so handleMount can deliver it.
         if (replay) {
-          pendingReplayRef.current = replay;
+          if (terminalRef.current) {
+            enqueueTerminalWrite(replay);
+          } else {
+            pendingReplayRef.current = replay;
+          }
         }
       } else {
         setShellError(response.error?.message ?? "Failed to start shell session.");
@@ -233,7 +245,12 @@ function ShellTerminalView({
     return () => {
       cancelled = true;
     };
-  }, [workspacePath, editorSessionKey, cwdRelativePath, clearPendingTerminalWrites, resetLatencyTracking]);
+  // cwdRelativePath is intentionally excluded from deps: it is only used as
+  // an initial hint when creating a new session and must not cause session
+  // re-initialization when it changes (e.g. on file switches with a stable
+  // workspace-owned surfaceKey).  The ref keeps it readable inside the effect.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspacePath, surfaceKey, clearPendingTerminalWrites, resetLatencyTracking]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -318,7 +335,7 @@ function ShellTerminalView({
   // ---- Retry handler ----
 
   const handleRetry = useCallback(async () => {
-    if (!workspacePath || !editorSessionKey || isRetrying) {
+    if (!workspacePath || !surfaceKey || isRetrying) {
       return;
     }
     setIsRetrying(true);
@@ -327,13 +344,13 @@ function ShellTerminalView({
     try {
       const response = await ensureShellSession({
         workspaceRoot: workspacePath,
-        editorSessionKey,
-        cwdRelativePath: cwdRelativePath ?? undefined,
+        surfaceKey: surfaceKey,
+        cwdRelativePath: cwdRelativePathRef.current ?? undefined,
       });
       if (response.ok && response.data) {
         const newSessionId = response.data.shellSessionId;
         setShellSessionId(newSessionId);
-        sessionMapRef.current.set(editorSessionKey, newSessionId);
+        sessionMapRef.current.set(surfaceKey, newSessionId);
       } else {
         setShellError(response.error?.message ?? "Failed to start shell session.");
       }
@@ -342,7 +359,7 @@ function ShellTerminalView({
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, editorSessionKey, cwdRelativePath, isRetrying, resetLatencyTracking]);
+  }, [workspacePath, surfaceKey, isRetrying, resetLatencyTracking]);
 
   // ---- Terminal callbacks ----
 
@@ -392,10 +409,10 @@ function ShellTerminalView({
 
   // ---- Empty state ----
 
-  if (!workspacePath || !editorSessionKey) {
+  if (!workspacePath || !surfaceKey) {
     return (
       <div className="flex h-full items-center justify-center text-[13px] italic text-[var(--overlay0)]">
-        Open a file to start a shell session.
+        Open a workspace to start a shell session.
       </div>
     );
   }
@@ -421,12 +438,12 @@ function ShellTerminalView({
 
   // ---- Active terminal ----
 
-  // `key={surfaceKey}` forces TerminalSurface to remount with a clean xterm
+  // `key={surfaceVersion}` forces TerminalSurface to remount with a clean xterm
   // instance whenever the session identity changes.  This ensures stale output
   // from a previous session is never visible after switching files.
   return (
     <TerminalSurface
-      key={surfaceKey}
+      key={surfaceVersion}
       readOnly={false}
       onMount={handleMount}
       onData={handleData}

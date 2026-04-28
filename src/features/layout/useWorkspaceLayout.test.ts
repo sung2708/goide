@@ -7,6 +7,20 @@ import { useWorkspaceLayout } from "./useWorkspaceLayout";
 describe("useWorkspaceLayout", () => {
   beforeEach(() => {
     localStorage.clear();
+    if (!HTMLElement.prototype.setPointerCapture) {
+      Object.defineProperty(HTMLElement.prototype, "setPointerCapture", {
+        value: vi.fn(),
+        writable: true,
+        configurable: true,
+      });
+    }
+    if (!HTMLElement.prototype.releasePointerCapture) {
+      Object.defineProperty(HTMLElement.prototype, "releasePointerCapture", {
+        value: vi.fn(),
+        writable: true,
+        configurable: true,
+      });
+    }
   });
 
   it("persists dock mode per workspace", () => {
@@ -27,17 +41,50 @@ describe("useWorkspaceLayout", () => {
   it("persists split sizes and resets them to defaults", () => {
     const { result, unmount } = renderHook(() => useWorkspaceLayout("C:/repo"));
 
-    act(() => result.current.setSplitSizes({ left: 300, terminal: 420 }));
-    expect(result.current.splitSizes).toEqual({ left: 300, terminal: 420 });
+    act(() => result.current.setSplitSizes({ left: 300, terminalBottom: 420, terminalRight: 500 }));
+    expect(result.current.splitSizes).toEqual({ left: 300, terminalBottom: 420, terminalRight: 500 });
 
     unmount();
 
     const { result: restored } = renderHook(() => useWorkspaceLayout("C:/repo"));
-    expect(restored.current.splitSizes).toEqual({ left: 300, terminal: 420 });
+    expect(restored.current.splitSizes).toEqual({ left: 300, terminalBottom: 420, terminalRight: 500 });
 
     act(() => restored.current.resetLayout());
     expect(restored.current.dockMode).toBe("bottom");
-    expect(restored.current.splitSizes).toEqual({ left: 240, terminal: 320 });
+    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 320, terminalRight: 480 });
+  });
+
+  it("persists bottom and right terminal sizes independently", () => {
+    const { result, unmount } = renderHook(() => useWorkspaceLayout("C:/repo"));
+
+    // Default dock is bottom; set terminal size for bottom mode
+    act(() => result.current.setTerminalSize(400));
+    expect(result.current.terminalSize).toBe(400);
+    expect(result.current.splitSizes.terminalBottom).toBe(400);
+
+    // Switch to right dock mode; size starts at the right default
+    act(() => result.current.setDockMode("right"));
+    expect(result.current.dockMode).toBe("right");
+    // terminalRight should still be the default (480), not the bottom size (400)
+    expect(result.current.terminalSize).toBe(480);
+
+    // Set a different size for right mode
+    act(() => result.current.setTerminalSize(600));
+    expect(result.current.terminalSize).toBe(600);
+    expect(result.current.splitSizes.terminalRight).toBe(600);
+
+    // Switch back to bottom — must restore the bottom-mode size (400), not right (600)
+    act(() => result.current.setDockMode("bottom"));
+    expect(result.current.terminalSize).toBe(400);
+    expect(result.current.splitSizes.terminalBottom).toBe(400);
+
+    unmount();
+
+    // After remount, both sizes must be persisted independently
+    const { result: restored } = renderHook(() => useWorkspaceLayout("C:/repo"));
+    expect(restored.current.dockMode).toBe("bottom");
+    expect(restored.current.terminalSize).toBe(400);
+    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 400, terminalRight: 600 });
   });
 });
 
@@ -78,7 +125,7 @@ describe("ResizableSplit", () => {
       })
     );
 
-    fireEvent.pointerDown(screen.getByRole("separator"), { clientX: 100 });
+    fireEvent.pointerDown(screen.getByTestId("separator-hit-zone"), { clientX: 100 });
     unmount();
     fireEvent.pointerMove(window, { clientX: 180 });
 

@@ -95,6 +95,13 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell completions", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     getRuntimeAvailabilityMock.mockResolvedValue({
@@ -122,7 +129,7 @@ describe("EditorShell completions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
 
@@ -156,7 +163,7 @@ describe("EditorShell completions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
     await user.click(await screen.findByRole("button", { name: /open other/i }));
@@ -198,11 +205,11 @@ describe("EditorShell completions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
 
     completionResolver.current?.({
       ok: true,
@@ -235,7 +242,7 @@ describe("EditorShell completions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
 
@@ -281,7 +288,7 @@ describe("EditorShell completions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
     await user.click(await screen.findByRole("button", { name: /request completions/i }));
