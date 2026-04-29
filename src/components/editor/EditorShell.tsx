@@ -2181,6 +2181,16 @@ function EditorShell() {
     [workspaceLayout]
   );
 
+  const handleLeftPaneResize = useCallback(
+    (size: number) => {
+      workspaceLayout.setSplitSizes({
+        ...workspaceLayout.splitSizes,
+        left: size,
+      });
+    },
+    [workspaceLayout]
+  );
+
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
       return;
@@ -2468,53 +2478,62 @@ function EditorShell() {
           signalCount={raceSignals.length}
           showDebugTab={showDebugTab}
         />
-        <aside className="flex w-[clamp(180px,22vw,320px)] min-w-[180px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
-          {activeTab === "explorer" && (
-            <Explorer
-              workspacePath={workspacePath}
-              activeFilePath={activeFilePath}
-              onOpenFile={handleOpenFile}
-              fileDecorations={fileDecorations}
-              explorerRevision={explorerRevision}
-            />
-          )}
-          {activeTab === "search" && (
-            <SearchPanel 
-              results={workspaceSearchResults}
-              loading={searchLoading}
-              onSearch={handleWorkspaceSearch}
-              onOpenResult={(file, line) => {
-                void handleOpenFile(file).then(() => {
-                  requestJump(line);
-                });
-              }}
-              autoFocus
-            />
-          )}
-          {activeTab === "git" && (
-            <GitPanel
-              loading={!gitSnapshot && Boolean(workspacePath)}
-              snapshot={gitSnapshot}
-              branchSnapshot={branchSnapshot}
-              error={gitError}
-              onOpenBranchPicker={() => setIsBranchPickerOpen(true)}
-            />
-          )}
-          {activeTab === "concurrency" && (
-            <RuntimeTopologyPanel
-              loading={runtimeTopologyLoading}
-              runMode={runMode}
-              runStatus={runStatus}
-              isDebugSessionRunning={isDebugSessionRunning}
-              isDebugPaused={isDebugPaused}
-              debuggerState={debuggerState}
-              panelSnapshot={runtimePanelSnapshot}
-              topologySnapshot={runtimeTopologySnapshot}
-              error={runtimeTopologyError}
-            />
-          )}
-          {DEBUG_UI_ENABLED && activeTab === "debug" && (
-            <div className="flex flex-1 flex-col gap-4 p-4">
+        <ResizableSplit
+          orientation="horizontal"
+          className="flex-1"
+          size={workspaceLayout.splitSizes.left}
+          defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.left}
+          minSize={180}
+          maxSize={420}
+          onResize={handleLeftPaneResize}
+          primary={
+            <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
+              {activeTab === "explorer" && (
+                <Explorer
+                  workspacePath={workspacePath}
+                  activeFilePath={activeFilePath}
+                  onOpenFile={handleOpenFile}
+                  fileDecorations={fileDecorations}
+                  explorerRevision={explorerRevision}
+                />
+              )}
+              {activeTab === "search" && (
+                <SearchPanel
+                  results={workspaceSearchResults}
+                  loading={searchLoading}
+                  onSearch={handleWorkspaceSearch}
+                  onOpenResult={(file, line) => {
+                    void handleOpenFile(file).then(() => {
+                      requestJump(line);
+                    });
+                  }}
+                  autoFocus
+                />
+              )}
+              {activeTab === "git" && (
+                <GitPanel
+                  loading={!gitSnapshot && Boolean(workspacePath)}
+                  snapshot={gitSnapshot}
+                  branchSnapshot={branchSnapshot}
+                  error={gitError}
+                  onOpenBranchPicker={() => setIsBranchPickerOpen(true)}
+                />
+              )}
+              {activeTab === "concurrency" && (
+                <RuntimeTopologyPanel
+                  loading={runtimeTopologyLoading}
+                  runMode={runMode}
+                  runStatus={runStatus}
+                  isDebugSessionRunning={isDebugSessionRunning}
+                  isDebugPaused={isDebugPaused}
+                  debuggerState={debuggerState}
+                  panelSnapshot={runtimePanelSnapshot}
+                  topologySnapshot={runtimeTopologySnapshot}
+                  error={runtimeTopologyError}
+                />
+              )}
+              {DEBUG_UI_ENABLED && activeTab === "debug" && (
+                <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
                 <p className="text-[11px] text-[var(--subtext0)]">
@@ -2609,11 +2628,12 @@ function EditorShell() {
                     : "Pause or hit a breakpoint to inspect state."
                   : "Open a Go file, place breakpoints, then start a debug session."}
               </div>
-            </div>
-          )}
-        </aside>
-
-        <div className="flex min-w-0 flex-1">
+                </div>
+              )}
+            </aside>
+          }
+          secondary={
+            <div className="flex min-w-0 flex-1">
           <ResizableSplit
             orientation={workspaceLayout.dockMode === "bottom" ? "vertical" : "horizontal"}
             className={
@@ -2622,6 +2642,7 @@ function EditorShell() {
                 : "flex-1 flex-row-reverse"
             }
             size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
+            resizeAnchor="end"
             defaultSize={
               workspaceLayout.dockMode === "bottom"
                 ? DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom
@@ -2882,7 +2903,9 @@ function EditorShell() {
               </div>
             }
           />
-        </div>
+            </div>
+          }
+        />
       </div>
 
       <StatusBar

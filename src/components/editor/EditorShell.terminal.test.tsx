@@ -157,9 +157,10 @@ vi.mock("../panels/BottomPanel", () => ({
 vi.mock("../layout/ResizableSplit", () => ({
   default: (props: Record<string, unknown>) => {
     const onResize = props.onResize as (size: number) => void;
+    const isSidebarSplit = props.defaultSize === 240;
     return (
       <div
-        data-testid="resizable-split"
+        data-testid={isSidebarSplit ? "sidebar-resizable-split" : "resizable-split"}
         data-orientation={props.orientation as string}
         data-size={String(props.size)}
         data-default-size={String(props.defaultSize)}
@@ -168,7 +169,11 @@ vi.mock("../layout/ResizableSplit", () => ({
         data-class-name={(props.className as string | undefined) ?? ""}
       >
         <div data-testid="split-primary">{props.primary as ReactNode}</div>
-        <button type="button" onClick={() => onResize(456)} aria-label="Resize terminal">
+        <button
+          type="button"
+          onClick={() => onResize(456)}
+          aria-label={isSidebarSplit ? "Resize sidebar" : "Resize terminal"}
+        >
           Resize
         </button>
         <div data-testid="split-secondary">{props.secondary as ReactNode}</div>

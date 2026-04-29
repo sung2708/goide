@@ -13,6 +13,7 @@ export type ResizableSplitProps = {
   minSize: number;
   maxSize: number;
   onResize: (size: number) => void;
+  resizeAnchor?: "start" | "end";
   className?: string;
 };
 
@@ -29,9 +30,10 @@ function ResizableSplit({
   minSize,
   maxSize,
   onResize,
+  resizeAnchor = "start",
   className,
 }: ResizableSplitProps) {
-  const dragStartRef = useRef<{ pointerPosition: number; size: number } | null>(null);
+  const dragStartRef = useRef<{ pointerId: number; pointerPosition: number; size: number } | null>(null);
   const dragTargetRef = useRef<HTMLDivElement | null>(null);
   const isHorizontal = orientation === "horizontal";
   const resolvedSize = clamp(size, minSize, maxSize);
@@ -42,10 +44,11 @@ function ResizableSplit({
       if (!dragStart) {
         return;
       }
-      const delta = pointerPosition - dragStart.pointerPosition;
+      const rawDelta = pointerPosition - dragStart.pointerPosition;
+      const delta = resizeAnchor === "end" ? -rawDelta : rawDelta;
       onResize(clamp(dragStart.size + delta, minSize, maxSize));
     },
-    [maxSize, minSize, onResize]
+    [maxSize, minSize, onResize, resizeAnchor]
   );
 
   const handlePointerMove = useCallback(
@@ -63,6 +66,7 @@ function ResizableSplit({
   );
 
   const stopDragging = useCallback(() => {
+    const pointerId = dragStartRef.current?.pointerId;
     dragStartRef.current = null;
     const dragTarget = dragTargetRef.current;
     if (dragTarget) {
@@ -71,12 +75,17 @@ function ResizableSplit({
       dragTarget.removeEventListener("pointercancel", stopDragging);
       if (typeof dragTarget.releasePointerCapture === "function") {
         try {
-          dragTarget.releasePointerCapture(0);
+          if (pointerId !== undefined) {
+            dragTarget.releasePointerCapture(pointerId);
+          }
         } catch {
           // best-effort cleanup
         }
       }
     }
+    window.removeEventListener("pointermove", handlePointerMove);
+    window.removeEventListener("pointerup", stopDragging);
+    window.removeEventListener("pointercancel", stopDragging);
     window.removeEventListener("mousemove", handleMouseMove);
     window.removeEventListener("mouseup", stopDragging);
     dragTargetRef.current = null;
@@ -91,15 +100,25 @@ function ResizableSplit({
   const startDragging = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
+      if (typeof event.currentTarget.setPointerCapture === "function") {
+        try {
+          event.currentTarget.setPointerCapture(event.pointerId);
+        } catch {
+          // Window-level listeners below keep dragging working if capture fails.
+        }
+      }
       dragTargetRef.current = event.currentTarget;
       dragStartRef.current = {
+        pointerId: event.pointerId,
         pointerPosition: isHorizontal ? event.clientX : event.clientY,
         size: resolvedSize,
       };
       event.currentTarget.addEventListener("pointermove", handlePointerMove);
       event.currentTarget.addEventListener("pointerup", stopDragging);
       event.currentTarget.addEventListener("pointercancel", stopDragging);
+      window.addEventListener("pointermove", handlePointerMove);
+      window.addEventListener("pointerup", stopDragging);
+      window.addEventListener("pointercancel", stopDragging);
       window.addEventListener("mousemove", handleMouseMove);
       window.addEventListener("mouseup", stopDragging);
     },
@@ -114,6 +133,7 @@ function ResizableSplit({
       event.preventDefault();
       dragTargetRef.current = event.currentTarget;
       dragStartRef.current = {
+        pointerId: -1,
         pointerPosition: isHorizontal ? event.clientX : event.clientY,
         size: resolvedSize,
       };
@@ -137,8 +157,22 @@ function ResizableSplit({
         return;
       }
 
-      const increaseKey = isHorizontal ? "ArrowRight" : "ArrowDown";
-      const decreaseKey = isHorizontal ? "ArrowLeft" : "ArrowUp";
+      const increaseKey =
+        resizeAnchor === "end"
+          ? isHorizontal
+            ? "ArrowLeft"
+            : "ArrowUp"
+          : isHorizontal
+          ? "ArrowRight"
+          : "ArrowDown";
+      const decreaseKey =
+        resizeAnchor === "end"
+          ? isHorizontal
+            ? "ArrowRight"
+            : "ArrowDown"
+          : isHorizontal
+          ? "ArrowLeft"
+          : "ArrowUp";
 
       if (event.key === increaseKey) {
         event.preventDefault();
@@ -151,7 +185,7 @@ function ResizableSplit({
         onResize(clamp(resolvedSize - KEYBOARD_RESIZE_STEP, minSize, maxSize));
       }
     },
-    [isHorizontal, maxSize, minSize, onResize, resolvedSize]
+    [isHorizontal, maxSize, minSize, onResize, resizeAnchor, resolvedSize]
   );
 
   const primaryStyle = isHorizontal
