@@ -20,7 +20,7 @@ function renderSplit(overrides: Partial<Parameters<typeof ResizableSplit>[0]> = 
   return render(<ResizableSplit {...defaults} {...overrides} />);
 }
 
-describe("ResizableSplit — pointer capture while dragging", () => {
+describe("ResizableSplit - pointer capture while dragging", () => {
   beforeEach(() => {
     // Provide a setPointerCapture stub on HTMLElement prototype so jsdom does
     // not throw when the component calls it.
@@ -91,6 +91,61 @@ describe("ResizableSplit — pointer capture while dragging", () => {
     fireEvent.pointerMove(hitZone, { clientX: 400 });
 
     expect(onResize).not.toHaveBeenCalled();
+  });
+
+  it("increases a right-docked primary pane when dragging the separator left", () => {
+    const onResize = vi.fn();
+    renderSplit({
+      orientation: "horizontal",
+      className: "flex-row-reverse",
+      resizeAnchor: "end",
+      size: 320,
+      minSize: 240,
+      maxSize: 640,
+      onResize,
+    });
+
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 500 });
+    fireEvent.pointerMove(hitZone, { pointerId: 7, clientX: 460 });
+
+    expect(onResize).toHaveBeenCalledWith(360);
+  });
+
+  it("increases a bottom-docked primary pane when dragging the separator up", () => {
+    const onResize = vi.fn();
+    renderSplit({
+      orientation: "vertical",
+      className: "flex-col-reverse",
+      resizeAnchor: "end",
+      size: 320,
+      minSize: 240,
+      maxSize: 640,
+      onResize,
+    });
+
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    fireEvent.pointerDown(hitZone, { pointerId: 7, clientY: 500 });
+    fireEvent.pointerMove(hitZone, { pointerId: 7, clientY: 460 });
+
+    expect(onResize).toHaveBeenCalledWith(360);
+  });
+
+  it("continues resizing when pointer movement is delivered on window", () => {
+    const onResize = vi.fn();
+    renderSplit({
+      orientation: "horizontal",
+      size: 320,
+      minSize: 240,
+      maxSize: 640,
+      onResize,
+    });
+
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 320 });
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 380 });
+
+    expect(onResize).toHaveBeenCalledWith(380);
   });
 });
 
@@ -177,6 +232,24 @@ describe("ResizableSplit — keyboard resize", () => {
     fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowLeft" });
 
     expect(onResize).toHaveBeenCalledWith(184);
+  });
+
+  it("increases an end-anchored vertical split with ArrowUp", () => {
+    const onResize = vi.fn();
+    renderSplit({ orientation: "vertical", resizeAnchor: "end", size: 200, onResize });
+
+    fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowUp" });
+
+    expect(onResize).toHaveBeenCalledWith(216);
+  });
+
+  it("increases an end-anchored horizontal split with ArrowLeft", () => {
+    const onResize = vi.fn();
+    renderSplit({ orientation: "horizontal", resizeAnchor: "end", size: 200, onResize });
+
+    fireEvent.keyDown(screen.getByRole("separator"), { key: "ArrowLeft" });
+
+    expect(onResize).toHaveBeenCalledWith(216);
   });
 
   it("sets size to minSize with Home key", () => {

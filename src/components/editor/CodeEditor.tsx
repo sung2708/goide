@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import {
   EditorState,
@@ -516,6 +516,8 @@ function CodeEditor({
   breakpoints = [],
   onToggleBreakpoint,
 }: CodeEditorProps) {
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+
   useEffect(() => {
     const view = viewRef.current;
     if (view) {
@@ -523,7 +525,7 @@ function CodeEditor({
         effects: breakpointEffect.of(breakpoints)
       });
     }
-  }, [breakpoints]);
+  }, [breakpoints, editorView]);
 
   const resolveCompletionRange = (
     view: EditorView,
@@ -969,6 +971,7 @@ function CodeEditor({
   const selectedLineRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const handledJumpRequestIdRef = useRef<number | null>(null);
 
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
@@ -1024,7 +1027,7 @@ function CodeEditor({
       );
       highlightedLineRef.current = hintLine;
     }
-  }, [hintLine, value]);
+  }, [hintLine, value, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1040,7 +1043,7 @@ function CodeEditor({
       getLineElement(view, executionLine)?.classList.add(DEBUG_CURRENT_LINE_CLASS);
       executionLineRef.current = executionLine;
     }
-  }, [executionLine, value]);
+  }, [executionLine, value, editorView]);
 
   useEffect(() => {
     // New file/content context should not inherit previous-line dedupe state.
@@ -1055,7 +1058,7 @@ function CodeEditor({
 
     const cmDiagnostics = buildCodeMirrorDiagnostics(view);
     view.dispatch(setDiagnostics(view.state, cmDiagnostics));
-  }, [diagnostics, value]);
+  }, [diagnostics, value, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1077,30 +1080,12 @@ function CodeEditor({
       scrollElement.style.overscrollBehavior = "contain";
     }
 
-    const handleWheel = (event: WheelEvent) => {
-      const target = event.target as Node | null;
-      if (!target || !container.contains(target) || event.ctrlKey) {
-        return;
-      }
-      if (event.deltaX === 0 && event.deltaY === 0) {
-        return;
-      }
-      scrollElement.scrollBy?.({
-        left: event.deltaX,
-        top: event.deltaY,
-        behavior: "auto",
-      });
-      emitViewportRange(view);
-      event.preventDefault();
-    };
-
     requestMeasure();
 
     const resizeObserver = new ResizeObserver(() => {
       requestMeasure();
     });
     resizeObserver.observe(container);
-    document.addEventListener("wheel", handleWheel, { passive: false, capture: true });
 
     const fonts = document.fonts;
     void fonts.ready.then(() => {
@@ -1111,13 +1096,15 @@ function CodeEditor({
 
     return () => {
       resizeObserver.disconnect();
-      document.removeEventListener("wheel", handleWheel, true);
     };
-  }, [value]);
+  }, [value, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view || jumpRequest === null) {
+      return;
+    }
+    if (handledJumpRequestIdRef.current === jumpRequest.requestId) {
       return;
     }
 
@@ -1125,6 +1112,7 @@ function CodeEditor({
     if (line < 1 || line > view.state.doc.lines) {
       return;
     }
+    handledJumpRequestIdRef.current = jumpRequest.requestId;
 
     const from = view.state.doc.line(line).from;
     view.dispatch({
@@ -1135,7 +1123,7 @@ function CodeEditor({
     emitViewportRange(view);
     emitSelectionLine(line);
     emitInteractionAnchor(line);
-  }, [jumpRequest]);
+  }, [jumpRequest, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1160,7 +1148,7 @@ function CodeEditor({
       top: Math.max(8, Math.round(coords.top - rect.top)),
       left: Math.max(8, Math.round(coords.left - rect.left + 16)),
     });
-  }, [counterpartLine, value, onCounterpartAnchorChange]);
+  }, [counterpartLine, value, onCounterpartAnchorChange, editorView]);
 
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {
@@ -1201,10 +1189,43 @@ function CodeEditor({
     });
   };
 
+  const handleWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
+    const view = viewRef.current;
+    if (!view || event.ctrlKey || (event.deltaX === 0 && event.deltaY === 0)) {
+      return;
+    }
+
+    const scrollElement = view.scrollDOM as HTMLElement & {
+      scrollBy?: (options: ScrollToOptions) => void;
+    };
+    const pageHeight = containerRef.current?.clientHeight ?? scrollElement.clientHeight;
+    const normalizeDelta = (delta: number) => {
+      if (event.deltaMode === 1) {
+        return delta * 16;
+      }
+      if (event.deltaMode === 2) {
+        return delta * pageHeight;
+      }
+      return delta;
+    };
+    const left = normalizeDelta(event.deltaX);
+    const top = normalizeDelta(event.deltaY);
+
+    if (typeof scrollElement.scrollBy === "function") {
+      scrollElement.scrollBy({ left, top, behavior: "auto" });
+    } else {
+      scrollElement.scrollLeft += left;
+      scrollElement.scrollTop += top;
+    }
+    emitViewportRange(view);
+    event.preventDefault();
+  };
+
   return (
     <div
       ref={containerRef}
       className="h-full min-h-0 w-full"
+      onWheelCapture={handleWheelCapture}
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1309,6 +1330,7 @@ function CodeEditor({
         extensions={extensions}
         onCreateEditor={(view) => {
           viewRef.current = view;
+          setEditorView(view);
           view.requestMeasure();
           emitViewportRange(view);
         }}

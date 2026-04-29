@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const searchPanelOpenMock = vi.fn(() => false);
@@ -22,6 +23,8 @@ const mockView = {
   requestMeasure: vi.fn(),
   scrollDOM: {
     scrollBy: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
   },
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
@@ -154,7 +157,9 @@ vi.mock("@codemirror/view", async () => {
 
 vi.mock("@uiw/react-codemirror", () => ({
   default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
-    onCreateEditor?.(mockView);
+    useEffect(() => {
+      onCreateEditor?.(mockView);
+    }, [onCreateEditor]);
     return <div data-testid="mock-codemirror" className="cm-editor" />;
   },
 }));
@@ -171,6 +176,8 @@ describe("CodeEditor", () => {
     acceptCompletionMock.mockReturnValue(false);
     mockView.requestMeasure.mockClear();
     mockView.scrollDOM.scrollBy.mockClear();
+    mockView.scrollDOM.addEventListener.mockClear();
+    mockView.scrollDOM.removeEventListener.mockClear();
     latestKeyBindings = [];
   });
 
