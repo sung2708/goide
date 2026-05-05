@@ -25,6 +25,11 @@ const mockView = {
     scrollBy: vi.fn(),
     addEventListener: vi.fn(),
     removeEventListener: vi.fn(),
+    clientHeight: 120,
+    scrollHeight: 120,
+    scrollLeft: 0,
+    scrollTop: 0,
+    parentElement: null as any,
   },
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
@@ -65,6 +70,7 @@ const moveCompletionSelectionMock = vi.fn(
   (_forward: boolean, _by?: "option" | "page") => (_view: unknown) => false
 );
 let latestKeyBindings: Array<{ key?: string; run?: (view: unknown) => boolean }> = [];
+let latestCodeMirrorProps: Record<string, unknown> | null = null;
 type TestCompletionResult = {
   from: number;
   options: Array<{
@@ -156,7 +162,9 @@ vi.mock("@codemirror/view", async () => {
 });
 
 vi.mock("@uiw/react-codemirror", () => ({
-  default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
+  default: (props: Record<string, unknown>) => {
+    latestCodeMirrorProps = props;
+    const onCreateEditor = props.onCreateEditor as ((view: unknown) => void) | undefined;
     useEffect(() => {
       onCreateEditor?.(mockView);
     }, [onCreateEditor]);
@@ -178,7 +186,13 @@ describe("CodeEditor", () => {
     mockView.scrollDOM.scrollBy.mockClear();
     mockView.scrollDOM.addEventListener.mockClear();
     mockView.scrollDOM.removeEventListener.mockClear();
+    mockView.scrollDOM.scrollHeight = 120;
+    mockView.scrollDOM.clientHeight = 120;
+    mockView.scrollDOM.scrollLeft = 0;
+    mockView.scrollDOM.scrollTop = 0;
+    mockView.scrollDOM.parentElement = null;
     latestKeyBindings = [];
+    latestCodeMirrorProps = null;
   });
 
   it("keeps the editor host clipped inside the available viewport", () => {
@@ -189,7 +203,19 @@ describe("CodeEditor", () => {
     expect(screen.getByTestId("mock-codemirror")).toBeInTheDocument();
   });
 
-  it("forwards mouse wheel scrolling to the CodeMirror scroll container", () => {
+  it("registers a non-passive wheel listener on the CodeMirror scroll container", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
+      (call: unknown[]) => call[0] === "wheel"
+    );
+
+    expect(wheelRegistration).toBeDefined();
+    expect(wheelRegistration?.[2]).toEqual({ passive: false });
+  });
+
+  it("forwards wheel scrolling from the editor host when scrollDOM is scrollable", () => {
+    mockView.scrollDOM.scrollHeight = 400;
     render(<CodeEditor value={"package main\n"} />);
 
     fireEvent.wheel(screen.getByTestId("mock-codemirror").parentElement as HTMLElement, {
@@ -202,6 +228,57 @@ describe("CodeEditor", () => {
       top: 36,
       behavior: "auto",
     });
+  });
+
+  it("forwards wheel scrolling to the first scrollable ancestor when scrollDOM itself cannot scroll", () => {
+    const scrollableAncestor = {
+      scrollBy: vi.fn(),
+      clientHeight: 120,
+      scrollHeight: 400,
+      scrollLeft: 0,
+      scrollTop: 0,
+      parentElement: null,
+      dispatchEvent: vi.fn(),
+    };
+    mockView.scrollDOM.parentElement = scrollableAncestor;
+    render(<CodeEditor value={"package main\n"} />);
+
+    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
+      (call: unknown[]) => call[0] === "wheel"
+    );
+    const handler = wheelRegistration?.[1] as ((event: {
+      ctrlKey: boolean;
+      deltaX: number;
+      deltaY: number;
+      deltaMode: number;
+      preventDefault: () => void;
+      target?: EventTarget | null;
+    }) => void) | undefined;
+
+    const preventDefault = vi.fn();
+    handler?.({
+      ctrlKey: false,
+      deltaX: 4,
+      deltaY: 36,
+      deltaMode: 0,
+      preventDefault,
+      target: mockView.scrollDOM as unknown as EventTarget,
+    });
+
+    expect(scrollableAncestor.scrollBy).toHaveBeenCalledWith({
+      left: 4,
+      top: 36,
+      behavior: "auto",
+    });
+    expect(mockView.scrollDOM.scrollBy).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the editor root at full height without forcing minHeight", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    expect(latestCodeMirrorProps?.height).toBe("100%");
+    expect(latestCodeMirrorProps?.minHeight).toBeUndefined();
   });
 
   it("uses Tab to move snippet placeholders before completion acceptance", () => {

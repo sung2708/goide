@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type WheelEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import {
   EditorState,
@@ -972,6 +972,7 @@ function CodeEditor({
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handledJumpRequestIdRef = useRef<number | null>(null);
+  const handledWheelEventsRef = useRef(new WeakSet<Event>());
 
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
@@ -1072,15 +1073,63 @@ function CodeEditor({
       emitViewportRange(view);
     };
 
-    const scrollElement = view.scrollDOM as Partial<HTMLElement> & {
+    const scrollElement = view.scrollDOM as HTMLElement & {
       scrollBy?: (options: ScrollToOptions) => void;
-      style?: CSSStyleDeclaration;
     };
     if (scrollElement.style) {
       scrollElement.style.overscrollBehavior = "contain";
     }
 
     requestMeasure();
+
+    const resolveWheelTarget = () => {
+      let current: HTMLElement | null = scrollElement;
+      while (current) {
+        if (current.scrollHeight > current.clientHeight) {
+          return current;
+        }
+        current = current.parentElement;
+      }
+      return scrollElement;
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (handledWheelEventsRef.current.has(event)) {
+        return;
+      }
+      if (event.ctrlKey || (event.deltaX === 0 && event.deltaY === 0)) {
+        return;
+      }
+      handledWheelEventsRef.current.add(event);
+
+      const normalizeDelta = (delta: number) => {
+        if (event.deltaMode === 1) {
+          return delta * 16;
+        }
+        if (event.deltaMode === 2) {
+          return delta * (container.clientHeight || scrollElement.clientHeight);
+        }
+        return delta;
+      };
+
+      const left = normalizeDelta(event.deltaX);
+      const top = normalizeDelta(event.deltaY);
+      const wheelTarget = resolveWheelTarget() as HTMLElement & {
+        scrollBy?: (options: ScrollToOptions) => void;
+      };
+
+      if (typeof wheelTarget.scrollBy === "function") {
+        wheelTarget.scrollBy({ left, top, behavior: "auto" });
+      } else {
+        wheelTarget.scrollLeft += left;
+        wheelTarget.scrollTop += top;
+      }
+      emitViewportRange(view);
+      event.preventDefault();
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    scrollElement.addEventListener("wheel", handleWheel, { passive: false });
 
     const resizeObserver = new ResizeObserver(() => {
       requestMeasure();
@@ -1095,6 +1144,8 @@ function CodeEditor({
     });
 
     return () => {
+      container.removeEventListener("wheel", handleWheel);
+      scrollElement.removeEventListener("wheel", handleWheel);
       resizeObserver.disconnect();
     };
   }, [value, editorView]);
@@ -1189,43 +1240,10 @@ function CodeEditor({
     });
   };
 
-  const handleWheelCapture = (event: WheelEvent<HTMLDivElement>) => {
-    const view = viewRef.current;
-    if (!view || event.ctrlKey || (event.deltaX === 0 && event.deltaY === 0)) {
-      return;
-    }
-
-    const scrollElement = view.scrollDOM as HTMLElement & {
-      scrollBy?: (options: ScrollToOptions) => void;
-    };
-    const pageHeight = containerRef.current?.clientHeight ?? scrollElement.clientHeight;
-    const normalizeDelta = (delta: number) => {
-      if (event.deltaMode === 1) {
-        return delta * 16;
-      }
-      if (event.deltaMode === 2) {
-        return delta * pageHeight;
-      }
-      return delta;
-    };
-    const left = normalizeDelta(event.deltaX);
-    const top = normalizeDelta(event.deltaY);
-
-    if (typeof scrollElement.scrollBy === "function") {
-      scrollElement.scrollBy({ left, top, behavior: "auto" });
-    } else {
-      scrollElement.scrollLeft += left;
-      scrollElement.scrollTop += top;
-    }
-    emitViewportRange(view);
-    event.preventDefault();
-  };
-
   return (
     <div
       ref={containerRef}
       className="h-full min-h-0 w-full"
-      onWheelCapture={handleWheelCapture}
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1321,9 +1339,8 @@ function CodeEditor({
     >
       <CodeMirror
         value={value}
-        className="h-full min-h-0"
+        className="h-full min-h-0 w-full"
         height="100%"
-        minHeight="100%"
         width="100%"
         theme="dark"
         basicSetup={false}
