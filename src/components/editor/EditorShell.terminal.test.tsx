@@ -6,7 +6,7 @@
  * panel should receive the correct surfaceKey (editor:<relativePath>).
  */
 
-import { act, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -93,8 +93,10 @@ vi.mock("../sidebar/Explorer", () => ({
   ),
 }));
 
+const codeEditorWheelSpy = vi.fn();
+
 vi.mock("./CodeEditor", () => ({
-  default: () => <div data-testid="mock-code-editor" />,
+  default: () => <div data-testid="mock-code-editor" onWheel={codeEditorWheelSpy} />,
 }));
 
 // Capture BottomPanel props so we can assert on them
@@ -193,6 +195,7 @@ describe("EditorShell terminal wiring", () => {
   beforeEach(() => {
     capturedBottomPanelProps = null;
     bottomPanelMountCount = 0;
+    codeEditorWheelSpy.mockClear();
     localStorage.clear();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
@@ -267,6 +270,40 @@ describe("EditorShell terminal wiring", () => {
     });
 
     expect(capturedBottomPanelProps?.workspacePath).toBe("C:/workspace");
+  });
+
+  it("does not block wheel events from reaching the editor surface", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+
+    fireEvent.wheel(screen.getByTestId("mock-code-editor"), { deltaY: 32 });
+
+    expect(codeEditorWheelSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the outer workbench flex wrapper shrinkable with min-h-0", () => {
+    const { getByTestId } = render(<EditorShell />);
+    expect(getByTestId("sidebar-resizable-split").parentElement).toHaveClass("min-h-0");
+  });
+
+  it("keeps the nested editor split wrapper shrinkable with min-h-0", () => {
+    const { getByTestId } = render(<EditorShell />);
+    expect(getByTestId("resizable-split").parentElement).toHaveClass("min-h-0");
+  });
+
+  it("does not leave the hidden terminal pane participating in pointer layout", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+
+    const hiddenPanel = screen.getByTestId("bottom-panel").closest("[hidden]");
+    expect(hiddenPanel).not.toBeNull();
+    expect(hiddenPanel).toHaveAttribute("hidden");
   });
 
   /**

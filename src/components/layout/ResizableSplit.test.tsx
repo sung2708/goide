@@ -147,6 +147,21 @@ describe("ResizableSplit - pointer capture while dragging", () => {
 
     expect(onResize).toHaveBeenCalledWith(380);
   });
+
+  it("does not install mousemove fallback listeners during pointer drags", () => {
+    const addEventListenerSpy = vi.spyOn(window, "addEventListener");
+    renderSplit({ orientation: "horizontal" });
+
+    fireEvent.pointerDown(screen.getByTestId("separator-hit-zone"), {
+      pointerId: 7,
+      clientX: 320,
+    });
+
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith("mousemove", expect.any(Function));
+    expect(addEventListenerSpy).not.toHaveBeenCalledWith("mouseup", expect.any(Function));
+
+    addEventListenerSpy.mockRestore();
+  });
 });
 
 describe("ResizableSplit — hit target", () => {
@@ -158,6 +173,18 @@ describe("ResizableSplit — hit target", () => {
     const hitZone = screen.getByTestId("separator-hit-zone");
     expect(hitZone).toBeInTheDocument();
     expect(hitZone).toContainElement(screen.getByRole("separator"));
+  });
+
+  it("keeps the horizontal hit-zone in flow instead of overlapping adjacent panes", () => {
+    renderSplit({ orientation: "horizontal" });
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    expect(hitZone.className).not.toContain("-mx-");
+  });
+
+  it("keeps the vertical hit-zone in flow instead of overlapping adjacent panes", () => {
+    renderSplit({ orientation: "vertical" });
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    expect(hitZone.className).not.toContain("-my-");
   });
 
   it("hit-zone is the focusable separator for vertical orientation (larger touch target)", () => {
