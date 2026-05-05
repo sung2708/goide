@@ -39,8 +39,6 @@ const editorTheme = EditorView.theme(
       padding: "8px 0",
       overflow: "auto",
       overscrollBehavior: "contain",
-      height: "100%",
-      minHeight: "100%",
     },
     ".cm-content": {
       padding: "0",

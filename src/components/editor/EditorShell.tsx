@@ -52,7 +52,6 @@ import type {
   WorkspaceSearchFile,
   DebuggerState,
 } from "../../lib/ipc/types";
-import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
 import ThreadLine from "../overlays/ThreadLine";
@@ -60,10 +59,6 @@ import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
 import BottomPanel from "../panels/BottomPanel";
-import SummaryPeek, {
-  type SummaryItem,
-  type SummaryMetric,
-} from "../panels/SummaryPeek";
 import Explorer, { type FileDecoration } from "../sidebar/Explorer";
 import ActivityBar, { type ActivityBarTab } from "../sidebar/ActivityBar";
 import StatusBar from "../statusbar/StatusBar";
@@ -414,7 +409,6 @@ function EditorShell() {
   const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
-  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
   const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab>("logs");
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
@@ -425,7 +419,6 @@ function EditorShell() {
     "available" | "unavailable" | "degraded"
   >("unavailable");
   const [toolchainStatus, setToolchainStatus] = useState<ToolchainStatus | null>(null);
-  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
@@ -480,8 +473,6 @@ function EditorShell() {
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
   const latestEditorContentRef = useRef<string | null>(null);
-  const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
-    useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
@@ -1054,57 +1045,6 @@ function EditorShell() {
     ? "confirmed" as const
     : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
-  const summaryItems = useMemo<SummaryItem[]>(() => {
-    return detectedConstructs
-      .filter(
-        (construct) =>
-          Number.isFinite(construct.line) && Number.isInteger(construct.line) && construct.line >= 1
-      )
-      .sort((a, b) => {
-        if (a.line !== b.line) {
-          return a.line - b.line;
-        }
-        if (a.column !== b.column) {
-          return a.column - b.column;
-        }
-        return a.kind.localeCompare(b.kind);
-      })
-      .map((construct) => ({
-        line: construct.line,
-        label: KIND_LABELS[construct.kind] ?? construct.kind,
-        confidence: construct.confidence,
-        symbol: construct.symbol,
-      }));
-  }, [detectedConstructs]);
-
-  const summaryMetrics = useMemo<SummaryMetric[]>(() => {
-    if (!runtimePanelSnapshot) {
-      return [];
-    }
-
-    return [
-      {
-        label: "signals",
-        value: String(runtimePanelSnapshot.signalCount),
-        tone: runtimePanelSnapshot.signalCount > 0 ? "primary" : "secondary",
-      },
-      {
-        label: "blocked",
-        value: String(runtimePanelSnapshot.blockedCount),
-        tone: runtimePanelSnapshot.blockedCount > 0 ? "error" : "secondary",
-      },
-      {
-        label: "goroutines",
-        value: String(runtimePanelSnapshot.goroutineCount),
-        tone: runtimePanelSnapshot.goroutineCount > 0 ? "tertiary" : "secondary",
-      },
-      {
-        label: "runtime",
-        value: runtimePanelSnapshot.sessionActive ? "LIVE" : "IDLE",
-        tone: runtimePanelSnapshot.sessionActive ? "primary" : "secondary",
-      },
-    ];
-  }, [runtimePanelSnapshot]);
 
   const requestJump = useCallback((targetLine: number | null) => {
     if (targetLine === null) {
@@ -2159,20 +2099,6 @@ function EditorShell() {
     ]
   );
 
-  const openCommandPalette = useCallback(() => {
-    if (isCommandPaletteOpen) {
-      return;
-    }
-    setPaletteReturnFocusEl(document.activeElement as HTMLElement | null);
-    setIsCommandPaletteOpen(true);
-  }, [isCommandPaletteOpen]);
-
-  const closeCommandPalette = useCallback(() => {
-    setIsCommandPaletteOpen(false);
-    if (paletteReturnFocusEl instanceof HTMLElement) {
-      requestAnimationFrame(() => paletteReturnFocusEl.focus());
-    }
-  }, [paletteReturnFocusEl]);
 
   const handleTerminalPaneResize = useCallback(
     (size: number) => {
@@ -2471,7 +2397,7 @@ function EditorShell() {
     <div
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
-      <div className="flex min-w-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ActivityBar
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -2633,7 +2559,7 @@ function EditorShell() {
             </aside>
           }
           secondary={
-            <div className="flex min-w-0 flex-1">
+            <div className="flex min-h-0 min-w-0 flex-1">
           <ResizableSplit
             orientation={workspaceLayout.dockMode === "bottom" ? "vertical" : "horizontal"}
             className={
@@ -2889,17 +2815,6 @@ function EditorShell() {
               </div>
             </section>
 
-            {isSummaryOpen && (
-              <SummaryPeek
-                items={summaryItems}
-                metrics={summaryMetrics}
-                topologyInteractions={runtimeTopologySnapshot?.interactions ?? []}
-                topologyActive={runtimeTopologySnapshot?.sessionActive ?? false}
-                hasDebugSession={runMode === "debug" && runStatus === "running"}
-                onJumpToLine={(line) => requestJump(line)}
-                onClose={() => setIsSummaryOpen(false)}
-              />
-            )}
               </div>
             }
           />
@@ -2920,29 +2835,10 @@ function EditorShell() {
         runStatus={runStatus}
         branchName={branchSnapshot?.currentBranch ?? null}
         onToggleBranchPicker={() => setIsBranchPickerOpen((prev) => !prev)}
-        isSummaryOpen={isSummaryOpen}
         isBottomPanelOpen={isBottomPanelOpen}
-        isCommandPaletteOpen={isCommandPaletteOpen}
-        onToggleCommandPalette={() =>
-          isCommandPaletteOpen ? closeCommandPalette() : openCommandPalette()
-        }
-        onToggleSummary={() => setIsSummaryOpen((prev) => !prev)}
         onToggleBottomPanel={() => setIsBottomPanelOpen((prev) => !prev)}
       />
 
-      {isCommandPaletteOpen && (
-        <CommandPalette
-          onClose={closeCommandPalette}
-          canRun={Boolean(workspacePath && isGoFile(activeFilePath))}
-          canRunWithRace={
-            Boolean(workspacePath && isGoFile(activeFilePath)) &&
-            runtimeAvailability !== "unavailable"
-          }
-          isRunning={runStatus === "running"}
-          onRun={handleRunFileStandard}
-          onRunWithRace={handleRunFileWithRace}
-        />
-      )}
 
       {isBranchPickerOpen && branchSnapshot && (
         <div className="absolute bottom-10 left-[240px] z-50 w-72">

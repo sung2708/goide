@@ -23,12 +23,8 @@ function renderStatusBar(
       toolchainStatus={toolchainStatus}
       saveStatus="idle"
       runStatus="idle"
-      isSummaryOpen={false}
       isBottomPanelOpen={false}
-      isCommandPaletteOpen={false}
-      onToggleSummary={vi.fn()}
       onToggleBottomPanel={vi.fn()}
-      onToggleCommandPalette={vi.fn()}
     />
   );
 }
@@ -46,12 +42,8 @@ describe("StatusBar runtime availability", () => {
         toolchainStatus={null}
         saveStatus="idle"
         runStatus="idle"
-        isSummaryOpen={false}
         isBottomPanelOpen={false}
-        isCommandPaletteOpen={false}
-        onToggleSummary={vi.fn()}
         onToggleBottomPanel={vi.fn()}
-        onToggleCommandPalette={vi.fn()}
       />
     );
 
@@ -73,7 +65,7 @@ describe("StatusBar diagnostics availability", () => {
     expect(
       screen.getByTitle(/gopls is unavailable\. install gopls/i)
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /show command palette/i })).toBeEnabled();
+    expect(screen.getByRole("button", { name: /show terminal panel/i })).toBeEnabled();
   });
 
   it("shows neutral diagnostics label before any diagnostics check runs", () => {
@@ -163,12 +155,8 @@ describe("StatusBar branch trigger", () => {
         toolchainStatus={null}
         branchName="develop"
         onToggleBranchPicker={onToggleBranchPicker}
-        isSummaryOpen={false}
         isBottomPanelOpen={false}
-        isCommandPaletteOpen={false}
-        onToggleSummary={() => {}}
         onToggleBottomPanel={() => {}}
-        onToggleCommandPalette={() => {}}
       />
     );
 
@@ -190,12 +178,8 @@ describe("StatusBar branch trigger", () => {
         toolchainStatus={null}
         branchName="develop"
         onToggleBranchPicker={onToggleBranchPicker}
-        isSummaryOpen={false}
         isBottomPanelOpen={false}
-        isCommandPaletteOpen={false}
-        onToggleSummary={() => {}}
         onToggleBottomPanel={() => {}}
-        onToggleCommandPalette={() => {}}
       />
     );
 

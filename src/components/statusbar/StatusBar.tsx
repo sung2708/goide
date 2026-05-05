@@ -13,12 +13,8 @@ type StatusBarProps = {
   runStatus?: "idle" | "running" | "done" | "error";
   branchName?: string | null;
   onToggleBranchPicker?: () => void;
-  isSummaryOpen: boolean;
   isBottomPanelOpen: boolean;
-  isCommandPaletteOpen: boolean;
-  onToggleSummary: () => void;
   onToggleBottomPanel: () => void;
-  onToggleCommandPalette: () => void;
 };
 
 function StatusBar({
@@ -33,12 +29,8 @@ function StatusBar({
   runStatus = "idle",
   branchName,
   onToggleBranchPicker,
-  isSummaryOpen,
   isBottomPanelOpen,
-  isCommandPaletteOpen,
-  onToggleSummary,
   onToggleBottomPanel,
-  onToggleCommandPalette,
 }: StatusBarProps) {
   const modeLabel = mode === "deep-trace" ? "Deep Trace" : "Quick Insight";
   const runtimeLabel =
@@ -161,34 +153,6 @@ function StatusBar({
         <div className="h-3 w-px bg-[var(--surface1)]"></div>
 
         <div className="flex items-center gap-1.5">
-          <button
-            type="button"
-            aria-label={isCommandPaletteOpen ? "Hide command palette" : "Show command palette"}
-            title="Open run commands for the active Go file."
-            className={cn(
-              "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
-              isCommandPaletteOpen
-                ? "bg-[var(--bg-active)] text-[var(--lavender)]"
-                : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-            )}
-            onClick={onToggleCommandPalette}
-          >
-            COMMANDS
-          </button>
-          <button
-            type="button"
-            aria-label={isSummaryOpen ? "Hide summary panel" : "Show summary panel"}
-            title="Show or hide the current file's concurrency summary."
-            className={cn(
-              "rounded px-2.5 py-1 font-semibold transition-colors duration-100",
-              isSummaryOpen
-                ? "bg-[var(--bg-active)] text-[var(--lavender)]"
-                : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-            )}
-            onClick={onToggleSummary}
-          >
-            SUMMARY
-          </button>
           <button
             type="button"
             aria-label={isBottomPanelOpen ? "Hide terminal panel" : "Show terminal panel"}

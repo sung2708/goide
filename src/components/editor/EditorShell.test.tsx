@@ -1,10 +1,4 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-  within,
-} from "@testing-library/react";
+import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -48,41 +42,29 @@ describe("EditorShell panels", () => {
     );
   });
 
-  it("keeps optional panels hidden by default and toggles them on demand", async () => {
+  it("keeps only the terminal panel toggle available in the shell chrome", async () => {
     const user = userEvent.setup();
 
     render(<EditorShell />);
 
-    // SummaryPeek is conditionally rendered (not in DOM when hidden)
+    expect(screen.queryByRole("button", { name: /summary/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /command palette/i })).toBeNull();
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
     // BottomPanel is always mounted to preserve ShellTerminalView's xterm
-    // instance across hide/show cycles.  When hidden, the wrapping div has
+    // instance across hide/show cycles. When hidden, the wrapping div has
     // the HTML `hidden` attribute; the section with data-testid="bottom-panel"
     // is always in the DOM.
     const bottomPanelEl = screen.getByTestId("bottom-panel");
     expect(bottomPanelEl).toBeInTheDocument();
-    // The wrapping div added by EditorShell should be hidden initially
     expect(bottomPanelEl.closest("[hidden]")).not.toBeNull();
 
-    const summaryBtn = screen.getByRole("button", { name: /summary/i });
     const bottomBtn = screen.getByRole("button", { name: /show terminal panel/i });
-
-    await user.click(summaryBtn);
-    expect(screen.getByTestId("summary-panel")).toBeInTheDocument();
-
     await user.click(bottomBtn);
-    // After opening, the hidden wrapper is removed — panel is visible
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
-    const summaryPanel = screen.getByTestId("summary-panel");
-    await user.click(within(summaryPanel).getByRole("button", { name: /^hide$/i }));
-    expect(screen.queryByTestId("summary-panel")).toBeNull();
-
-    // Hide moved into BottomPanel overflow menu
     await user.click(screen.getByRole("button", { name: /more panel actions/i }));
     await user.click(screen.getByRole("menuitem", { name: /hide panel/i }));
-    // Panel is hidden again (wrapper div has hidden attribute)
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });
 
@@ -100,51 +82,10 @@ describe("EditorShell panels", () => {
     expect(screen.queryByText(/toolchain issues detected/i)).toBeNull();
   });
 
-  it("opens command palette from the status bar control", async () => {
+  it("does not render command palette controls", () => {
     render(<EditorShell />);
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
-
-    expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
-  });
-
-  it("opens command palette from the status bar control even when a contenteditable surface is focused", async () => {
-    render(<EditorShell />);
-    const fauxEditor = document.createElement("div");
-    fauxEditor.contentEditable = "true";
-    document.body.appendChild(fauxEditor);
-    fauxEditor.focus();
-
-    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
-
-    expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
-
-    document.body.removeChild(fauxEditor);
-  });
-
-  it("restores original focus when the palette is closed", async () => {
-    const rafSpy = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb: FrameRequestCallback) => {
-        cb(0);
-        return 0;
-      });
-    try {
-      render(<EditorShell />);
-
-      const summaryTrigger = screen.getByRole("button", { name: /summary/i });
-      summaryTrigger.focus();
-
-      fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
-      expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
-
-      fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
-
-      await waitFor(() => expect(summaryTrigger).toHaveFocus());
-    } finally {
-      rafSpy.mockRestore();
-    }
+    expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
   });
 });

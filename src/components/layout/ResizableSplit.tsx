@@ -119,15 +119,18 @@ function ResizableSplit({
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", stopDragging);
       window.addEventListener("pointercancel", stopDragging);
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", stopDragging);
     },
-    [handlePointerMove, isHorizontal, resolvedSize, stopDragging, handleMouseMove]
+    [handlePointerMove, isHorizontal, resolvedSize, stopDragging]
   );
 
   const startMouseDragging = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
       if (event.button !== 0) {
+        return;
+      }
+      const supportsPointerEvents =
+        typeof window !== "undefined" && typeof window.PointerEvent !== "undefined";
+      if (supportsPointerEvents) {
         return;
       }
       event.preventDefault();
@@ -216,7 +219,7 @@ function ResizableSplit({
         data-testid="separator-hit-zone"
         className={cn(
           "relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
-          isHorizontal ? "-mx-2 w-5 cursor-col-resize" : "-my-2 h-5 cursor-row-resize"
+          isHorizontal ? "w-5 cursor-col-resize" : "h-5 cursor-row-resize"
         )}
         style={{ touchAction: "none" }}
         onPointerDown={startDragging}
