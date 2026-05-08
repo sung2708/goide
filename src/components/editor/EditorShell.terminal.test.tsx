@@ -276,6 +276,18 @@ describe("EditorShell terminal wiring", () => {
     expect(capturedBottomPanelProps?.workspacePath).toBe("C:/workspace");
   });
 
+  it("keeps the editor workbench clipped when a file is open", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+
+    expect(screen.getByTestId("editor-workbench")).toHaveClass("overflow-hidden");
+    expect(screen.getByTestId("editor-content-region")).toHaveClass("overflow-hidden");
+    expect(screen.getByTestId("editor-active-file-region")).toHaveClass("overflow-hidden");
+  });
+
   it("does not block wheel events from reaching the editor surface", async () => {
     const user = userEvent.setup();
     render(<EditorShell />);
