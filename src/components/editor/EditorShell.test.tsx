@@ -63,8 +63,7 @@ describe("EditorShell panels", () => {
     await user.click(bottomBtn);
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /hide panel/i }));
+    await user.click(screen.getByRole("button", { name: /hide panel/i }));
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });
 
@@ -87,5 +86,22 @@ describe("EditorShell panels", () => {
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
     expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
+  });
+
+  it("opens and hides the terminal panel without using an overflow menu", async () => {
+    const user = userEvent.setup();
+
+    render(<EditorShell />);
+
+    const bottomPanelEl = screen.getByTestId("bottom-panel");
+    expect(bottomPanelEl.closest("[hidden]")).not.toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /show terminal panel/i }));
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
+
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /hide panel/i }));
+
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });
 });

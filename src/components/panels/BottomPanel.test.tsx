@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import BottomPanel from "./BottomPanel";
@@ -97,7 +97,7 @@ describe("BottomPanel", () => {
     expect(onActiveTabChange).toHaveBeenCalledWith("logs");
   });
 
-  it("clears output on demand (logs tab) via overflow menu", async () => {
+  it("clears output on demand (logs tab) via inline Clear button", async () => {
     const user = userEvent.setup();
 
     function Harness() {
@@ -120,11 +120,12 @@ describe("BottomPanel", () => {
 
     expect(screen.getByTestId("logs-terminal-view")).toHaveTextContent("logs:1");
 
-    // Clear is now in the overflow menu — open it first
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /^clear$/i }));
-    // Confirm the clear dialog
+    // Clear is now an inline action that opens the confirmation dialog
     await user.click(screen.getByRole("button", { name: /^clear$/i }));
+    const dialog = screen.getByRole("alertdialog", { name: /clear output\?/i });
+    expect(dialog).toBeInTheDocument();
+    // Confirm the clear dialog (scoped to the dialog so we don't grab the inline button)
+    await user.click(within(dialog).getByRole("button", { name: /^clear$/i }));
 
     expect(screen.getByTestId("logs-terminal-view")).toHaveTextContent("logs:0");
   });
@@ -144,9 +145,8 @@ describe("BottomPanel", () => {
       />
     );
 
-    // Open overflow menu, then click Clear menuitem to trigger dialog
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /^clear$/i }));
+    // Click the inline Clear button to trigger the dialog
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
     expect(screen.getByRole("alertdialog", { name: /clear output\?/i })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: /cancel/i }));
@@ -170,15 +170,13 @@ describe("BottomPanel", () => {
       />
     );
 
-    // Open overflow menu, click Clear to open dialog
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /^clear$/i }));
+    // Click inline Clear to open dialog
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("alertdialog", { name: /clear output\?/i })).toBeNull();
 
-    // Open overflow menu again and click Clear to open dialog again
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /^clear$/i }));
+    // Click inline Clear to open dialog again
+    await user.click(screen.getByRole("button", { name: /^clear$/i }));
     fireEvent.click(screen.getByRole("alertdialog", { name: /clear output\?/i }));
 
     expect(screen.queryByRole("alertdialog", { name: /clear output\?/i })).toBeNull();
@@ -207,7 +205,7 @@ describe("BottomPanel", () => {
     expect(onRun).toHaveBeenCalledTimes(1);
   });
 
-  it("invokes onRunWithRace when run-race is clicked via overflow menu (logs tab)", async () => {
+  it("invokes onRunWithRace when run-race is clicked inline (logs tab)", async () => {
     const user = userEvent.setup();
     const onRunWithRace = vi.fn();
 
@@ -224,9 +222,8 @@ describe("BottomPanel", () => {
       />
     );
 
-    // Run Race moves to overflow menu
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /run race/i }));
+    // Run Race is now an inline action
+    await user.click(screen.getByRole("button", { name: /run race/i }));
 
     expect(onRunWithRace).toHaveBeenCalledTimes(1);
   });
@@ -285,7 +282,7 @@ describe("BottomPanel", () => {
     );
 
     expect(screen.queryByRole("button", { name: /run again/i })).toBeNull();
-    // Run Race is in overflow which is also not shown in shell tab
+    expect(screen.queryByRole("button", { name: /run race/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /stop/i })).toBeNull();
@@ -375,7 +372,7 @@ describe("BottomPanel", () => {
     expect(screen.getByTestId("bottom-panel")).toHaveClass("border-l");
   });
 
-  it("logs tab shows Run Again inline and a More button; Clear and Hide are not inline", () => {
+  it("logs tab shows Run Again, Run Race, Clear, and Hide Panel inline with no More button", () => {
     render(
       <BottomPanel
         activeTab="logs"
@@ -385,21 +382,23 @@ describe("BottomPanel", () => {
         workspacePath={null}
         isRunning={false}
         onRun={vi.fn()}
+        onRunWithRace={vi.fn()}
+        canRunWithRace
         onClear={vi.fn()}
         onClose={vi.fn()}
       />
     );
 
-    // Primary action stays inline
+    // All actions are inline now
     expect(screen.getByRole("button", { name: /run again/i })).toBeInTheDocument();
-    // Overflow button present
-    expect(screen.getByRole("button", { name: /more panel actions/i })).toBeInTheDocument();
-    // Secondary actions are NOT inline
-    expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /hide/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /run race/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hide panel/i })).toBeInTheDocument();
+    // No overflow button
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
   });
 
-  it("shell tab hides log-only actions including Run Again, Run Race, and the overflow button", () => {
+  it("shell tab hides log-only actions including Run Again, Run Race, Clear, and Hide Panel", () => {
     render(
       <BottomPanel
         activeTab="shell"
@@ -419,10 +418,12 @@ describe("BottomPanel", () => {
 
     expect(screen.queryByRole("button", { name: /run again/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /run race/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /hide panel/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
   });
 
-  it("logs tab still shows the overflow button for Clear and Hide Panel while a run is in progress", () => {
+  it("logs tab shows inline Clear and Hide Panel while a run is in progress, with no overflow button", () => {
     render(
       <BottomPanel
         activeTab="logs"
@@ -436,13 +437,17 @@ describe("BottomPanel", () => {
       />
     );
 
+    // Run Again and Run Race are hidden during a run
+    expect(screen.queryByRole("button", { name: /run again/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /run race/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /more panel actions/i })).toBeInTheDocument();
+    // Clear and Hide Panel remain inline
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hide panel/i })).toBeInTheDocument();
+    // No overflow button
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
   });
 
-  it("overflow menu contains Run Race, Clear, and Hide Panel items when relevant", async () => {
-    const user = userEvent.setup();
-
+  it("renders Run Race, Clear, and Hide Panel as inline buttons when relevant", () => {
     render(
       <BottomPanel
         activeTab="logs"
@@ -459,16 +464,13 @@ describe("BottomPanel", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-
-    const menu = screen.getByRole("menu");
-    expect(menu).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /run race/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /^clear$/i })).toBeInTheDocument();
-    expect(screen.getByRole("menuitem", { name: /hide panel/i })).toBeInTheDocument();
+    expect(screen.queryByRole("menu")).toBeNull();
+    expect(screen.getByRole("button", { name: /run race/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hide panel/i })).toBeInTheDocument();
   });
 
-  it("overflow menu invokes onClose when Hide Panel is clicked", async () => {
+  it("invokes onClose when the inline Hide Panel button is clicked", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();
 
@@ -484,9 +486,57 @@ describe("BottomPanel", () => {
       />
     );
 
-    await user.click(screen.getByRole("button", { name: /more panel actions/i }));
-    await user.click(screen.getByRole("menuitem", { name: /hide panel/i }));
+    await user.click(screen.getByRole("button", { name: /hide panel/i }));
 
     expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("renders all applicable log actions inline and removes the overflow button", () => {
+    render(
+      <BottomPanel
+        activeTab="logs"
+        onActiveTabChange={vi.fn()}
+        logEntries={[]}
+        surfaceKey={null}
+        workspacePath={null}
+        isRunning={false}
+        onRun={vi.fn()}
+        onRunWithRace={vi.fn()}
+        canRunWithRace
+        onClear={vi.fn()}
+        onClose={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /run again/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /run race/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^clear$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /hide panel/i })).toBeInTheDocument();
+  });
+
+  it("hides log-only actions on the shell tab", () => {
+    render(
+      <BottomPanel
+        activeTab="shell"
+        onActiveTabChange={vi.fn()}
+        logEntries={[]}
+        surfaceKey="workspace-shell"
+        workspacePath="C:/workspace"
+        isRunning={false}
+        onRun={vi.fn()}
+        onRunWithRace={vi.fn()}
+        canRunWithRace
+        onClear={vi.fn()}
+        onClose={vi.fn()}
+        onStop={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole("button", { name: /run again/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /run race/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /hide panel/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
   });
 });
