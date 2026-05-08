@@ -14,6 +14,7 @@ export type ResizableSplitProps = {
   maxSize: number;
   onResize: (size: number) => void;
   resizeAnchor?: "start" | "end";
+  collapsed?: boolean;
   className?: string;
 };
 
@@ -31,6 +32,7 @@ function ResizableSplit({
   maxSize,
   onResize,
   resizeAnchor = "start",
+  collapsed = false,
   className,
 }: ResizableSplitProps) {
   const dragStartRef = useRef<{ pointerId: number; pointerPosition: number; size: number } | null>(null);
@@ -191,9 +193,13 @@ function ResizableSplit({
     [isHorizontal, maxSize, minSize, onResize, resizeAnchor, resolvedSize]
   );
 
-  const primaryStyle = isHorizontal
-    ? { width: resolvedSize, minWidth: minSize, maxWidth: maxSize }
-    : { height: resolvedSize, minHeight: minSize, maxHeight: maxSize };
+  const primaryStyle = collapsed
+    ? isHorizontal
+      ? { width: 0, minWidth: 0, maxWidth: 0 }
+      : { height: 0, minHeight: 0, maxHeight: 0 }
+    : isHorizontal
+      ? { width: resolvedSize, minWidth: minSize, maxWidth: maxSize }
+      : { height: resolvedSize, minHeight: minSize, maxHeight: maxSize };
 
   return (
     <div
@@ -204,37 +210,39 @@ function ResizableSplit({
       )}
       data-testid="resizable-split"
     >
-      <div className="min-h-0 min-w-0 overflow-hidden" style={primaryStyle}>
+      <div className="min-h-0 min-w-0 overflow-hidden" style={primaryStyle} aria-hidden={collapsed}>
         {primary}
       </div>
       {/* Hit-zone wrapper — provides a larger interactive target while the
           visual separator bar remains 1px thick and centered inside it. */}
-      <div
-        role="separator"
-        aria-orientation={isHorizontal ? "vertical" : "horizontal"}
-        aria-valuemin={minSize}
-        aria-valuemax={maxSize}
-        aria-valuenow={resolvedSize}
-        tabIndex={0}
-        data-testid="separator-hit-zone"
-        className={cn(
-          "relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
-          isHorizontal ? "w-5 cursor-col-resize" : "h-5 cursor-row-resize"
-        )}
-        style={{ touchAction: "none" }}
-        onPointerDown={startDragging}
-        onMouseDown={startMouseDragging}
-        onDoubleClick={() => onResize(clamp(defaultSize, minSize, maxSize))}
-        onKeyDown={handleKeyDown}
-      >
+      {!collapsed && (
         <div
-          aria-hidden="true"
+          role="separator"
+          aria-orientation={isHorizontal ? "vertical" : "horizontal"}
+          aria-valuemin={minSize}
+          aria-valuemax={maxSize}
+          aria-valuenow={resolvedSize}
+          tabIndex={0}
+          data-testid="separator-hit-zone"
           className={cn(
-            "pointer-events-none shrink-0 bg-[var(--border-subtle)] transition-colors duration-100",
-            isHorizontal ? "h-full w-px" : "h-px w-full"
+            "relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
+            isHorizontal ? "w-5 cursor-col-resize" : "h-5 cursor-row-resize"
           )}
-        />
-      </div>
+          style={{ touchAction: "none" }}
+          onPointerDown={startDragging}
+          onMouseDown={startMouseDragging}
+          onDoubleClick={() => onResize(clamp(defaultSize, minSize, maxSize))}
+          onKeyDown={handleKeyDown}
+        >
+          <div
+            aria-hidden="true"
+            className={cn(
+              "pointer-events-none shrink-0 bg-[var(--border-subtle)] transition-colors duration-100",
+              isHorizontal ? "h-full w-px" : "h-px w-full"
+            )}
+          />
+        </div>
+      )}
       <div className="min-h-0 min-w-0 flex-1 overflow-hidden">{secondary}</div>
     </div>
   );

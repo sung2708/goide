@@ -297,3 +297,25 @@ describe("ResizableSplit — keyboard resize", () => {
     expect(onResize).toHaveBeenCalledWith(600);
   });
 });
+
+describe("ResizableSplit — collapsed mode", () => {
+  it("omits the separator hit-zone when the split is collapsed", () => {
+    render(
+      <ResizableSplit
+        orientation="vertical"
+        primary={<div data-testid="primary">primary</div>}
+        secondary={<div data-testid="secondary">secondary</div>}
+        size={0}
+        defaultSize={180}
+        minSize={0}
+        maxSize={600}
+        collapsed
+        onResize={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByRole("separator")).toBeNull();
+    expect(screen.getByTestId("primary")).toBeInTheDocument();
+    expect(screen.getByTestId("secondary")).toBeInTheDocument();
+  });
+});

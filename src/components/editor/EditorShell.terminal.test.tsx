@@ -160,6 +160,7 @@ vi.mock("../layout/ResizableSplit", () => ({
   default: (props: Record<string, unknown>) => {
     const onResize = props.onResize as (size: number) => void;
     const isSidebarSplit = props.defaultSize === 240;
+    const isCollapsed = Boolean(props.collapsed);
     return (
       <div
         data-testid={isSidebarSplit ? "sidebar-resizable-split" : "resizable-split"}
@@ -168,16 +169,19 @@ vi.mock("../layout/ResizableSplit", () => ({
         data-default-size={String(props.defaultSize)}
         data-min-size={String(props.minSize)}
         data-max-size={String(props.maxSize)}
+        data-collapsed={String(isCollapsed)}
         data-class-name={(props.className as string | undefined) ?? ""}
       >
         <div data-testid="split-primary">{props.primary as ReactNode}</div>
-        <button
-          type="button"
-          onClick={() => onResize(456)}
-          aria-label={isSidebarSplit ? "Resize sidebar" : "Resize terminal"}
-        >
-          Resize
-        </button>
+        {!isCollapsed && (
+          <button
+            type="button"
+            onClick={() => onResize(456)}
+            aria-label={isSidebarSplit ? "Resize sidebar" : "Resize terminal"}
+          >
+            Resize
+          </button>
+        )}
         <div data-testid="split-secondary">{props.secondary as ReactNode}</div>
       </div>
     );
@@ -304,6 +308,28 @@ describe("EditorShell terminal wiring", () => {
     const hiddenPanel = screen.getByTestId("bottom-panel").closest("[hidden]");
     expect(hiddenPanel).not.toBeNull();
     expect(hiddenPanel).toHaveAttribute("hidden");
+  });
+
+  it("does not render terminal split chrome while the bottom panel is closed", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-collapsed", "true");
+    expect(screen.queryByRole("button", { name: /resize terminal/i })).toBeNull();
+  });
+
+  it("keeps the no-file workspace state compact while the terminal panel is closed", async () => {
+    const user = userEvent.setup();
+    render(<EditorShell />);
+
+    await openWorkspaceAndShowExplorer(user);
+
+    expect(screen.getByText(/workspace active/i)).toBeInTheDocument();
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-collapsed", "true");
+    expect(screen.queryByRole("button", { name: /resize terminal/i })).toBeNull();
   });
 
   /**
