@@ -1,5 +1,4 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
@@ -8,19 +7,11 @@ import {
   activateScopedDeepTrace,
   deactivateDeepTrace,
   getRuntimeAvailability,
-  getRuntimePanelSnapshot,
   getRuntimeSignals,
-  getRuntimeTopologySnapshot,
-  getToolchainStatus,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
   runWorkspaceFileWithRace,
-  fetchWorkspaceCompletions,
-  fetchWorkspaceDiagnostics,
-  getWorkspaceGitSnapshot,
-  getWorkspaceBranches,
-  startWorkspaceFsWatch,
   switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
@@ -30,26 +21,16 @@ import {
   debuggerStepOut,
   debuggerToggleBreakpoint,
   startDebugSession,
-  searchWorkspaceText,
   stopCurrentRun,
 } from "../../lib/ipc/client";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type {
   ApiResponse,
   BottomPanelTab,
-  CompletionItem,
   DeepTraceConstructKind,
   DebugFailure,
-  EditorDiagnostic,
   RuntimeSignal,
-  RuntimePanelSnapshot,
-  RuntimeTopologySnapshot,
-  RunOutputPayload,
-  ToolchainStatus,
   WorkspaceGitBranch,
-  WorkspaceGitSnapshot,
-  WorkspaceBranchSnapshot,
-  WorkspaceSearchFile,
   DebuggerState,
 } from "../../lib/ipc/types";
 import HintUnderline from "../overlays/HintUnderline";
@@ -62,10 +43,7 @@ import BottomPanel from "../panels/BottomPanel";
 import Explorer, { type FileDecoration } from "../sidebar/Explorer";
 import ActivityBar, { type ActivityBarTab } from "../sidebar/ActivityBar";
 import StatusBar from "../statusbar/StatusBar";
-import CodeEditor, {
-  type EditorCompletionRequest,
-  type JumpRequest,
-} from "./CodeEditor";
+import CodeEditor, { type JumpRequest } from "./CodeEditor";
 import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
 import BranchPicker from "../panels/BranchPicker";
@@ -74,6 +52,21 @@ import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
 import DebugFailureDialog from "../panels/DebugFailureDialog";
 import ResizableSplit from "../layout/ResizableSplit";
 import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceLayout } from "../../features/layout/useWorkspaceLayout";
+import {
+  isGoFile,
+  mapGitStatus,
+  pathsReferToSameFile,
+  runtimeSignalMatchesScope,
+  selectActiveBlockedSignal,
+} from "./editorShellUtils";
+import { useWorkspaceFsSync } from "./useWorkspaceFsSync";
+import { useToolchainStatus } from "./useToolchainStatus";
+import { useWorkspaceGitState } from "./useWorkspaceGitState";
+import { useRuntimeTopology } from "./useRuntimeTopology";
+import { useDiagnosticsState } from "./useDiagnosticsState";
+import { useCompletionState } from "./useCompletionState";
+import { useWorkspaceSearchState } from "./useWorkspaceSearchState";
+import { useRunOutputState, type RunMode } from "./useRunOutputState";
 
 const DEBUG_UI_ENABLED = true;
 
@@ -96,35 +89,7 @@ const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
 const ACTIVE_DEBUG_POLL_INTERVAL_MS = 600;
 const DEBUG_POLL_BACKOFF_STEP_MS = 900;
 const DEBUG_POLL_MAX_INTERVAL_MS = 5000;
-type RunMode = "standard" | "race" | "debug";
-type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
-type CompletionIndicatorState = "available" | "degraded" | "idle";
-type RaceFinding = RuntimeSignal & {
-  source: "race-detector";
-};
-
-type FileDiagnosticsSummary = {
-  hasErrors: boolean;
-  hasWarnings: boolean;
-};
-
 type DebugUiState = "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
-
-function mapGitStatus(statusToken: string): "modified" | "untracked" | "staged" {
-  const token = statusToken.trim();
-  if (token.startsWith("??")) {
-    return "untracked";
-  }
-  const indexStatus = token[0] ?? " ";
-  const worktreeStatus = token[1] ?? " ";
-  if (indexStatus !== " " && indexStatus !== "?") {
-    return "staged";
-  }
-  if (worktreeStatus !== " " && worktreeStatus !== "?") {
-    return "modified";
-  }
-  return "modified";
-}
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -147,59 +112,6 @@ function nextPollingDelay(failureCount: number): number {
   );
 }
 
-function normalizeRelativePath(path: string): string {
-  return path.replace(/\\/g, "/").trim();
-}
-
-function normalizeWorkspaceRoot(path: string): string {
-  return normalizeRelativePath(path).toLowerCase();
-}
-
-function pathsReferToSameFile(pathA: string, pathB: string): boolean {
-  const normalizedA = normalizeRelativePath(pathA).toLowerCase();
-  const normalizedB = normalizeRelativePath(pathB).toLowerCase();
-  if (normalizedA === normalizedB) {
-    return true;
-  }
-
-  const segmentsA = normalizedA.split("/").filter(Boolean);
-  const segmentsB = normalizedB.split("/").filter(Boolean);
-  const shorter = segmentsA.length <= segmentsB.length ? segmentsA : segmentsB;
-  const longer = segmentsA.length <= segmentsB.length ? segmentsB : segmentsA;
-
-  // Avoid basename-only matches (e.g. "main.go" vs "/repo/pkg/main.go").
-  if (shorter.length < 2) {
-    return false;
-  }
-
-  for (let index = 1; index <= shorter.length; index += 1) {
-    if (shorter[shorter.length - index] !== longer[longer.length - index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function pathsReferToSameRunTarget(pathFromOutput: string, runTargetPath: string): boolean {
-  if (pathsReferToSameFile(pathFromOutput, runTargetPath)) {
-    return true;
-  }
-
-  // Race detector often reports absolute paths, while run targets may be a
-  // root-level relative path (e.g. "main.go"). Allow basename fallback only
-  // for that root-level run-target case.
-  const normalizedTarget = normalizeRelativePath(runTargetPath).toLowerCase();
-  const targetSegments = normalizedTarget.split("/").filter(Boolean);
-  if (targetSegments.length !== 1) {
-    return false;
-  }
-
-  const normalizedOutput = normalizeRelativePath(pathFromOutput).toLowerCase();
-  const outputSegments = normalizedOutput.split("/").filter(Boolean);
-  const outputBasename = outputSegments[outputSegments.length - 1] ?? "";
-  return outputBasename === targetSegments[0];
-}
-
 type CounterpartResolution = {
   line: number | null;
   column: number | null;
@@ -218,28 +130,6 @@ function toTraceBubbleConfidence(
     default:
       return "predicted";
   }
-}
-
-function runtimeSignalMatchesScope(
-  signal: RuntimeSignal,
-  scope: {
-    scopeKey: string | null;
-    filePath: string;
-    line: number;
-    column: number;
-  }
-): boolean {
-  // Scope key is treated as a preferred discriminator, but line/column/path remain
-  // the authoritative identity in case key formatting drifts across layers.
-  const matchLine = signal.scopeLine ?? signal.line;
-  const matchColumn = signal.scopeColumn ?? signal.column;
-
-  return (
-    normalizeRelativePath(signal.scopeRelativePath ?? signal.relativePath) ===
-      normalizeRelativePath(scope.filePath) &&
-    matchLine === scope.line &&
-    matchColumn === scope.column
-  );
 }
 
 function isHintInDeepTraceScope(
@@ -262,77 +152,6 @@ function isHintInDeepTraceScope(
     hint.column === scope.column &&
     hint.symbol === scope.symbol
   );
-}
-
-function confidenceRank(confidence?: ConcurrencyConfidence | null): number {
-  switch ((confidence ?? "").toLowerCase()) {
-    case "confirmed":
-      return 3;
-    case "likely":
-      return 2;
-    case "predicted":
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-function isUsableRuntimeCounterpart(
-  signal: RuntimeSignal,
-  activeFilePath: string
-): boolean {
-  const line = signal.counterpartLine ?? null;
-  const hasValidLine = Number.isInteger(line) && line !== null && line >= 1;
-  if (!hasValidLine) {
-    return false;
-  }
-  const counterpartPath = signal.counterpartRelativePath ?? null;
-  return (
-    counterpartPath === null || pathsReferToSameFile(counterpartPath, activeFilePath)
-  );
-}
-
-function selectActiveBlockedSignal(
-  blockedCandidates: RuntimeSignal[],
-  activeFilePath: string
-): RuntimeSignal | null {
-  if (blockedCandidates.length === 0) {
-    return null;
-  }
-
-  const sorted = [...blockedCandidates].sort((left, right) => {
-    const leftUsable = isUsableRuntimeCounterpart(left, activeFilePath) ? 1 : 0;
-    const rightUsable = isUsableRuntimeCounterpart(right, activeFilePath) ? 1 : 0;
-    if (leftUsable !== rightUsable) {
-      return rightUsable - leftUsable;
-    }
-
-    const leftConfidence = confidenceRank(left.counterpartConfidence ?? left.confidence);
-    const rightConfidence = confidenceRank(right.counterpartConfidence ?? right.confidence);
-    if (leftConfidence !== rightConfidence) {
-      return rightConfidence - leftConfidence;
-    }
-
-    const leftHasCounterpartLine =
-      Number.isInteger(left.counterpartLine) && (left.counterpartLine ?? 0) >= 1 ? 1 : 0;
-    const rightHasCounterpartLine =
-      Number.isInteger(right.counterpartLine) && (right.counterpartLine ?? 0) >= 1 ? 1 : 0;
-    if (leftHasCounterpartLine !== rightHasCounterpartLine) {
-      return rightHasCounterpartLine - leftHasCounterpartLine;
-    }
-
-    const leftHasCorrelationId = left.correlationId ? 1 : 0;
-    const rightHasCorrelationId = right.correlationId ? 1 : 0;
-    if (leftHasCorrelationId !== rightHasCorrelationId) {
-      return rightHasCorrelationId - leftHasCorrelationId;
-    }
-
-    if (left.threadId !== right.threadId) {
-      return left.threadId - right.threadId;
-    }
-    return left.waitReason.localeCompare(right.waitReason);
-  });
-  return sorted[0] ?? null;
 }
 
 async function getRuntimeSignalsWithTimeout(
@@ -363,44 +182,6 @@ async function getRuntimeSignalsWithTimeout(
   });
 }
 
-function isGoFile(path: string | null): path is string {
-  return typeof path === "string" && path.toLowerCase().endsWith(".go");
-}
-
-function extractGoFileLineReferences(text: string): Array<{
-  path: string;
-  line: number;
-}> {
-  const matches = text.matchAll(/((?:[A-Za-z]:)?[^:\r\n]+?\.go):(\d+)/g);
-  const refs: Array<{ path: string; line: number }> = [];
-  for (const match of matches) {
-    const filePath = match[1] ?? "";
-    const line = Number(match[2]);
-    if (!filePath || !Number.isInteger(line) || line < 1) {
-      continue;
-    }
-    refs.push({ path: filePath, line });
-  }
-  return refs;
-}
-
-function toRaceFindings(relativePath: string, lines: number[]): RaceFinding[] {
-  return lines.map((line, index) => ({
-    threadId: index + 1,
-    status: "data race",
-    waitReason: "data race",
-    confidence: ConcurrencyConfidence.Confirmed,
-    scopeKey: `race:${relativePath}:${line}`,
-    scopeRelativePath: relativePath,
-    scopeLine: line,
-    scopeColumn: 1,
-    relativePath,
-    line,
-    column: 1,
-    source: "race-detector",
-  }));
-}
-
 function EditorShell() {
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -418,21 +199,29 @@ function EditorShell() {
   const [runtimeAvailability, setRuntimeAvailability] = useState<
     "available" | "unavailable" | "degraded"
   >("unavailable");
-  const [toolchainStatus, setToolchainStatus] = useState<ToolchainStatus | null>(null);
+  const toolchainStatus = useToolchainStatus();
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
-  const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [runMode, setRunMode] = useState<RunMode>("standard");
-  const [raceSignals, setRaceSignals] = useState<RaceFinding[]>([]);
-  const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
-  const [diagnosticsByFile, setDiagnosticsByFile] = useState<
-    Record<string, FileDiagnosticsSummary>
-  >({});
-  const [diagnosticsAvailability, setDiagnosticsAvailability] =
-    useState<DiagnosticsIndicatorState>("idle");
-  const [gitSnapshot, setGitSnapshot] = useState<WorkspaceGitSnapshot | null>(null);
-  const [gitError, setGitError] = useState<string | null>(null);
-  const [branchSnapshot, setBranchSnapshot] = useState<WorkspaceBranchSnapshot | null>(null);
+  const {
+    runOutput,
+    setRunOutput,
+    raceSignals,
+    setRaceSignals,
+    activeRunIdRef,
+    activeRunModeRef,
+    activeRunTargetFilePathRef,
+    raceRunCaptureRef,
+    clearPendingRunOutputBuffer,
+  } = useRunOutputState({ setRunStatus });
+  const {
+    gitSnapshot,
+    gitError,
+    branchSnapshot,
+    setBranchSnapshot,
+    refreshBranchSnapshot,
+    reloadGitState,
+  } = useWorkspaceGitState(workspacePath);
   const [isBranchPickerOpen, setIsBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
   const [pendingTargetBranch, setPendingTargetBranch] = useState<WorkspaceGitBranch | null>(null);
@@ -440,33 +229,31 @@ function EditorShell() {
   const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
   const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
 
-  const refreshBranchSnapshot = useCallback(async (workspaceRoot: string) => {
-    try {
-      const res = await getWorkspaceBranches(workspaceRoot);
-      if (res.ok && res.data) {
-        return res.data;
-      }
-      return null;
-    } catch (_error) {
-      return null;
-    }
-  }, []);
   const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
-  const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
-    useState<RuntimePanelSnapshot | null>(null);
-  const [runtimeTopologySnapshot, setRuntimeTopologySnapshot] =
-    useState<RuntimeTopologySnapshot | null>(null);
-  const [runtimeTopologyLoading, setRuntimeTopologyLoading] = useState(false);
-  const [runtimeTopologyError, setRuntimeTopologyError] = useState<string | null>(null);
-  const [completionAvailability, setCompletionAvailability] =
-    useState<CompletionIndicatorState>("idle");
+  const {
+    runtimePanelSnapshot,
+    setRuntimePanelSnapshot,
+    runtimeTopologySnapshot,
+    setRuntimeTopologySnapshot,
+    runtimeTopologyLoading,
+    runtimeTopologyError,
+    setRuntimeTopologyError,
+  } = useRuntimeTopology({
+    runMode,
+    runStatus,
+    nextPollingDelay,
+  });
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityBarTab>("search");
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
+  const {
+    searchLoading,
+    workspaceSearchResults,
+    resetWorkspaceSearch,
+    handleWorkspaceSearch,
+  } = useWorkspaceSearchState(workspacePath);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const [explorerRevision, setExplorerRevision] = useState(0);
   const isSavingRef = useRef(false);
@@ -486,36 +273,43 @@ function EditorShell() {
     left: number;
   } | null>(null);
   const jumpRequestIdRef = useRef(0);
-  const activeRunIdRef = useRef<string | null>(null);
-  const activeRunModeRef = useRef<RunMode>("standard");
-  const activeRunTargetFilePathRef = useRef<string | null>(null);
-  const raceRunCaptureRef = useRef<{
-    isRaceRun: boolean;
-    sawWarning: boolean;
-    matchedLines: Set<number>;
-  }>({
-    isRaceRun: false,
-    sawWarning: false,
-    matchedLines: new Set<number>(),
-  });
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
-  const diagnosticsRequestIdRef = useRef(0);
-  const completionRequestIdRef = useRef(0);
+  const {
+    diagnostics,
+    diagnosticsByFile,
+    diagnosticsAvailability,
+    clearDiagnostics,
+    clearActiveDiagnostics,
+    invalidateDiagnosticsRequests,
+    resetDiagnosticsState,
+    refreshDiagnosticsForFile,
+    scheduleDiagnosticsRefresh,
+  } = useDiagnosticsState({
+    workspacePathRef,
+    activeFilePathRef,
+  });
+  const {
+    completionAvailability,
+    setCompletionAvailability,
+    invalidateCompletionRequests,
+    resetCompletionAvailability,
+    handleRequestCompletions,
+  } = useCompletionState({
+    workspacePathRef,
+    activeFilePathRef,
+    activeFileContent,
+    latestEditorContentRef,
+  });
   const deepTraceRequestIdRef = useRef(0);
   const runtimeCheckRequestIdRef = useRef(0);
   const runtimeSignalRequestIdRef = useRef(0);
-  const searchRequestIdRef = useRef(0);
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
   const debugStopInFlightRef = useRef(false);
-  const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const diagnosticPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const pendingRunOutputBufferRef = useRef<RunOutputPayload[]>([]);
-  const pendingRunOutputFlushHandleRef = useRef<number | null>(null);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -550,42 +344,15 @@ function EditorShell() {
     };
   }, []);
 
-  useEffect(() => {
-    let canceled = false;
-    const runPreflight = async () => {
-      const response = await getToolchainStatus();
-      if (!canceled && response.ok && response.data) {
-        setToolchainStatus(response.data);
-      }
-    };
-
-    void runPreflight();
-
-    return () => {
-      canceled = true;
-    };
-  }, []);
-
   // Clear editor timers on unmount to prevent setState on unmounted component
   useEffect(() => {
     return () => {
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
       }
-      if (diagnosticDebounceRef.current !== null) {
-        clearTimeout(diagnosticDebounceRef.current);
-      }
-      if (diagnosticPollRef.current !== null) {
-        clearTimeout(diagnosticPollRef.current);
-      }
       if (autoSaveDebounceRef.current !== null) {
         clearTimeout(autoSaveDebounceRef.current);
       }
-      if (pendingRunOutputFlushHandleRef.current !== null) {
-        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-        pendingRunOutputFlushHandleRef.current = null;
-      }
-      pendingRunOutputBufferRef.current = [];
     };
   }, []);
 
@@ -747,6 +514,16 @@ function EditorShell() {
     resolveStaticCounterpart,
   ]);
 
+  const handleWorkspaceFsChanged = useCallback(() => {
+    setExplorerRevision((prev) => prev + 1);
+  }, []);
+
+  useWorkspaceFsSync({
+    workspacePath,
+    workspacePathRef,
+    onWorkspaceChanged: handleWorkspaceFsChanged,
+  });
+
   const fileDecorations = useMemo(() => {
     const decorations = new Map<string, FileDecoration>();
     if (gitSnapshot) {
@@ -768,227 +545,6 @@ function EditorShell() {
     }
     return decorations;
   }, [gitSnapshot, diagnosticsByFile]);
-
-  useEffect(() => {
-    if (!workspacePath) {
-      setGitSnapshot(null);
-      setGitError(null);
-      return;
-    }
-    let isCancelled = false;
-    const pollGit = async () => {
-      if (isCancelled) return;
-      try {
-        const res = await getWorkspaceGitSnapshot(workspacePath);
-        if (!isCancelled && res.ok && res.data) {
-          setGitSnapshot(res.data);
-          setGitError(null);
-          const latestBranchSnapshot = await refreshBranchSnapshot(workspacePath);
-          if (!isCancelled) {
-            setBranchSnapshot(latestBranchSnapshot);
-          }
-        } else if (!isCancelled) {
-          setGitSnapshot(null);
-          setGitError(res.error?.message ?? "Git data unavailable");
-          setBranchSnapshot(null);
-        }
-      } catch (err) {
-        if (!isCancelled) {
-          setGitSnapshot(null);
-          setGitError("Git data unavailable");
-          setBranchSnapshot(null);
-        }
-      }
-      if (!isCancelled) {
-        setTimeout(pollGit, 5000);
-      }
-    };
-    void pollGit();
-    return () => {
-      isCancelled = true;
-    };
-  }, [refreshBranchSnapshot, workspacePath]);
-
-  useEffect(() => {
-    if (!workspacePath) {
-      setBranchSnapshot(null);
-      return;
-    }
-    let isCancelled = false;
-    void refreshBranchSnapshot(workspacePath).then((snapshot) => {
-      if (isCancelled) {
-        return;
-      }
-      setBranchSnapshot(snapshot);
-    });
-    return () => {
-      isCancelled = true;
-    };
-  }, [refreshBranchSnapshot, workspacePath]);
-
-  useEffect(() => {
-    if (runMode !== "debug" || runStatus !== "running") {
-      setRuntimePanelSnapshot(null);
-      setRuntimeTopologySnapshot(null);
-      setRuntimeTopologyError(null);
-      setRuntimeTopologyLoading(false);
-      return;
-    }
-
-    let isCancelled = false;
-    let failureCount = 0;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const scheduleNextPoll = () => {
-      if (isCancelled) {
-        return;
-      }
-      timeoutId = setTimeout(() => {
-        void pollRuntimeTopology();
-      }, nextPollingDelay(failureCount));
-    };
-    const pollRuntimeTopology = async () => {
-      if (isCancelled) {
-        return;
-      }
-      setRuntimeTopologyLoading(true);
-      try {
-        const [panelResponse, topologyResponse] = await Promise.all([
-          getRuntimePanelSnapshot(),
-          getRuntimeTopologySnapshot(),
-        ]);
-        if (isCancelled) {
-          return;
-        }
-        if (panelResponse.ok && panelResponse.data) {
-          setRuntimePanelSnapshot(panelResponse.data);
-        }
-        if (topologyResponse.ok && topologyResponse.data) {
-          setRuntimeTopologySnapshot(topologyResponse.data);
-          setRuntimeTopologyError(null);
-          failureCount = 0;
-        } else {
-          failureCount += 1;
-          setRuntimeTopologyError(topologyResponse.error?.message ?? "Topology unavailable");
-        }
-      } catch (_error) {
-        if (!isCancelled) {
-          failureCount += 1;
-          setRuntimeTopologyError("Topology unavailable");
-        }
-      } finally {
-        if (!isCancelled) {
-          setRuntimeTopologyLoading(false);
-          scheduleNextPoll();
-        }
-      }
-    };
-
-    void pollRuntimeTopology();
-
-    return () => {
-      isCancelled = true;
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [runMode, runStatus]);
-
-
-  const refreshDiagnosticsForFile = useCallback(
-    async (diagnosticWorkspacePath: string, diagnosticFilePath: string) => {
-      if (!isGoFile(diagnosticFilePath)) {
-        setDiagnostics([]);
-        setDiagnosticsAvailability("idle");
-        setDiagnosticsByFile((prev) => {
-          if (!(diagnosticFilePath in prev)) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[diagnosticFilePath];
-          return next;
-        });
-        return;
-      }
-      const requestId = diagnosticsRequestIdRef.current + 1;
-      diagnosticsRequestIdRef.current = requestId;
-
-      try {
-        const diagnosticsResponse = await fetchWorkspaceDiagnostics(
-          diagnosticWorkspacePath,
-          diagnosticFilePath
-        );
-
-        if (
-          requestId !== diagnosticsRequestIdRef.current ||
-          workspacePathRef.current !== diagnosticWorkspacePath ||
-          activeFilePathRef.current !== diagnosticFilePath
-        ) {
-          return;
-        }
-
-        if (diagnosticPollRef.current !== null) {
-          clearTimeout(diagnosticPollRef.current);
-          diagnosticPollRef.current = null;
-        }
-
-        if (diagnosticsResponse.ok && diagnosticsResponse.data) {
-          setDiagnostics(diagnosticsResponse.data.diagnostics);
-          setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
-          const hasErrors = diagnosticsResponse.data.diagnostics.some(
-            (item) => item.severity === "error"
-          );
-          const hasWarnings = diagnosticsResponse.data.diagnostics.some(
-            (item) => item.severity === "warning"
-          );
-          setDiagnosticsByFile((prev) => ({
-            ...prev,
-            [diagnosticFilePath]: { hasErrors, hasWarnings },
-          }));
-          if (hasErrors) {
-            diagnosticPollRef.current = setTimeout(() => {
-              if (
-                workspacePathRef.current === diagnosticWorkspacePath &&
-                activeFilePathRef.current === diagnosticFilePath
-              ) {
-                void refreshDiagnosticsForFile(diagnosticWorkspacePath, diagnosticFilePath);
-              }
-            }, 1200);
-          }
-        } else {
-          setDiagnostics([]);
-          // Generic diagnostics errors are not equivalent to missing tooling.
-          setDiagnosticsAvailability("idle");
-          setDiagnosticsByFile((prev) => {
-            if (!(diagnosticFilePath in prev)) {
-              return prev;
-            }
-            const next = { ...prev };
-            delete next[diagnosticFilePath];
-            return next;
-          });
-        }
-      } catch (_error) {
-        if (
-          requestId === diagnosticsRequestIdRef.current &&
-          workspacePathRef.current === diagnosticWorkspacePath &&
-          activeFilePathRef.current === diagnosticFilePath
-        ) {
-          setDiagnostics([]);
-          // Network/IPC/command failures should not imply missing gopls setup.
-          setDiagnosticsAvailability("idle");
-          setDiagnosticsByFile((prev) => {
-            if (!(diagnosticFilePath in prev)) {
-              return prev;
-            }
-            const next = { ...prev };
-            delete next[diagnosticFilePath];
-            return next;
-          });
-        }
-      }
-    },
-    []
-  );
 
   const hasCounterpart = useMemo(() => {
     const resolution = resolveCounterpartFromActiveHint();
@@ -1361,61 +917,6 @@ function EditorShell() {
     [persistActiveFileContent]
   );
 
-  const handleRequestCompletions = useCallback(
-    async (request: EditorCompletionRequest): Promise<CompletionItem[]> => {
-      const currentWorkspace = workspacePathRef.current;
-      const currentPath = activeFilePathRef.current;
-      if (!currentWorkspace || !currentPath || !isGoFile(currentPath)) {
-        setCompletionAvailability("idle");
-        return [];
-      }
-
-      const requestId = completionRequestIdRef.current + 1;
-      completionRequestIdRef.current = requestId;
-
-      try {
-        const response = await fetchWorkspaceCompletions({
-          workspaceRoot: currentWorkspace,
-          relativePath: currentPath,
-          line: request.line,
-          column: request.column,
-          triggerCharacter: request.triggerCharacter ?? null,
-          fileContent:
-            request.fileContent ??
-            latestEditorContentRef.current ??
-            activeFileContent,
-        });
-
-        if (
-          requestId !== completionRequestIdRef.current ||
-          workspacePathRef.current !== currentWorkspace ||
-          activeFilePathRef.current !== currentPath
-        ) {
-          return [];
-        }
-
-        if (!response.ok || !response.data) {
-          setCompletionAvailability("degraded");
-          return [];
-        }
-        setCompletionAvailability("available");
-
-        return response.data;
-      } catch (_error) {
-        if (
-          requestId === completionRequestIdRef.current &&
-          workspacePathRef.current === currentWorkspace &&
-          activeFilePathRef.current === currentPath
-        ) {
-          setCompletionAvailability("degraded");
-          return [];
-        }
-        return [];
-      }
-    },
-    [activeFileContent]
-  );
-  
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
     if (debugUiState === "starting") {
       return;
@@ -1428,11 +929,7 @@ function EditorShell() {
     activeRunIdRef.current = runId;
     activeRunModeRef.current = modeToRun;
     activeRunTargetFilePathRef.current = activeFilePath;
-    if (pendingRunOutputFlushHandleRef.current !== null) {
-      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-      pendingRunOutputFlushHandleRef.current = null;
-    }
-    pendingRunOutputBufferRef.current = [];
+    clearPendingRunOutputBuffer();
 
     const contentToRun = latestEditorContentRef.current ?? activeFileContent;
     if (isDirty && typeof contentToRun === "string") {
@@ -1556,11 +1053,7 @@ function EditorShell() {
       setRunStatus("running");
       setRunMode("debug");
       setIsBottomPanelOpen(true);
-      if (pendingRunOutputFlushHandleRef.current !== null) {
-        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-        pendingRunOutputFlushHandleRef.current = null;
-      }
-      pendingRunOutputBufferRef.current = [];
+      clearPendingRunOutputBuffer();
       setRunOutput([]);
       activeRunIdRef.current = "debug-" + Date.now();
     }
@@ -1703,38 +1196,6 @@ function EditorShell() {
     };
   }, [activeFilePath, workspacePath]);
 
-  const handleWorkspaceSearch = useCallback(async (query: string) => {
-    const trimmedQuery = query.trim();
-    if (!workspacePath || !trimmedQuery) {
-      setWorkspaceSearchResults([]);
-      setSearchLoading(false);
-      return;
-    }
-    const requestId = searchRequestIdRef.current + 1;
-    searchRequestIdRef.current = requestId;
-    setSearchLoading(true);
-    try {
-      const resp = await searchWorkspaceText(workspacePath, trimmedQuery);
-      if (requestId !== searchRequestIdRef.current) {
-        return;
-      }
-      if (resp.ok && resp.data) {
-        setWorkspaceSearchResults(resp.data);
-      } else {
-        setWorkspaceSearchResults([]);
-      }
-    } catch (err) {
-      console.error("Search failed:", err);
-      if (requestId === searchRequestIdRef.current) {
-        setWorkspaceSearchResults([]);
-      }
-    } finally {
-      if (requestId === searchRequestIdRef.current) {
-        setSearchLoading(false);
-      }
-    }
-  }, [workspacePath]);
-
   const handleToggleBreakpoint = useCallback(async (line: number) => {
     if (!workspacePath || !activeFilePath) return;
     try {
@@ -1861,33 +1322,6 @@ function EditorShell() {
     void handleRunFile("race");
   }, [handleRunFile, runtimeAvailability]);
 
-  const flushRunOutputBuffer = useCallback(() => {
-    pendingRunOutputFlushHandleRef.current = null;
-    const buffered = pendingRunOutputBufferRef.current;
-    if (buffered.length === 0) {
-      return;
-    }
-    pendingRunOutputBufferRef.current = [];
-    setRunOutput((prev) => [...prev, ...buffered]);
-  }, []);
-
-  const clearPendingRunOutputBuffer = useCallback(() => {
-    if (pendingRunOutputFlushHandleRef.current !== null) {
-      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-      pendingRunOutputFlushHandleRef.current = null;
-    }
-    pendingRunOutputBufferRef.current = [];
-  }, []);
-
-  const scheduleRunOutputFlush = useCallback(() => {
-    if (pendingRunOutputFlushHandleRef.current !== null) {
-      return;
-    }
-    pendingRunOutputFlushHandleRef.current = window.requestAnimationFrame(() => {
-      flushRunOutputBuffer();
-    });
-  }, [flushRunOutputBuffer]);
-
   const handleClearOutput = useCallback(() => {
     clearPendingRunOutputBuffer();
     setRunOutput([]);
@@ -1903,126 +1337,6 @@ function EditorShell() {
     setRunStatus((current) => (current === "running" ? "done" : current));
   }, [clearPendingRunOutputBuffer]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let isUnmounted = false;
-
-    const setupListener = async () => {
-      const dispose = await listen<RunOutputPayload>("run-output", (event) => {
-        if (event.payload.runId !== activeRunIdRef.current) {
-          return;
-        }
-        const runTargetPath = activeRunTargetFilePathRef.current;
-        if (activeRunModeRef.current === "race" && runTargetPath) {
-          if (
-            event.payload.stream === "stderr" &&
-            event.payload.line.includes("WARNING: DATA RACE")
-          ) {
-            raceRunCaptureRef.current.sawWarning = true;
-          }
-
-          if (event.payload.stream === "stderr") {
-            const refs = extractGoFileLineReferences(event.payload.line);
-            for (const ref of refs) {
-              if (pathsReferToSameRunTarget(ref.path, runTargetPath)) {
-                raceRunCaptureRef.current.matchedLines.add(ref.line);
-              }
-            }
-          }
-
-          if (event.payload.stream === "exit") {
-            if (
-              raceRunCaptureRef.current.sawWarning &&
-              raceRunCaptureRef.current.matchedLines.size > 0
-            ) {
-              const lines = Array.from(raceRunCaptureRef.current.matchedLines).sort(
-                (left, right) => left - right
-              );
-              setRaceSignals(toRaceFindings(runTargetPath, lines));
-            } else {
-              setRaceSignals([]);
-            }
-          }
-        }
-
-        pendingRunOutputBufferRef.current.push(event.payload);
-        scheduleRunOutputFlush();
-        if (event.payload.stream === "exit") {
-          setRunStatus(event.payload.exitCode === 0 ? "done" : "error");
-        }
-      });
-      if (isUnmounted) {
-        dispose();
-        return;
-      }
-      unlisten = dispose;
-    };
-
-    setupListener();
-    return () => {
-      isUnmounted = true;
-      if (unlisten) unlisten();
-      if (pendingRunOutputFlushHandleRef.current !== null) {
-        window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-        pendingRunOutputFlushHandleRef.current = null;
-      }
-      pendingRunOutputBufferRef.current = [];
-    };
-  }, [scheduleRunOutputFlush]);
-
-  useEffect(() => {
-    if (!workspacePath) {
-      return;
-    }
-
-    let disposed = false;
-    let unlisten: (() => void) | null = null;
-    const expectedWorkspaceRoot = normalizeWorkspaceRoot(workspacePath);
-
-    const setupWorkspaceFsSync = async () => {
-      try {
-        await startWorkspaceFsWatch(workspacePath);
-      } catch (_error) {
-        // Best-effort watch bootstrap; fallback behavior is backend-owned.
-      }
-
-      try {
-        const dispose = await listen<{ workspaceRoot: string }>(
-          "workspace-fs-changed",
-          (event) => {
-            const activeWorkspaceRoot = workspacePathRef.current;
-            if (!activeWorkspaceRoot) {
-              return;
-            }
-            const payloadRoot = normalizeWorkspaceRoot(event.payload.workspaceRoot);
-            if (payloadRoot !== expectedWorkspaceRoot) {
-              return;
-            }
-            if (payloadRoot !== normalizeWorkspaceRoot(activeWorkspaceRoot)) {
-              return;
-            }
-            setExplorerRevision((prev) => prev + 1);
-          }
-        );
-        if (disposed) {
-          dispose();
-          return;
-        }
-        unlisten = dispose;
-      } catch (_error) {
-        // Event listener setup failed - Explorer remains refreshable manually.
-      }
-    };
-
-    void setupWorkspaceFsSync();
-    return () => {
-      disposed = true;
-      if (unlisten) {
-        unlisten();
-      }
-    };
-  }, [workspacePath]);
-
   const handleEditorChange = useCallback((value: string) => {
     latestEditorContentRef.current = value;
     setActiveFileContent(value);
@@ -2031,18 +1345,7 @@ function EditorShell() {
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
     setCompletionAvailability((prev) => (prev === "degraded" ? "idle" : prev));
 
-    if (diagnosticDebounceRef.current) {
-      clearTimeout(diagnosticDebounceRef.current);
-    }
-    if (diagnosticPollRef.current) {
-      clearTimeout(diagnosticPollRef.current);
-      diagnosticPollRef.current = null;
-    }
-    diagnosticDebounceRef.current = setTimeout(() => {
-      if (workspacePath && activeFilePath) {
-        void refreshDiagnosticsForFile(workspacePath, activeFilePath);
-      }
-    }, 1000);
+    scheduleDiagnosticsRefresh(workspacePath, activeFilePath);
 
     if (autoSaveDebounceRef.current) {
       clearTimeout(autoSaveDebounceRef.current);
@@ -2052,7 +1355,7 @@ function EditorShell() {
         void persistActiveFileContent(value);
       }
     }, 5000);
-  }, [refreshDiagnosticsForFile, persistActiveFileContent]);
+  }, [persistActiveFileContent, scheduleDiagnosticsRefresh]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -2144,15 +1447,10 @@ function EditorShell() {
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
-        searchRequestIdRef.current += 1;
-        setWorkspaceSearchResults([]);
-        setSearchLoading(false);
-        diagnosticsRequestIdRef.current += 1;
-        completionRequestIdRef.current += 1;
-        setDiagnostics([]);
-        setDiagnosticsByFile({});
-        setDiagnosticsAvailability("idle");
-        setCompletionAvailability("idle");
+        resetWorkspaceSearch();
+        resetDiagnosticsState();
+        invalidateCompletionRequests();
+        resetCompletionAvailability();
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
@@ -2162,7 +1460,7 @@ function EditorShell() {
     } finally {
       setIsOpening(false);
     }
-  }, [isOpening]);
+  }, [isOpening, resetDiagnosticsState, resetWorkspaceSearch]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string) => {
@@ -2175,11 +1473,10 @@ function EditorShell() {
       setFileError(null);
       setSelectedLine(null);
       setInteractionAnchor(null);
-      diagnosticsRequestIdRef.current += 1;
-      completionRequestIdRef.current += 1;
-      setDiagnostics([]);
-      setDiagnosticsAvailability("idle");
-      setCompletionAvailability("idle");
+      invalidateDiagnosticsRequests();
+      invalidateCompletionRequests();
+      clearActiveDiagnostics();
+      resetCompletionAvailability();
 
       try {
         const response = await readWorkspaceFile(workspacePath, relativePath);
@@ -2243,9 +1540,8 @@ function EditorShell() {
         setIsDirty(false);
         setSaveStatus("idle");
         if (!isGoFile(relativePath)) {
-          setDiagnostics([]);
-          setDiagnosticsAvailability("idle");
-          setCompletionAvailability("idle");
+          clearActiveDiagnostics();
+          resetCompletionAvailability();
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
@@ -2259,33 +1555,19 @@ function EditorShell() {
         setIsReading(false);
       }
     },
-    [isReading, refreshDiagnosticsForFile, workspacePath]
+    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, refreshDiagnosticsForFile, workspacePath]
   );
 
   const reloadWorkspaceState = useCallback(async () => {
     if (!workspacePathRef.current) return;
 
-    const [gitRes, branchRes] = await Promise.all([
-      getWorkspaceGitSnapshot(workspacePathRef.current),
-      getWorkspaceBranches(workspacePathRef.current),
-    ]);
+    await reloadGitState(workspacePathRef.current);
 
-    if (gitRes.ok && gitRes.data) setGitSnapshot(gitRes.data);
-    if (branchRes.ok && branchRes.data) {
-      setBranchSnapshot(branchRes.data);
-    } else {
-      setBranchSnapshot(null);
-    }
-
-    setDiagnostics([]);
+    clearDiagnostics();
     setDebuggerState(null);
-    if (pendingRunOutputFlushHandleRef.current !== null) {
-      window.cancelAnimationFrame(pendingRunOutputFlushHandleRef.current);
-      pendingRunOutputFlushHandleRef.current = null;
-    }
-    pendingRunOutputBufferRef.current = [];
+    clearPendingRunOutputBuffer();
     setRunOutput([]);
-    setWorkspaceSearchResults([]);
+    resetWorkspaceSearch();
 
     // Explicitly refresh the Explorer tree so branch-switched file layout is reflected.
     setExplorerRevision((prev) => prev + 1);
@@ -2293,7 +1575,7 @@ function EditorShell() {
     if (activeFilePathRef.current) {
       await handleOpenFile(activeFilePathRef.current);
     }
-  }, [handleOpenFile]);
+  }, [clearDiagnostics, handleOpenFile, reloadGitState, resetWorkspaceSearch]);
 
   const handleBranchSelect = useCallback(async (branch: WorkspaceGitBranch) => {
     if (!workspacePathRef.current || !branchSnapshot) return;
@@ -2559,12 +1841,12 @@ function EditorShell() {
             </aside>
           }
           secondary={
-            <div className="flex min-h-0 min-w-0 flex-1">
+            <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <ResizableSplit
             orientation={workspaceLayout.dockMode === "bottom" ? "vertical" : "horizontal"}
             className={
               workspaceLayout.dockMode === "bottom"
-                ? "flex-1 flex-col-reverse"
+                ? "h-full flex-1 flex-col-reverse"
                 : "flex-1 flex-row-reverse"
             }
             size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}

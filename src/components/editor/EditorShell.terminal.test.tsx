@@ -283,6 +283,12 @@ describe("EditorShell terminal wiring", () => {
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
+    const terminalSplit = screen.getByTestId("resizable-split");
+    expect(terminalSplit).toHaveAttribute(
+      "data-class-name",
+      expect.stringContaining("h-full")
+    );
+    expect(terminalSplit.parentElement).toHaveClass("h-full", "overflow-hidden");
     expect(screen.getByTestId("editor-workbench")).toHaveClass("overflow-hidden");
     expect(screen.getByTestId("editor-content-region")).toHaveClass("overflow-hidden");
     expect(screen.getByTestId("editor-active-file-region")).toHaveClass("overflow-hidden");
