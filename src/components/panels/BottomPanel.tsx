@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils/cn";
 import type { DockMode } from "../../features/layout/useWorkspaceLayout";
 import type { BottomPanelTab, RunOutputPayload } from "../../lib/ipc/types";
@@ -44,43 +44,19 @@ function BottomPanel({
 }: BottomPanelProps) {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [shellFitRequestKey, setShellFitRequestKey] = useState(0);
-  const [isOverflowOpen, setIsOverflowOpen] = useState(false);
-  const overflowRef = useRef<HTMLDivElement>(null);
-
-  // Close overflow menu when clicking outside
-  useEffect(() => {
-    if (!isOverflowOpen) return;
-    function handlePointerDown(e: PointerEvent) {
-      if (overflowRef.current && !overflowRef.current.contains(e.target as Node)) {
-        setIsOverflowOpen(false);
-      }
-    }
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, [isOverflowOpen]);
-
-  // Close overflow menu on Escape
-  useEffect(() => {
-    if (!isOverflowOpen) return;
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") setIsOverflowOpen(false);
-    }
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [isOverflowOpen]);
-
-  // Whether there are any overflow items to show
-  const hasOverflowItems =
-    activeTab === "logs" &&
-    ((!isRunning && onRunWithRace !== undefined) ||
-      onClear !== undefined ||
-      onClose !== undefined);
 
   useEffect(() => {
     if (activeTab === "shell") {
       setShellFitRequestKey((current) => current + 1);
     }
   }, [activeTab]);
+
+  const showRunAgain = activeTab === "logs" && !isRunning && onRun !== undefined;
+  const showRunRace =
+    activeTab === "logs" && !isRunning && onRunWithRace !== undefined;
+  const showStop = activeTab === "logs" && isRunning && onStop !== undefined;
+  const showClear = activeTab === "logs" && onClear !== undefined;
+  const showHidePanel = activeTab === "logs" && onClose !== undefined;
 
   const tabBase =
     "rounded-sm px-3 py-1 text-[12px] font-semibold transition-colors duration-100";
@@ -171,8 +147,7 @@ function BottomPanel({
           {/* Logs-scoped action buttons */}
           {activeTab === "logs" && (
             <>
-              {/* Primary inline actions */}
-              {onRun && !isRunning && (
+              {showRunAgain && (
                 <button
                   type="button"
                   className="cursor-pointer rounded border border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.16)]"
@@ -182,7 +157,18 @@ function BottomPanel({
                   Run Again
                 </button>
               )}
-              {onStop && isRunning && (
+              {showRunRace && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.16)] disabled:cursor-not-allowed disabled:opacity-40"
+                  onClick={onRunWithRace}
+                  disabled={!canRunWithRace}
+                  title="Run the active Go file with race detection."
+                >
+                  Run Race
+                </button>
+              )}
+              {showStop && (
                 <button
                   type="button"
                   className="cursor-pointer rounded border border-[rgba(231,130,132,0.3)] bg-[rgba(231,130,132,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.16)]"
@@ -192,73 +178,25 @@ function BottomPanel({
                   Stop
                 </button>
               )}
-
-              {/* Overflow / More button — secondary actions */}
-              {hasOverflowItems && (
-                <div ref={overflowRef} className="relative">
-                  <button
-                    type="button"
-                    aria-label="More panel actions"
-                    aria-haspopup="menu"
-                    aria-expanded={isOverflowOpen}
-                    className="cursor-pointer rounded border border-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                    onClick={() => setIsOverflowOpen((o) => !o)}
-                    title="More panel actions."
-                  >
-                    •••
-                  </button>
-                  {isOverflowOpen && (
-                    <div
-                      role="menu"
-                      aria-label="Panel actions menu"
-                      className="absolute right-0 top-full z-50 mt-1 min-w-[9rem] rounded border border-[var(--border-muted)] bg-[var(--mantle)] py-1 shadow-[var(--panel-shadow)]"
-                    >
-                      {onRunWithRace && !isRunning && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-40"
-                          onClick={() => {
-                            setIsOverflowOpen(false);
-                            onRunWithRace();
-                          }}
-                          disabled={!canRunWithRace}
-                          title="Run the active Go file with race detection."
-                        >
-                          Run Race
-                        </button>
-                      )}
-                      {onClear && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)]"
-                          onClick={() => {
-                            setIsOverflowOpen(false);
-                            setIsClearConfirmOpen(true);
-                          }}
-                          title="Clear terminal output."
-                        >
-                          Clear
-                        </button>
-                      )}
-                      {onClose && (
-                        <button
-                          type="button"
-                          role="menuitem"
-                          className="w-full cursor-pointer px-3 py-1.5 text-left text-[12px] text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)]"
-                          onClick={() => {
-                            setIsOverflowOpen(false);
-                            onClose();
-                          }}
-                          title="Hide the terminal panel."
-                        >
-                          Hide Panel
-                        </button>
-                      )}
-                    </div>
-                  )}
-                </div>
+              {showClear && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                  onClick={() => setIsClearConfirmOpen(true)}
+                  title="Clear terminal output."
+                >
+                  Clear
+                </button>
+              )}
+              {showHidePanel && (
+                <button
+                  type="button"
+                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                  onClick={onClose}
+                  title="Hide the terminal panel."
+                >
+                  Hide Panel
+                </button>
               )}
             </>
           )}
