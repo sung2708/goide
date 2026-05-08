@@ -2576,6 +2576,7 @@ function EditorShell() {
             }
             minSize={isBottomPanelOpen ? 240 : 0}
             maxSize={workspaceLayout.dockMode === "bottom" ? 520 : 780}
+            collapsed={!isBottomPanelOpen}
             onResize={handleTerminalPaneResize}
             primary={
               <div
