@@ -51,16 +51,14 @@ describe("EditorShell panels", () => {
     expect(screen.queryByRole("button", { name: /command palette/i })).toBeNull();
     expect(screen.queryByTestId("summary-panel")).toBeNull();
 
-    // BottomPanel is always mounted to preserve ShellTerminalView's xterm
-    // instance across hide/show cycles. When hidden, the wrapping div has
-    // the HTML `hidden` attribute; the section with data-testid="bottom-panel"
-    // is always in the DOM.
-    const bottomPanelEl = screen.getByTestId("bottom-panel");
-    expect(bottomPanelEl).toBeInTheDocument();
-    expect(bottomPanelEl.closest("[hidden]")).not.toBeNull();
+    // BottomPanel is lazy-loaded on first use to reduce initial request fan-out.
+    // After the first open it stays mounted and hidden via the wrapper's
+    // `hidden` attribute to preserve the shell session lifecycle.
+    expect(screen.queryByTestId("bottom-panel")).toBeNull();
 
     const bottomBtn = screen.getByRole("button", { name: /show terminal panel/i });
     await user.click(bottomBtn);
+    expect(await screen.findByTestId("bottom-panel")).toBeInTheDocument();
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /hide panel/i }));
@@ -93,10 +91,10 @@ describe("EditorShell panels", () => {
 
     render(<EditorShell />);
 
-    const bottomPanelEl = screen.getByTestId("bottom-panel");
-    expect(bottomPanelEl.closest("[hidden]")).not.toBeNull();
+    expect(screen.queryByTestId("bottom-panel")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /show terminal panel/i }));
+    expect(await screen.findByTestId("bottom-panel")).toBeInTheDocument();
     expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
     expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();

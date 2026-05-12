@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import {
   EditorState,
+  EditorSelection,
   Prec,
   RangeSet,
   RangeSetBuilder,
@@ -13,6 +14,11 @@ import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
+import {
+  semanticAnalysisField,
+  semanticFoldingExtension,
+  setSemanticAnalysisEffect,
+} from "./semanticFolding";
 import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
 import {
   defaultKeymap,
@@ -54,6 +60,10 @@ import type {
   CompletionRange,
   EditorDiagnostic,
 } from "../../lib/ipc/types";
+import type { SemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import { createSemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import { createSemanticAnalysisWorker } from "../../features/semantics/createSemanticAnalysisWorker";
+import type { DocumentOutlineItem } from "./DocumentOutline";
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
@@ -478,6 +488,7 @@ type CodeEditorProps = {
   jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
+  onCursorOffsetChange?: (offset: number | null) => void;
   onModifierClickLine?: (line: number) => boolean;
   onCounterpartAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
@@ -487,6 +498,9 @@ type CodeEditorProps = {
   onRequestCompletions?: (
     request: EditorCompletionRequest
   ) => Promise<CompletionItem[]>;
+  filePath?: string | null;
+  semanticAnalysisClient?: SemanticAnalysisClient;
+  onDocumentSymbolsChange?: (symbols: DocumentOutlineItem[]) => void;
   editable?: boolean;
   diagnostics?: EditorDiagnostic[];
   breakpoints?: number[];
@@ -504,6 +518,7 @@ function CodeEditor({
   counterpartLine = null,
   onHoverLineChange,
   onSelectionLineChange,
+  onCursorOffsetChange,
   onModifierClickLine,
   onCounterpartAnchorChange,
   onInteractionAnchorChange,
@@ -511,12 +526,23 @@ function CodeEditor({
   onSave,
   onChange,
   onRequestCompletions,
+  filePath = null,
+  semanticAnalysisClient,
+  onDocumentSymbolsChange,
   editable = true,
   diagnostics = [],
   breakpoints = [],
   onToggleBreakpoint,
 }: CodeEditorProps) {
   const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const internalSemanticClient = useMemo(() => {
+    if (semanticAnalysisClient || typeof Worker === "undefined") {
+      return null;
+    }
+
+    return createSemanticAnalysisClient(createSemanticAnalysisWorker);
+  }, [semanticAnalysisClient]);
+  const activeSemanticClient = semanticAnalysisClient ?? internalSemanticClient;
 
   useEffect(() => {
     const view = viewRef.current;
@@ -819,8 +845,71 @@ function CodeEditor({
     });
   };
 
+  const expandSelection = (view: EditorView) => {
+    const result = view.state.field(semanticAnalysisField, false) ?? null;
+    const ranges = result?.selectionRanges ?? [];
+    if (ranges.length === 0) {
+      return false;
+    }
+
+    const current = view.state.selection.main;
+    const nextRange = ranges
+      .filter(
+        (range) =>
+          range.from <= current.from &&
+          range.to >= current.to &&
+          (range.from < current.from || range.to > current.to)
+      )
+      .sort((a, b) => {
+        const aSize = a.to - a.from;
+        const bSize = b.to - b.from;
+        return aSize - bSize || a.from - b.from;
+      })[0];
+
+    if (!nextRange) {
+      return false;
+    }
+
+    view.dispatch({
+      selection: EditorSelection.range(nextRange.from, nextRange.to),
+    });
+    return true;
+  };
+
+  const shrinkSelection = (view: EditorView) => {
+    const result = view.state.field(semanticAnalysisField, false) ?? null;
+    const ranges = result?.selectionRanges ?? [];
+    if (ranges.length === 0) {
+      return false;
+    }
+
+    const current = view.state.selection.main;
+    const previousRange = ranges
+      .filter(
+        (range) =>
+          range.from >= current.from &&
+          range.to <= current.to &&
+          (range.from > current.from || range.to < current.to)
+      )
+      .sort((a, b) => {
+        const aSize = a.to - a.from;
+        const bSize = b.to - b.from;
+        return bSize - aSize || a.from - b.from;
+      })[0];
+
+    if (!previousRange) {
+      return false;
+    }
+
+    view.dispatch({
+      selection: EditorSelection.range(previousRange.from, previousRange.to),
+    });
+    return true;
+  };
+
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
+    semanticFoldingExtension,
     breakpointField,
     EditorState.readOnly.of(!editable),
     EditorState.tabSize.of(4),
@@ -898,6 +987,14 @@ function CodeEditor({
         },
       },
       {
+        key: "Alt-Shift-ArrowRight",
+        run: expandSelection,
+      },
+      {
+        key: "Alt-Shift-ArrowLeft",
+        run: shrinkSelection,
+      },
+      {
         key: "Mod-f",
         run: openSearchPanel,
       },
@@ -914,6 +1011,14 @@ function CodeEditor({
       ...defaultKeymap,
     ])),
     EditorView.updateListener.of((update) => {
+      if (update.selectionSet) {
+        const head = update.state.selection.main.head;
+        const nextLine = update.state.doc.lineAt(head).number;
+        emitSelectionLine(nextLine);
+        emitInteractionAnchor(nextLine);
+        emitCursorOffset(head);
+      }
+
       if (update.geometryChanged || update.viewportChanged) {
         // Schedule anchor sync on the next microtask to avoid read-during-render layout thrashing
         queueMicrotask(() => {
@@ -961,7 +1066,10 @@ function CodeEditor({
     goplsCompletionSource,
     localSnippetSource,
     onCounterpartAnchorChange,
+    onCursorOffsetChange,
+    onDocumentSymbolsChange,
     onInteractionAnchorChange,
+    onSelectionLineChange,
     onSave,
   ]);
   const viewRef = useRef<EditorView | null>(null);
@@ -969,6 +1077,7 @@ function CodeEditor({
   const executionLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
   const selectedLineRef = useRef<number | null>(null);
+  const cursorOffsetRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handledJumpRequestIdRef = useRef<number | null>(null);
@@ -1060,6 +1169,68 @@ function CodeEditor({
     const cmDiagnostics = buildCodeMirrorDiagnostics(view);
     view.dispatch(setDiagnostics(view.state, cmDiagnostics));
   }, [diagnostics, value, editorView]);
+
+  useEffect(() => {
+    if (!activeSemanticClient || !filePath) {
+      return;
+    }
+
+    activeSemanticClient.syncDocument({
+      filePath,
+      text: value,
+    });
+    activeSemanticClient.requestAnalysis(filePath);
+  }, [activeSemanticClient, filePath, value]);
+
+  useEffect(() => {
+    if (!activeSemanticClient) {
+      return;
+    }
+
+    return () => {
+      activeSemanticClient.dispose();
+    };
+  }, [activeSemanticClient]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    if (!activeSemanticClient || !filePath) {
+      onDocumentSymbolsChange?.([]);
+      view.dispatch({
+        effects: setSemanticAnalysisEffect.of(null),
+      });
+      return;
+    }
+
+    return activeSemanticClient.subscribe((result) => {
+      if (result.filePath !== filePath || result.version < 1) {
+        return;
+      }
+
+      onDocumentSymbolsChange?.(
+        result.symbols.map((symbol) => ({
+          name: symbol.name,
+          kind: symbol.kind,
+          line: view.state.doc.lineAt(symbol.range.from).number,
+          from: symbol.range.from,
+          to: symbol.range.to,
+        }))
+      );
+
+      const currentView = viewRef.current;
+      if (!currentView) {
+        return;
+      }
+
+      currentView.dispatch({
+        effects: setSemanticAnalysisEffect.of(result),
+      });
+    });
+  }, [activeSemanticClient, editorView, filePath, onDocumentSymbolsChange]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1214,6 +1385,19 @@ function CodeEditor({
     onSelectionLineChange(line);
   };
 
+  const emitCursorOffset = (offset: number | null) => {
+    if (!onCursorOffsetChange) {
+      return;
+    }
+
+    if (cursorOffsetRef.current === offset) {
+      return;
+    }
+
+    cursorOffsetRef.current = offset;
+    onCursorOffsetChange(offset);
+  };
+
   const emitInteractionAnchor = (line: number | null) => {
     if (!onInteractionAnchorChange) {
       return;
@@ -1279,6 +1463,7 @@ function CodeEditor({
         const nextFocused = event.relatedTarget as Node | null;
         if (!event.currentTarget.contains(nextFocused)) {
           emitSelectionLine(null);
+          emitCursorOffset(null);
           emitInteractionAnchor(null);
         }
       }}
@@ -1323,6 +1508,7 @@ function CodeEditor({
           }
         }
         emitSelectionLine(nextLine);
+        emitCursorOffset(pos);
         emitInteractionAnchor(nextLine);
       }}
       onKeyUp={() => {
@@ -1334,6 +1520,7 @@ function CodeEditor({
         const head = view.state.selection.main.head;
         const nextLine = view.state.doc.lineAt(head).number;
         emitSelectionLine(nextLine);
+        emitCursorOffset(head);
         emitInteractionAnchor(nextLine);
       }}
     >

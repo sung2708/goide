@@ -4,6 +4,12 @@ import type { ToolchainStatus } from "../../lib/ipc/types";
 type StatusBarProps = {
   workspacePath: string | null;
   activeFilePath: string | null;
+  activeSymbol?: {
+    kind: string;
+    name: string;
+    line: number;
+  } | null;
+  onJumpToActiveSymbol?: () => void;
   mode: "quick-insight" | "deep-trace";
   runtimeAvailability: "available" | "unavailable" | "degraded";
   diagnosticsAvailability: "available" | "unavailable" | "idle";
@@ -20,6 +26,8 @@ type StatusBarProps = {
 function StatusBar({
   workspacePath,
   activeFilePath,
+  activeSymbol = null,
+  onJumpToActiveSymbol,
   mode,
   runtimeAvailability,
   diagnosticsAvailability,
@@ -100,6 +108,29 @@ function StatusBar({
             {branchName}
           </button>
         )}
+        <div
+          data-testid="status-bar-symbol-indicator"
+          className="flex items-center gap-2 text-[var(--overlay1)]"
+        >
+          <span className="text-[var(--surface2)]">/</span>
+          {activeSymbol && onJumpToActiveSymbol ? (
+            <button
+              type="button"
+              aria-label="Jump to active symbol"
+              className="flex min-w-0 items-center gap-2 rounded border border-[var(--border-subtle)] bg-[var(--surface0)] px-2 py-0.5 text-left font-semibold text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+              onClick={onJumpToActiveSymbol}
+              title={`Jump to ${activeSymbol.name} on line ${activeSymbol.line}.`}
+            >
+              <span className="rounded bg-[var(--surface1)] px-1.5 py-0.5 uppercase tracking-[0.04em] text-[var(--overlay1)]">
+                {activeSymbol.kind}
+              </span>
+              <span className="max-w-[140px] truncate">{activeSymbol.name}</span>
+              <span className="text-[rgba(113,125,144,0.6)]">L{activeSymbol.line}</span>
+            </button>
+          ) : (
+            <span>No active symbol</span>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-4">
