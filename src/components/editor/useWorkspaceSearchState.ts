@@ -94,8 +94,9 @@ export function useWorkspaceSearchState(
         replacement +
         lines[idx].slice(before + searchText.length);
       await writeWorkspaceFile(workspacePath, file, lines.join("\n"));
+      await handleWorkspaceSearch(searchText);
     },
-    [workspacePath]
+    [workspacePath, handleWorkspaceSearch]
   );
 
   const replaceAllMatches = useCallback(
