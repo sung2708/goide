@@ -27,14 +27,6 @@ import {
   indentLess,
   indentWithTab,
 } from "@codemirror/commands";
-import {
-  closeSearchPanel,
-  findNext,
-  openSearchPanel,
-  search,
-  searchKeymap,
-  searchPanelOpen,
-} from "@codemirror/search";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import {
   acceptCompletion,
@@ -64,6 +56,8 @@ import type { SemanticAnalysisClient } from "../../features/semantics/createSema
 import { createSemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
 import { createSemanticAnalysisWorker } from "../../features/semantics/createSemanticAnalysisWorker";
 import type { DocumentOutlineItem } from "./DocumentOutline";
+import FindWidget from "./FindWidget";
+import { useFindWidget } from "../../hooks/useFindWidget";
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
@@ -908,9 +902,6 @@ function CodeEditor({
     lintGutter(),
     linter(() => []),
     closeBrackets(),
-    search({
-      top: true,
-    }),
     autocompletion({
       override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
@@ -940,9 +931,6 @@ function CodeEditor({
       {
         key: "Enter",
         run: (view) => {
-          if (searchPanelOpen(view.state)) {
-            return findNext(view);
-          }
           if (isPackageContextAtSelection(view)) {
             return false;
           }
@@ -967,7 +955,13 @@ function CodeEditor({
       },
       {
         key: "Escape",
-        run: (view) => closeCompletion(view) || closeSearchPanel(view),
+        run: (view) => {
+          if (findWidgetRef.current.isOpen) {
+            findWidgetRef.current.close();
+            return true;
+          }
+          return closeCompletion(view);
+        },
       },
       {
         key: "Ctrl-Space",
@@ -986,7 +980,10 @@ function CodeEditor({
       },
       {
         key: "Mod-f",
-        run: openSearchPanel,
+        run: () => {
+          findWidgetRef.current.open();
+          return true;
+        },
       },
       {
         key: "Mod-s",
@@ -995,7 +992,6 @@ function CodeEditor({
           return true;
         },
       },
-      ...searchKeymap,
       ...closeBracketsKeymap,
       ...historyKeymap,
       ...defaultKeymap,
@@ -1063,6 +1059,9 @@ function CodeEditor({
     onSave,
   ]);
   const viewRef = useRef<EditorView | null>(null);
+  const findWidget = useFindWidget(viewRef);
+  const findWidgetRef = useRef(findWidget);
+  findWidgetRef.current = findWidget;
   const highlightedLineRef = useRef<number | null>(null);
   const executionLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
@@ -1417,7 +1416,7 @@ function CodeEditor({
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full"
+      className="relative h-full min-h-0 w-full"
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1514,6 +1513,27 @@ function CodeEditor({
         emitInteractionAnchor(nextLine);
       }}
     >
+      {findWidget.isOpen && (
+        <FindWidget
+          query={findWidget.query}
+          replaceText={findWidget.replaceText}
+          matchCase={findWidget.matchCase}
+          wholeWord={findWidget.wholeWord}
+          useRegex={findWidget.useRegex}
+          matchInfo={findWidget.matchInfo}
+          queryInputRef={findWidget.queryInputRef}
+          onQueryChange={findWidget.setQuery}
+          onReplaceTextChange={findWidget.setReplaceText}
+          onToggleMatchCase={findWidget.toggleMatchCase}
+          onToggleWholeWord={findWidget.toggleWholeWord}
+          onToggleRegex={findWidget.toggleRegex}
+          onFindNext={findWidget.handleFindNext}
+          onFindPrev={findWidget.handleFindPrev}
+          onReplace={findWidget.handleReplace}
+          onReplaceAll={findWidget.handleReplaceAll}
+          onClose={findWidget.close}
+        />
+      )}
       <CodeMirror
         value={value}
         className="h-full min-h-0 w-full"
