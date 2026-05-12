@@ -10,7 +10,9 @@ function renderStatusBar(
     go: { available: true },
     gopls: { available: true },
     delve: { available: true },
-  }
+  },
+  activeSymbol: { kind: string; name: string; line: number } | null = null,
+  onJumpToActiveSymbol: (() => void) | undefined = undefined
 ) {
   return render(
     <StatusBar
@@ -23,6 +25,8 @@ function renderStatusBar(
       toolchainStatus={toolchainStatus}
       saveStatus="idle"
       runStatus="idle"
+      activeSymbol={activeSymbol}
+      onJumpToActiveSymbol={onJumpToActiveSymbol}
       isBottomPanelOpen={false}
       onToggleBottomPanel={vi.fn()}
     />
@@ -186,5 +190,41 @@ describe("StatusBar branch trigger", () => {
     await user.click(screen.getByRole("button", { name: /switch branch/i }));
 
     expect(onToggleBranchPicker).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("StatusBar active symbol indicator", () => {
+  it("shows a neutral fallback when no active symbol is available", () => {
+    renderStatusBar();
+
+    expect(screen.getByTestId("status-bar-symbol-indicator")).toHaveTextContent(
+      /no active symbol/i
+    );
+  });
+
+  it("renders the active symbol and jumps when clicked", async () => {
+    const user = userEvent.setup();
+    const onJumpToActiveSymbol = vi.fn();
+
+    renderStatusBar(
+      "available",
+      "available",
+      {
+        go: { available: true },
+        gopls: { available: true },
+        delve: { available: true },
+      },
+      { kind: "function", name: "main", line: 2 },
+      onJumpToActiveSymbol
+    );
+
+    const indicator = screen.getByRole("button", { name: /jump to active symbol/i });
+    expect(indicator).toHaveTextContent(/function/i);
+    expect(indicator).toHaveTextContent(/main/i);
+    expect(indicator).toHaveTextContent(/l2/i);
+
+    await user.click(indicator);
+
+    expect(onJumpToActiveSymbol).toHaveBeenCalledTimes(1);
   });
 });

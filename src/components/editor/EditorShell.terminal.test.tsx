@@ -316,16 +316,14 @@ describe("EditorShell terminal wiring", () => {
     expect(getByTestId("resizable-split").parentElement).toHaveClass("min-h-0");
   });
 
-  it("does not leave the hidden terminal pane participating in pointer layout", async () => {
+  it("does not create the terminal pane before the user opens it", async () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
-    const hiddenPanel = screen.getByTestId("bottom-panel").closest("[hidden]");
-    expect(hiddenPanel).not.toBeNull();
-    expect(hiddenPanel).toHaveAttribute("hidden");
+    expect(screen.queryByTestId("bottom-panel")).toBeNull();
   });
 
   it("does not render terminal split chrome while the bottom panel is closed", async () => {
@@ -399,9 +397,9 @@ describe("EditorShell terminal wiring", () => {
    * recreated the component (and ShellTerminalView's xterm instance) each
    * time the panel was toggled.
    *
-   * After the fix, BottomPanel is always mounted and visibility is toggled
-   * via `hidden` CSS, so:
-   *   - bottomPanelMountCount stays at 1 across hide/show cycles.
+   * After the fix, BottomPanel is lazy-loaded on first use, then remains
+   * mounted and visibility is toggled via `hidden` CSS, so:
+   *   - bottomPanelMountCount stays at 1 across hide/show cycles after first open.
    *   - surfaceKey on the panel props is preserved unchanged.
    *   - activeTab on the panel props is preserved unchanged.
    */
@@ -439,6 +437,7 @@ describe("EditorShell terminal wiring", () => {
     // After hiding, BottomPanel is still in the DOM (just hidden) so mount
     // count must NOT have increased further.
     expect(bottomPanelMountCount).toBe(mountCountAfterOpen);
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
 
     // surfaceKey and activeTab must still be the same (no prop reset)
     expect(capturedBottomPanelProps?.surfaceKey).toBe("workspace-shell");

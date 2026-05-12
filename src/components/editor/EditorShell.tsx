@@ -1,5 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
@@ -39,17 +39,15 @@ import ThreadLine from "../overlays/ThreadLine";
 import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
-import BottomPanel from "../panels/BottomPanel";
 import Explorer, { type FileDecoration } from "../sidebar/Explorer";
 import ActivityBar, { type ActivityBarTab } from "../sidebar/ActivityBar";
 import StatusBar from "../statusbar/StatusBar";
 import CodeEditor, { type JumpRequest } from "./CodeEditor";
+import DocumentOutline, { type DocumentOutlineItem } from "./DocumentOutline";
 import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
 import BranchPicker from "../panels/BranchPicker";
 import BranchSwitchDialog from "../panels/BranchSwitchDialog";
-import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
-import DebugFailureDialog from "../panels/DebugFailureDialog";
 import ResizableSplit from "../layout/ResizableSplit";
 import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceLayout } from "../../features/layout/useWorkspaceLayout";
 import {
@@ -69,6 +67,9 @@ import { useWorkspaceSearchState } from "./useWorkspaceSearchState";
 import { useRunOutputState, type RunMode } from "./useRunOutputState";
 
 const DEBUG_UI_ENABLED = true;
+const LazyBottomPanel = lazy(() => import("../panels/BottomPanel"));
+const LazyRuntimeTopologyPanel = lazy(() => import("../panels/RuntimeTopologyPanel"));
+const LazyDebugFailureDialog = lazy(() => import("../panels/DebugFailureDialog"));
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -191,6 +192,7 @@ function EditorShell() {
   const [fileError, setFileError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [hasLoadedBottomPanel, setHasLoadedBottomPanel] = useState(false);
   const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab>("logs");
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
     "quick-insight"
@@ -229,6 +231,12 @@ function EditorShell() {
   const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
   const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (isBottomPanelOpen) {
+      setHasLoadedBottomPanel(true);
+    }
+  }, [isBottomPanelOpen]);
+
   const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
@@ -263,6 +271,8 @@ function EditorShell() {
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
+  const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
+  const [cursorOffset, setCursorOffset] = useState<number | null>(null);
   const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
@@ -326,7 +336,25 @@ function EditorShell() {
 
   useEffect(() => {
     setJumpRequest(null);
+    setDocumentSymbols([]);
+    setCursorOffset(null);
   }, [workspacePath, activeFilePath]);
+
+  const activeDocumentSymbol = useMemo(() => {
+    if (cursorOffset === null) {
+      return null;
+    }
+
+    return (
+      documentSymbols
+        .filter((symbol) => symbol.from <= cursorOffset && symbol.to >= cursorOffset)
+        .sort((a, b) => {
+          const aSize = a.to - a.from;
+          const bSize = b.to - b.from;
+          return aSize - bSize || a.from - b.from;
+        })[0] ?? null
+    );
+  }, [cursorOffset, documentSymbols]);
 
   useEffect(() => {
     const previousMode = previousModeRef.current;
@@ -627,6 +655,31 @@ function EditorShell() {
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
   }, [requestJump, resolveCounterpartFromActiveHint]);
+
+  const navigateDocumentSymbol = useCallback(
+    (direction: "next" | "previous") => {
+      if (documentSymbols.length === 0) {
+        return;
+      }
+
+      const activeIndex =
+        activeDocumentSymbol === null
+          ? -1
+          : documentSymbols.findIndex((symbol) => symbol.from === activeDocumentSymbol.from);
+
+      const targetIndex =
+        direction === "next"
+          ? activeIndex >= 0
+            ? (activeIndex + 1) % documentSymbols.length
+            : 0
+          : activeIndex >= 0
+            ? (activeIndex - 1 + documentSymbols.length) % documentSymbols.length
+            : documentSymbols.length - 1;
+
+      requestJump(documentSymbols[targetIndex]?.line ?? null);
+    },
+    [activeDocumentSymbol, documentSymbols, requestJump]
+  );
 
   const handleDeepTrace = useCallback(async () => {
     if (runtimeAvailability === "unavailable") {
@@ -1277,6 +1330,18 @@ function EditorShell() {
         return;
       }
 
+      if (e.key === "F8" && !e.shiftKey) {
+        e.preventDefault();
+        navigateDocumentSymbol("next");
+        return;
+      }
+
+      if (e.key === "F8" && e.shiftKey) {
+        e.preventDefault();
+        navigateDocumentSymbol("previous");
+        return;
+      }
+
 
       if (!isDebugSessionRunning || !isDebugPaused) {
         return;
@@ -1305,11 +1370,13 @@ function EditorShell() {
   }, [
     activeFilePath,
     handleToggleBreakpoint,
+    handleToggleDebugPause,
     handleStartDebug,
     handleStopDebug,
     isDebugSessionBusy,
     isDebugPaused,
     isDebugSessionRunning,
+    navigateDocumentSymbol,
     runStatus,
     selectedLine,
     workspacePath,
@@ -1728,17 +1795,19 @@ function EditorShell() {
                 />
               )}
               {activeTab === "concurrency" && (
-                <RuntimeTopologyPanel
-                  loading={runtimeTopologyLoading}
-                  runMode={runMode}
-                  runStatus={runStatus}
-                  isDebugSessionRunning={isDebugSessionRunning}
-                  isDebugPaused={isDebugPaused}
-                  debuggerState={debuggerState}
-                  panelSnapshot={runtimePanelSnapshot}
-                  topologySnapshot={runtimeTopologySnapshot}
-                  error={runtimeTopologyError}
-                />
+                <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
+                  <LazyRuntimeTopologyPanel
+                    loading={runtimeTopologyLoading}
+                    runMode={runMode}
+                    runStatus={runStatus}
+                    isDebugSessionRunning={isDebugSessionRunning}
+                    isDebugPaused={isDebugPaused}
+                    debuggerState={debuggerState}
+                    panelSnapshot={runtimePanelSnapshot}
+                    topologySnapshot={runtimeTopologySnapshot}
+                    error={runtimeTopologyError}
+                  />
+                </Suspense>
               )}
               {DEBUG_UI_ENABLED && activeTab === "debug" && (
                 <div className="flex flex-1 flex-col gap-4 p-4">
@@ -1865,22 +1934,26 @@ function EditorShell() {
                 hidden={!isBottomPanelOpen}
                 className="h-full min-h-0 min-w-0"
               >
-                <BottomPanel
-                  activeTab={bottomPanelTab}
-                  onActiveTabChange={setBottomPanelTab}
-                  logEntries={runOutput}
-                  surfaceKey={surfaceKey}
-                  workspacePath={workspacePath}
-                  dockMode={workspaceLayout.dockMode}
-                  onDockModeChange={workspaceLayout.setDockMode}
-                  onClose={() => setIsBottomPanelOpen(false)}
-                  isRunning={runStatus === "running"}
-                  onClear={handleClearOutput}
-                  onRun={handleRunFileStandard}
-                  onRunWithRace={handleRunFileWithRace}
-                  onStop={handleStopRun}
-                  canRunWithRace={runtimeAvailability !== "unavailable"}
-                />
+                {hasLoadedBottomPanel ? (
+                  <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
+                    <LazyBottomPanel
+                      activeTab={bottomPanelTab}
+                      onActiveTabChange={setBottomPanelTab}
+                      logEntries={runOutput}
+                      surfaceKey={surfaceKey}
+                      workspacePath={workspacePath}
+                      dockMode={workspaceLayout.dockMode}
+                      onDockModeChange={workspaceLayout.setDockMode}
+                      onClose={() => setIsBottomPanelOpen(false)}
+                      isRunning={runStatus === "running"}
+                      onClear={handleClearOutput}
+                      onRun={handleRunFileStandard}
+                      onRunWithRace={handleRunFileWithRace}
+                      onStop={handleStopRun}
+                      canRunWithRace={runtimeAvailability !== "unavailable"}
+                    />
+                  </Suspense>
+                ) : null}
               </div>
             }
             secondary={
@@ -2030,9 +2103,37 @@ function EditorShell() {
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[rgba(113,125,144,0.25)] bg-[var(--crust)]">
-                      <div className="border-b border-[rgba(113,125,144,0.2)] px-3 py-2 text-xs text-[var(--subtext1)]">
-                        {activeFilePath}
+                    <div className="flex min-h-0 flex-1 overflow-hidden rounded border border-[rgba(113,125,144,0.25)] bg-[var(--crust)]">
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                      <div className="border-b border-[rgba(113,125,144,0.2)] px-3 py-2">
+                        <div className="text-xs text-[var(--subtext1)]">{activeFilePath}</div>
+                        <div
+                          className="mt-1 flex min-h-5 items-center gap-2 text-[11px] text-[var(--overlay1)]"
+                          data-testid="editor-scope-breadcrumb"
+                        >
+                          <span>Scope</span>
+                          <span className="text-[rgba(113,125,144,0.5)]">/</span>
+                          {activeDocumentSymbol ? (
+                            <button
+                              type="button"
+                              className="flex min-w-0 items-center gap-2 rounded px-1.5 py-1 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                              onClick={() => requestJump(activeDocumentSymbol.line)}
+                              title={`Jump to ${activeDocumentSymbol.name} on line ${activeDocumentSymbol.line}.`}
+                            >
+                              <span className="rounded bg-[var(--surface0)] px-1.5 py-0.5 uppercase tracking-[0.04em]">
+                                {activeDocumentSymbol.kind}
+                              </span>
+                              <span className="truncate text-[var(--subtext1)]">
+                                {activeDocumentSymbol.name}
+                              </span>
+                              <span className="text-[rgba(113,125,144,0.5)]">
+                                L{activeDocumentSymbol.line}
+                              </span>
+                            </button>
+                          ) : (
+                            <span>No active symbol</span>
+                          )}
+                        </div>
                       </div>
                       <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={effectiveHint} />
@@ -2073,6 +2174,7 @@ function EditorShell() {
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
+                            filePath={activeFilePath}
                             executionLine={debuggerState?.activeLine ?? null}
                             breakpoints={breakpoints}
                             onToggleBreakpoint={handleToggleBreakpoint}
@@ -2083,6 +2185,7 @@ function EditorShell() {
                             jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
+                            onCursorOffsetChange={setCursorOffset}
                             onModifierClickLine={handleModifierClickLine}
                             onInteractionAnchorChange={setInteractionAnchor}
                             onCounterpartAnchorChange={setCounterpartAnchor}
@@ -2090,6 +2193,7 @@ function EditorShell() {
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
+                            onDocumentSymbolsChange={setDocumentSymbols}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -2101,6 +2205,12 @@ function EditorShell() {
                           </div>
                         )}
                       </div>
+                      </div>
+                      <DocumentOutline
+                        activeItemFrom={activeDocumentSymbol?.from ?? null}
+                        items={documentSymbols}
+                        onJumpToLine={(line) => requestJump(line)}
+                      />
                     </div>
                   </div>
                 )}
@@ -2118,6 +2228,10 @@ function EditorShell() {
       <StatusBar
         workspacePath={workspacePath}
         activeFilePath={activeFilePath}
+        activeSymbol={activeDocumentSymbol}
+        onJumpToActiveSymbol={
+          activeDocumentSymbol ? () => requestJump(activeDocumentSymbol.line) : undefined
+        }
         mode={mode}
         runtimeAvailability={runtimeAvailability}
         diagnosticsAvailability={diagnosticsAvailability}
@@ -2179,16 +2293,20 @@ function EditorShell() {
         </div>
       )}
 
-      <DebugFailureDialog
-        open={debugFailure !== null}
-        title={debugFailure?.title ?? "Unable to start debug session"}
-        message={debugFailure?.message ?? ""}
-        details={debugFailure?.details ?? null}
-        onClose={() => {
-          setDebugFailure(null);
-          setDebugUiState("idle");
-        }}
-      />
+      {debugFailure !== null ? (
+        <Suspense fallback={null}>
+          <LazyDebugFailureDialog
+            open
+            title={debugFailure.title}
+            message={debugFailure.message}
+            details={debugFailure.details ?? null}
+            onClose={() => {
+              setDebugFailure(null);
+              setDebugUiState("idle");
+            }}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
