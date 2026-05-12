@@ -1,5 +1,9 @@
 import { useCallback, useRef, useState } from "react";
-import { searchWorkspaceText } from "../../lib/ipc/client";
+import {
+  readWorkspaceFile,
+  searchWorkspaceText,
+  writeWorkspaceFile,
+} from "../../lib/ipc/client";
 import type { WorkspaceSearchFile } from "../../lib/ipc/types";
 
 type WorkspaceSearchState = {
@@ -7,6 +11,13 @@ type WorkspaceSearchState = {
   workspaceSearchResults: WorkspaceSearchFile[];
   resetWorkspaceSearch: () => void;
   handleWorkspaceSearch: (query: string) => Promise<void>;
+  replaceMatch: (
+    file: string,
+    line: number,
+    searchText: string,
+    replacement: string
+  ) => Promise<void>;
+  replaceAllMatches: (searchText: string, replacement: string) => Promise<void>;
 };
 
 export function useWorkspaceSearchState(
@@ -60,10 +71,56 @@ export function useWorkspaceSearchState(
     [workspacePath]
   );
 
+  const replaceMatch = useCallback(
+    async (
+      file: string,
+      line: number,
+      searchText: string,
+      replacement: string
+    ): Promise<void> => {
+      if (!workspacePath) return;
+
+      const resp = await readWorkspaceFile(workspacePath, file);
+      if (!resp.ok || resp.data == null) return;
+
+      const lines = resp.data.split("\n");
+      const idx = line - 1;
+      if (idx < 0 || idx >= lines.length) return;
+
+      const updated = lines[idx].replace(searchText, replacement);
+      if (updated === lines[idx]) return;
+
+      lines[idx] = updated;
+      await writeWorkspaceFile(workspacePath, file, lines.join("\n"));
+    },
+    [workspacePath]
+  );
+
+  const replaceAllMatches = useCallback(
+    async (searchText: string, replacement: string): Promise<void> => {
+      if (!workspacePath) return;
+
+      for (const file of workspaceSearchResults) {
+        const resp = await readWorkspaceFile(workspacePath, file.relativePath);
+        if (!resp.ok || resp.data == null) continue;
+
+        const newContent = resp.data.split(searchText).join(replacement);
+        if (newContent === resp.data) continue;
+
+        await writeWorkspaceFile(workspacePath, file.relativePath, newContent);
+      }
+
+      await handleWorkspaceSearch(searchText);
+    },
+    [workspacePath, workspaceSearchResults, handleWorkspaceSearch]
+  );
+
   return {
     searchLoading,
     workspaceSearchResults,
     resetWorkspaceSearch,
     handleWorkspaceSearch,
+    replaceMatch,
+    replaceAllMatches,
   };
 }
