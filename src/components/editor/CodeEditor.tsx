@@ -853,18 +853,13 @@ function CodeEditor({
     }
 
     const current = view.state.selection.main;
-    const nextRange = ranges
-      .filter(
-        (range) =>
-          range.from <= current.from &&
-          range.to >= current.to &&
-          (range.from < current.from || range.to > current.to)
-      )
-      .sort((a, b) => {
-        const aSize = a.to - a.from;
-        const bSize = b.to - b.from;
-        return aSize - bSize || a.from - b.from;
-      })[0];
+    // ranges is pre-sorted ascending by size; find() returns the smallest match
+    const nextRange = ranges.find(
+      (range) =>
+        range.from <= current.from &&
+        range.to >= current.to &&
+        (range.from < current.from || range.to > current.to)
+    );
 
     if (!nextRange) {
       return false;
@@ -884,18 +879,13 @@ function CodeEditor({
     }
 
     const current = view.state.selection.main;
-    const previousRange = ranges
-      .filter(
-        (range) =>
-          range.from >= current.from &&
-          range.to <= current.to &&
-          (range.from > current.from || range.to < current.to)
-      )
-      .sort((a, b) => {
-        const aSize = a.to - a.from;
-        const bSize = b.to - b.from;
-        return bSize - aSize || a.from - b.from;
-      })[0];
+    // ranges is pre-sorted ascending by size; findLast() returns the largest match
+    const previousRange = ranges.findLast(
+      (range) =>
+        range.from >= current.from &&
+        range.to <= current.to &&
+        (range.from > current.from || range.to < current.to)
+    );
 
     if (!previousRange) {
       return false;

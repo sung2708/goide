@@ -67,10 +67,6 @@ function DocumentOutline({
     itemButtonRefs.current[index]?.focus();
   };
 
-  if (items.length === 0) {
-    return null;
-  }
-
   return (
     <aside
       ref={outlineRef}
@@ -84,6 +80,11 @@ function DocumentOutline({
           Tree-sitter symbols for the active file.
         </p>
       </div>
+      {items.length === 0 ? (
+        <div className="flex flex-1 items-center justify-center">
+          <span className="text-[11px] text-[var(--overlay0)]">— No symbols —</span>
+        </div>
+      ) : (
       <div className="flex-1 overflow-y-auto px-2 py-2">
         <div className="space-y-1">
           {items.map((item, itemIndex) => {
@@ -151,6 +152,7 @@ function DocumentOutline({
           })}
         </div>
       </div>
+      )}
     </aside>
   );
 }

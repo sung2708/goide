@@ -111,6 +111,13 @@ describe("DocumentOutline", () => {
     expect(innerButton).toHaveFocus();
   });
 
+  it("renders a stable panel container when no symbols are present", () => {
+    render(<DocumentOutline items={[]} />);
+    expect(screen.getByTestId("document-outline")).toBeInTheDocument();
+    expect(screen.getByText(/no symbols/i)).toBeInTheDocument();
+    expect(screen.queryAllByRole("button")).toHaveLength(0);
+  });
+
   it("does not steal focus when the active symbol changes from outside the outline", () => {
     const { rerender } = render(
       <div>

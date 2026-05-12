@@ -162,6 +162,8 @@ export function extractGoSemanticData(
 
   walkTree(root, source, symbols, folds, selectionRanges);
 
+  selectionRanges.sort((a, b) => (a.to - a.from) - (b.to - b.from));
+
   return {
     symbols,
     folds: dedupeFolds(folds),
