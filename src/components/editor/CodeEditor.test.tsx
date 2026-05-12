@@ -1,4 +1,5 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { EditorView } from "@codemirror/view";
 import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -6,12 +7,17 @@ const searchPanelOpenMock = vi.fn(() => false);
 const findNextMock = vi.fn(() => true);
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
+import { semanticAnalysisField, setSemanticAnalysisEffect } from "./semanticFolding";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
+import type { SemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import type { SemanticAnalysisResult } from "../../features/semantics/types";
 
 const mockLine1 = document.createElement("div");
 mockLine1.className = "cm-line";
 const mockLine2 = document.createElement("div");
 mockLine2.className = "cm-line";
+
+let latestSemanticAnalysis: SemanticAnalysisResult | null = null;
 
 const mockView = {
   viewport: {
@@ -41,11 +47,25 @@ const mockView = {
     return null;
   }),
   state: {
+    selection: {
+      main: {
+        from: 5,
+        to: 5,
+        head: 5,
+        anchor: 5,
+      },
+    },
     doc: {
       lines: 2,
       lineAt: (pos: number) => (pos < 20 ? { number: 1 } : { number: 2 }),
       line: (lineNumber: number) => ({ from: lineNumber === 1 ? 5 : 25 }),
     },
+    field: vi.fn((field: unknown, fallback?: unknown) => {
+      if (field === semanticAnalysisField) {
+        return latestSemanticAnalysis ?? fallback ?? null;
+      }
+      return fallback;
+    }),
   },
   domAtPos: (pos: number) => ({
     node: pos < 20 ? mockLine1 : mockLine2,
@@ -55,6 +75,34 @@ const mockView = {
       ? { left: 16, right: 28, top: 12, bottom: 24 }
       : { left: 16, right: 28, top: 44, bottom: 56 },
 };
+mockView.dispatch.mockImplementation((spec: {
+  selection?: { anchor: number; head?: number };
+  effects?:
+    | { is?: (effect: unknown) => boolean; value?: SemanticAnalysisResult | null }
+    | Array<{ is?: (effect: unknown) => boolean; value?: SemanticAnalysisResult | null }>;
+}) => {
+  const effects = Array.isArray(spec?.effects)
+    ? spec.effects
+    : spec?.effects
+      ? [spec.effects]
+      : [];
+  for (const effect of effects) {
+    if (effect.is?.(setSemanticAnalysisEffect)) {
+      latestSemanticAnalysis = effect.value ?? null;
+    }
+  }
+
+  if (spec?.selection) {
+    const from = Math.min(spec.selection.anchor, spec.selection.head ?? spec.selection.anchor);
+    const to = Math.max(spec.selection.anchor, spec.selection.head ?? spec.selection.anchor);
+    mockView.state.selection.main = {
+      from,
+      to,
+      anchor: spec.selection.anchor,
+      head: spec.selection.head ?? spec.selection.anchor,
+    };
+  }
+});
 
 const setDiagnosticsMock = vi.fn();
 const autocompletionMock = vi.fn();
@@ -191,6 +239,14 @@ describe("CodeEditor", () => {
     mockView.scrollDOM.scrollLeft = 0;
     mockView.scrollDOM.scrollTop = 0;
     mockView.scrollDOM.parentElement = null;
+    mockView.state.selection.main = {
+      from: 5,
+      to: 5,
+      anchor: 5,
+      head: 5,
+    };
+    latestSemanticAnalysis = null;
+    mockView.state.field.mockClear();
     latestKeyBindings = [];
     latestCodeMirrorProps = null;
   });
@@ -759,6 +815,32 @@ describe("CodeEditor", () => {
     fireEvent.blur(editorContainer, { relatedTarget: document.body });
     expect(selectionSpy).toHaveBeenCalledWith(null);
     expect(anchorSpy).toHaveBeenLastCalledWith(null);
+  });
+
+  it("emits cursor offset for the current caret position", () => {
+    const cursorOffsetSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onCursorOffsetChange={cursorOffsetSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(cursorOffsetSpy).toHaveBeenCalledWith(25);
+
+    mockView.state.selection.main = {
+      from: 5,
+      to: 5,
+      anchor: 5,
+      head: 5,
+    };
+    fireEvent.keyUp(editorContainer);
+    expect(cursorOffsetSpy).toHaveBeenLastCalledWith(5);
+
+    fireEvent.blur(editorContainer, { relatedTarget: document.body });
+    expect(cursorOffsetSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("adds and removes predicted underline class for active hint line", () => {
@@ -1508,5 +1590,159 @@ describe("CodeEditor", () => {
         ]),
       })
     );
+  });
+
+  it("syncs semantic analysis with the active file and disposes on unmount", () => {
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+    };
+
+    const { rerender, unmount } = render(
+      <CodeEditor
+        value={"package main\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    expect(semanticClient.syncDocument).toHaveBeenCalledWith({
+      filePath: "main.go",
+      text: "package main\n",
+    });
+    expect(semanticClient.requestAnalysis).toHaveBeenCalledWith("main.go");
+
+    rerender(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    expect(semanticClient.syncDocument).toHaveBeenLastCalledWith({
+      filePath: "main.go",
+      text: "package main\nfunc main() {}\n",
+    });
+    expect(semanticClient.requestAnalysis).toHaveBeenLastCalledWith("main.go");
+
+    unmount();
+
+    expect(semanticClient.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes semantic document symbols with line numbers", () => {
+    let semanticListener: ((result: SemanticAnalysisResult) => void) | null = null;
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn((listener) => {
+        semanticListener = listener;
+        return () => {
+          semanticListener = null;
+        };
+      }),
+      dispose: vi.fn(),
+    };
+    const onDocumentSymbolsChange = vi.fn();
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+        onDocumentSymbolsChange={onDocumentSymbolsChange}
+      />
+    );
+
+    const listener = semanticListener as ((result: SemanticAnalysisResult) => void) | null;
+    if (listener !== null) {
+      listener({
+        filePath: "main.go",
+        version: 1,
+        symbols: [
+          {
+            name: "main",
+            kind: "function",
+            range: {
+              from: 25,
+              to: 38,
+            },
+          },
+        ],
+        folds: [],
+        selectionRanges: [
+          { from: 25, to: 38 },
+        ],
+      });
+    }
+
+    expect(onDocumentSymbolsChange).toHaveBeenCalledWith([
+      {
+        name: "main",
+        kind: "function",
+        line: 2,
+        from: 25,
+        to: 38,
+      },
+    ]);
+  });
+
+  it("expands and shrinks selection using semantic selection ranges", () => {
+    let semanticListener: ((result: SemanticAnalysisResult) => void) | null = null;
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn((listener) => {
+        semanticListener = listener;
+        return () => {
+          semanticListener = null;
+        };
+      }),
+      dispose: vi.fn(),
+    };
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    const listener = semanticListener as ((result: SemanticAnalysisResult) => void) | null;
+    if (listener !== null) {
+      listener({
+        filePath: "main.go",
+        version: 1,
+        symbols: [],
+        folds: [],
+        selectionRanges: [
+          { from: 25, to: 29 },
+          { from: 20, to: 38 },
+        ],
+      });
+    }
+
+    mockView.state.selection.main = {
+      from: 25,
+      to: 25,
+      anchor: 25,
+      head: 25,
+    };
+
+    const expandBinding = latestKeyBindings.find((binding) => binding.key === "Alt-Shift-ArrowRight");
+    const shrinkBinding = latestKeyBindings.find((binding) => binding.key === "Alt-Shift-ArrowLeft");
+
+    expect(expandBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 25, to: 29 });
+
+    expect(expandBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 20, to: 38 });
+
+    expect(shrinkBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 25, to: 29 });
   });
 });
