@@ -78,6 +78,8 @@ describe("useWorkspaceSearchState — replace", () => {
     });
 
     expect(writeWorkspaceFileMock).toHaveBeenCalledTimes(2);
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "a.go", "bar\n");
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "b.go", "bar\n");
     // After replace, search is re-run with same query
     expect(searchWorkspaceTextMock).toHaveBeenLastCalledWith("C:/workspace", "foo");
   });
@@ -88,5 +90,29 @@ describe("useWorkspaceSearchState — replace", () => {
       await result.current.replaceMatch("main.go", 1, "foo", "bar");
     });
     expect(readWorkspaceFileMock).not.toHaveBeenCalled();
+  });
+
+  it("replaceMatch treats replacement string literally without special pattern interpretation", async () => {
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "line1\nfoo bar\nline3\n" });
+    const { result } = renderHook(() => useWorkspaceSearchState("C:/workspace"));
+
+    await act(async () => {
+      await result.current.replaceMatch("main.go", 2, "foo", "$&");
+    });
+
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith(
+      "C:/workspace",
+      "main.go",
+      "line1\n$& bar\nline3\n"
+    );
+  });
+
+  it("replaceAllMatches does nothing when workspacePath is null", async () => {
+    const { result } = renderHook(() => useWorkspaceSearchState(null));
+    await act(async () => {
+      await result.current.replaceAllMatches("foo", "bar");
+    });
+    expect(readWorkspaceFileMock).not.toHaveBeenCalled();
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
   });
 });
