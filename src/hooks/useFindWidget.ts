@@ -55,6 +55,7 @@ export function useFindWidget(
     try {
       searchObj = new SearchQuery({
         search: query,
+        replace: replaceText,
         caseSensitive: matchCase,
         wholeWord,
         regexp: useRegex,
@@ -93,7 +94,7 @@ export function useFindWidget(
   // convention and including them would cause infinite re-render loops when
   // the ref container is recreated each render (e.g. in tests).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, matchCase, wholeWord, useRegex, isOpen]);
+  }, [query, replaceText, matchCase, wholeWord, useRegex, isOpen]);
 
   const open = useCallback(() => {
     const view = viewRef.current;
