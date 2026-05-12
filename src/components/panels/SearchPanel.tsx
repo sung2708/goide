@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { WorkspaceSearchFile } from "../../lib/ipc/types";
 
 type SearchPanelProps = {
@@ -7,7 +7,80 @@ type SearchPanelProps = {
   onSearch: (query: string) => void;
   onOpenResult: (file: string, line: number) => void;
   autoFocus?: boolean;
+  focusTrigger?: number;
+  onReplaceMatch?: (file: string, line: number, searchText: string, replacement: string) => void;
+  onReplaceAll?: (searchText: string, replacement: string) => void;
 };
+
+function escapeRegex(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function HighlightedPreview({
+  preview,
+  query,
+  matchCase,
+}: {
+  preview: string;
+  query: string;
+  matchCase: boolean;
+}) {
+  if (!query) return <>{preview}</>;
+
+  let regex: RegExp;
+  try {
+    regex = new RegExp(`(${escapeRegex(query)})`, matchCase ? "g" : "gi");
+  } catch {
+    return <>{preview}</>;
+  }
+
+  const parts = preview.split(regex);
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <mark
+            key={i}
+            className="rounded-xs bg-[rgba(140,170,238,0.22)] text-(--blue) not-italic"
+          >
+            {part}
+          </mark>
+        ) : (
+          part
+        )
+      )}
+    </>
+  );
+}
+
+function ToggleButton({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      aria-pressed={active}
+      title={label}
+      onClick={onClick}
+      className={`flex h-5 w-5 items-center justify-center rounded transition-colors duration-100 ${
+        active
+          ? "bg-(--selection-bg) text-(--blue)"
+          : "text-(--overlay1) hover:bg-[rgba(255,255,255,0.06)] hover:text-(--subtext1)"
+      }`}
+    >
+      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>{icon}</span>
+    </button>
+  );
+}
 
 function SearchPanel({
   loading = false,
@@ -15,125 +88,257 @@ function SearchPanel({
   onSearch,
   onOpenResult,
   autoFocus = false,
+  focusTrigger = 0,
+  onReplaceMatch,
+  onReplaceAll,
 }: SearchPanelProps) {
-  const inputId = "workspace-search-input";
+  const searchInputId = "workspace-search-input";
   const [query, setQuery] = useState("");
+  const [replaceQuery, setReplaceQuery] = useState("");
+  const [matchCase, setMatchCase] = useState(false);
+  const [wholeWord, setWholeWord] = useState(false);
+  const [useRegex, setUseRegex] = useState(false);
+  const [showFilesFilter, setShowFilesFilter] = useState(false);
+  const [filesInclude, setFilesInclude] = useState("");
+  const [filesExclude, setFilesExclude] = useState("");
+  const [collapsedFiles, setCollapsedFiles] = useState<Set<string>>(new Set());
   const [lastSubmittedQuery, setLastSubmittedQuery] = useState("");
-  const flatResultCount = results.reduce((total, file) => total + file.matches.length, 0);
 
-  const submitSearch = () => {
-    const trimmedQuery = query.trim();
-    setLastSubmittedQuery(trimmedQuery);
-    onSearch(trimmedQuery);
-  };
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const trimmedQuery = query.trim();
-    const handle = window.setTimeout(() => {
-      setLastSubmittedQuery(trimmedQuery);
-      onSearch(trimmedQuery);
-    }, 180);
+    if (focusTrigger > 0) {
+      searchInputRef.current?.focus();
+    }
+  }, [focusTrigger]);
 
+  const flatResultCount = results.reduce((total, file) => total + file.matches.length, 0);
+
+  useEffect(() => {
+    const trimmed = query.trim();
+    const handle = window.setTimeout(() => {
+      setLastSubmittedQuery(trimmed);
+      onSearch(trimmed);
+    }, 180);
     return () => window.clearTimeout(handle);
   }, [query, onSearch]);
 
   const clearSearch = () => {
     setQuery("");
+    setReplaceQuery("");
     setLastSubmittedQuery("");
     onSearch("");
+    searchInputRef.current?.focus();
+  };
+
+  const toggleFileCollapse = (path: string) => {
+    setCollapsedFiles((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+      }
+      return next;
+    });
   };
 
   return (
-    <div className="flex h-full flex-col">
-      <div className="border-b border-[var(--border-subtle)] px-4 py-3.5 bg-[var(--mantle)]">
-        <div className="flex items-center justify-between mb-2">
-          <p className="text-[11px] font-bold uppercase text-[var(--overlay1)] text-balance">
-            Workspace Search
-          </p>
+    <div className="flex h-full flex-col bg-(--mantle)">
+      {/* Header */}
+      <div className="border-b border-(--border-muted) px-3 py-2.5">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-(--overlay1)">
+          Search
+        </p>
+
+        {/* Search row */}
+        <div className="relative mb-1.5 flex items-center rounded border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
+          <span className="material-symbols-outlined ml-2 shrink-0 text-(--overlay1)" style={{ fontSize: 15 }}>
+            search
+          </span>
+          <input
+            ref={searchInputRef}
+            id={searchInputId}
+            autoFocus={autoFocus}
+            value={query}
+            type="text"
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") clearSearch();
+            }}
+            placeholder="Search"
+            aria-label="Search query"
+            className="min-w-0 flex-1 bg-transparent py-1.5 pl-1.5 pr-1 text-[12px] text-(--text) outline-none placeholder:text-(--overlay0)"
+          />
+          <div className="flex shrink-0 items-center gap-0.5 pr-1.5">
+            <ToggleButton icon="match_case" label="Match Case" active={matchCase} onClick={() => setMatchCase((v) => !v)} />
+            <ToggleButton icon="format_letter_spacing" label="Match Whole Word" active={wholeWord} onClick={() => setWholeWord((v) => !v)} />
+            <ToggleButton icon="regular_expression" label="Use Regular Expression" active={useRegex} onClick={() => setUseRegex((v) => !v)} />
+          </div>
         </div>
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            submitSearch();
-          }}
+
+        {/* Replace row */}
+        <div className="relative flex items-center rounded border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
+          <span className="material-symbols-outlined ml-2 shrink-0 text-(--overlay1)" style={{ fontSize: 15 }}>
+            find_replace
+          </span>
+          <input
+            value={replaceQuery}
+            type="text"
+            onChange={(e) => setReplaceQuery(e.target.value)}
+            placeholder="Replace"
+            aria-label="Replace query"
+            className="min-w-0 flex-1 bg-transparent py-1.5 pl-1.5 pr-1 text-[12px] text-(--text) outline-none placeholder:text-(--overlay0)"
+          />
+        </div>
+
+        {/* Results count + clear */}
+        <div className="mt-2 flex items-center justify-between">
+          <span className="text-[11px] text-(--overlay1)">
+            {lastSubmittedQuery.length > 0
+              ? `${flatResultCount} result${flatResultCount === 1 ? "" : "s"} in ${results.length} file${results.length === 1 ? "" : "s"}`
+              : ""}
+          </span>
+          <div className="flex items-center gap-1.5">
+            {query.length > 0 && onReplaceAll && (
+              <button
+                type="button"
+                aria-label="Replace All"
+                onClick={() => onReplaceAll(query, replaceQuery)}
+                className="rounded border border-(--surface1) bg-(--surface0) px-2 py-0.5 text-[10px] text-(--subtext1) transition-colors duration-100 hover:border-(--border-active) hover:text-(--text)"
+              >
+                Replace All
+              </button>
+            )}
+            {lastSubmittedQuery.length > 0 && (
+              <button
+                type="button"
+                onClick={clearSearch}
+                className="text-[11px] text-(--overlay1) hover:text-(--subtext1) transition-colors duration-100"
+              >
+                Clear
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Files filter toggle */}
+        <button
+          type="button"
+          onClick={() => setShowFilesFilter((v) => !v)}
+          className="mt-1.5 flex w-full items-center gap-1 text-[10px] text-(--overlay1) hover:text-(--subtext1) transition-colors duration-100"
         >
-          <div className="relative min-w-0 flex-1">
-            <svg className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-[var(--overlay1)]" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
+            {showFilesFilter ? "keyboard_arrow_down" : "chevron_right"}
+          </span>
+          <span className="uppercase tracking-wider">Files to include / exclude</span>
+        </button>
+
+        {showFilesFilter && (
+          <div className="mt-1.5 space-y-1">
             <input
-              id={inputId}
-              autoFocus={autoFocus}
-              value={query}
-              type="search"
-              aria-describedby={`${inputId}-hint`}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search workspace"
-              className="w-full rounded border border-[var(--surface1)] bg-[var(--crust)] py-1.5 pl-8 pr-3 text-[13px] text-[var(--text)] outline-none placeholder:text-[var(--overlay0)] transition-colors focus:border-[var(--blue)] focus:ring-1 focus:ring-[var(--blue)]"
+              value={filesInclude}
+              onChange={(e) => setFilesInclude(e.target.value)}
+              placeholder="e.g. *.go, src/**"
+              aria-label="Files to include"
+              className="w-full rounded border border-(--surface1) bg-(--crust) px-2 py-1 text-[11px] text-(--text) outline-none placeholder:text-(--overlay0) focus:border-(--border-active)"
+            />
+            <input
+              value={filesExclude}
+              onChange={(e) => setFilesExclude(e.target.value)}
+              placeholder="e.g. **/vendor/**, *.test.go"
+              aria-label="Files to exclude"
+              className="w-full rounded border border-(--surface1) bg-(--crust) px-2 py-1 text-[11px] text-(--text) outline-none placeholder:text-(--overlay0) focus:border-(--border-active)"
             />
           </div>
-          <button
-            type="submit"
-            className="rounded border border-[var(--surface1)] px-3 text-[12px] font-semibold text-[var(--subtext1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] disabled:cursor-not-allowed disabled:opacity-50"
-            disabled={query.trim().length === 0 || loading}
-          >
-            Search
-          </button>
-          {lastSubmittedQuery.length > 0 && (
-            <button
-              type="button"
-              className="rounded border border-[var(--surface1)] px-2.5 text-[12px] text-[var(--overlay1)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-              onClick={clearSearch}
-            >
-              Clear
-            </button>
-          )}
-        </form>
-        <div
-          id={`${inputId}-hint`}
-          className="mt-2 flex items-center justify-between text-[11px] text-[var(--overlay1)]"
-        >
-          <span>{flatResultCount} match{flatResultCount === 1 ? "" : "es"}</span>
-          {query.length > 0 && <span className="font-code opacity-70">Searching as you type</span>}
-        </div>
+        )}
       </div>
-      <div className="flex-1 overflow-auto p-2" role="region" aria-label="Workspace search results">
+
+      {/* Results */}
+      <div className="flex-1 overflow-auto" role="region" aria-label="Workspace search results">
         {loading && (
-          <p className="px-2 py-1.5 text-[13px] text-[var(--overlay1)]">Searching...</p>
+          <p className="px-3 py-2 text-[12px] text-(--overlay1)">Searching…</p>
         )}
         {!loading && results.length === 0 && (
-          <div className="px-2 py-1.5 text-[13px] text-[var(--overlay0)] text-pretty">
+          <p className="px-3 py-4 text-[12px] text-(--overlay0) text-pretty">
             {lastSubmittedQuery.length > 0
-              ? `No matches for "${lastSubmittedQuery}". Try a broader term or search another file name.`
+              ? `No results for "${lastSubmittedQuery}".`
               : "Type a term to search across the workspace."}
-          </div>
+          </p>
         )}
-        <ul className="space-y-2">
-          {results.map((file) => (
-            <li key={file.relativePath}>
-              <p className="px-2 py-1.5 text-[12px] font-semibold text-[var(--subtext1)]">
-                {file.relativePath}
-              </p>
-              <ul className="space-y-0.5" aria-label={`Matches in ${file.relativePath}`}>
-                {file.matches.map((match) => {
-                  return (
-                    <li key={`${file.relativePath}:${match.line}:${match.preview}`}>
-                      <button
-                        type="button"
-                        className="w-full rounded border border-transparent px-2.5 py-1.5 text-left text-[13px] text-[var(--subtext0)] transition-colors duration-75 hover:bg-[var(--surface0)] hover:text-[var(--subtext1)]"
-                        onClick={() => onOpenResult(file.relativePath, match.line)}
-                      >
-                        <span className="mr-2 inline-block min-w-[28px] text-[11px] font-mono text-[var(--overlay1)]">
-                          {match.line}
-                        </span>
-                        <span className="font-code text-[12px] opacity-90">{match.preview}</span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          ))}
-        </ul>
+
+        {results.length > 0 && (
+          <ul>
+            {results.map((file) => {
+              const isCollapsed = collapsedFiles.has(file.relativePath);
+              return (
+                <li key={file.relativePath} className="border-b border-(--border-subtle) last:border-b-0">
+                  {/* File header */}
+                  <button
+                    type="button"
+                    onClick={() => toggleFileCollapse(file.relativePath)}
+                    className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left hover:bg-[rgba(255,255,255,0.03)] transition-colors duration-75"
+                  >
+                    <span className="material-symbols-outlined shrink-0 text-(--overlay1)" style={{ fontSize: 14 }}>
+                      {isCollapsed ? "chevron_right" : "keyboard_arrow_down"}
+                    </span>
+                    <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-(--subtext1)">
+                      {file.relativePath}
+                    </span>
+                    <span className="shrink-0 rounded bg-(--surface0) px-1 py-0.5 text-[9px] font-semibold text-(--overlay1)">
+                      {file.matches.length}
+                    </span>
+                  </button>
+
+                  {/* Match rows */}
+                  {!isCollapsed && (
+                    <ul aria-label={`Matches in ${file.relativePath}`}>
+                      {file.matches.map((match) => (
+                        <li key={`${file.relativePath}:${match.line}:${match.preview}`}>
+                          <div className="group flex w-full items-start gap-2 px-3 py-1 transition-colors duration-75 hover:bg-(--bg-hover)">
+                            <button
+                              type="button"
+                              className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                              onClick={() => onOpenResult(file.relativePath, match.line)}
+                            >
+                              <span className="mt-0.5 shrink-0 min-w-7 text-right font-code text-[10px] text-(--overlay1)">
+                                {match.line}
+                              </span>
+                              <span className="min-w-0 flex-1 truncate font-code text-[11px] text-(--subtext0)">
+                                <HighlightedPreview
+                                  preview={match.preview}
+                                  query={query}
+                                  matchCase={matchCase}
+                                />
+                              </span>
+                            </button>
+                            {onReplaceMatch && replaceQuery && (
+                              <button
+                                type="button"
+                                aria-label={`Replace match in ${file.relativePath} line ${match.line}`}
+                                onClick={() =>
+                                  onReplaceMatch(
+                                    file.relativePath,
+                                    match.line,
+                                    query,
+                                    replaceQuery
+                                  )
+                                }
+                                className="shrink-0 rounded border border-(--surface1) px-1.5 py-0.5 text-[9px] text-(--overlay1) opacity-0 transition-opacity duration-75 group-hover:opacity-100 hover:border-(--border-active) hover:text-(--text)"
+                              >
+                                Replace
+                              </button>
+                            )}
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </div>
     </div>
   );
