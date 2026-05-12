@@ -115,4 +115,15 @@ describe("useWorkspaceSearchState — replace", () => {
     expect(readWorkspaceFileMock).not.toHaveBeenCalled();
     expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
   });
+
+  it("replaceMatch re-runs the search to refresh results after writing", async () => {
+    const { result } = renderHook(() => useWorkspaceSearchState("C:/workspace"));
+
+    await act(async () => {
+      await result.current.replaceMatch("main.go", 2, "foo", "baz");
+    });
+
+    // After writing, search should be re-run with the same searchText
+    expect(searchWorkspaceTextMock).toHaveBeenCalledWith("C:/workspace", "foo");
+  });
 });
