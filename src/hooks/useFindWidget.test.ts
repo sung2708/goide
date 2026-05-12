@@ -172,4 +172,15 @@ describe("useFindWidget", () => {
     act(() => result.current.setReplaceText("bar"));
     expect(result.current.replaceText).toBe("bar");
   });
+
+  it("handleReplace triggers a re-scan rather than speculative counter update", async () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    act(() => result.current.open());
+    const { replaceNext } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleReplace());
+    expect(replaceNext).toHaveBeenCalledWith(viewRef.current);
+    // After replace, the scan re-runs — the effect dispatches setSearchQuery
+    expect(viewRef.current.dispatch).toHaveBeenCalled();
+  });
 });

@@ -44,6 +44,7 @@ export function useFindWidget(
   const [matchInfo, setMatchInfo] = useState<{ current: number; total: number }>(
     { current: 0, total: 0 }
   );
+  const [scanKey, setScanKey] = useState(0);
   const queryInputRef = useRef<HTMLInputElement | null>(null);
   const matchIndexRef = useRef(0);
 
@@ -94,7 +95,7 @@ export function useFindWidget(
   // convention and including them would cause infinite re-render loops when
   // the ref container is recreated each render (e.g. in tests).
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, replaceText, matchCase, wholeWord, useRegex, isOpen]);
+  }, [query, replaceText, matchCase, wholeWord, useRegex, isOpen, scanKey]);
 
   const open = useCallback(() => {
     const view = viewRef.current;
@@ -153,24 +154,14 @@ export function useFindWidget(
     const view = viewRef.current;
     if (!view) return;
     cmReplaceNext(view);
-    setMatchInfo((prev) => {
-      const newTotal = Math.max(0, prev.total - 1);
-      if (newTotal === 0) {
-        matchIndexRef.current = 0;
-        return { current: 0, total: 0 };
-      }
-      const next = matchIndexRef.current % newTotal;
-      matchIndexRef.current = next;
-      return { current: next + 1, total: newTotal };
-    });
+    setScanKey((k) => k + 1);
   }, [viewRef]);
 
   const handleReplaceAll = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
     cmReplaceAll(view);
-    matchIndexRef.current = 0;
-    setMatchInfo({ current: 0, total: 0 });
+    setScanKey((k) => k + 1);
   }, [viewRef]);
 
   return {
