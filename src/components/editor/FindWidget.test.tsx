@@ -121,4 +121,48 @@ describe("FindWidget", () => {
     expect(screen.getByRole("button", { name: /previous match/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /next match/i })).toBeInTheDocument();
   });
+
+  it("whole-word toggle button reflects active state via aria-pressed", () => {
+    const { rerender } = render(<FindWidget {...makeProps({ wholeWord: false })} />);
+    expect(screen.getByRole("button", { name: /match whole word/i })).toHaveAttribute("aria-pressed", "false");
+    rerender(<FindWidget {...makeProps({ wholeWord: true })} />);
+    expect(screen.getByRole("button", { name: /match whole word/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("calls onToggleWholeWord when whole-word button clicked", async () => {
+    const onToggleWholeWord = vi.fn();
+    const user = userEvent.setup();
+    render(<FindWidget {...makeProps({ onToggleWholeWord })} />);
+    await user.click(screen.getByRole("button", { name: /match whole word/i }));
+    expect(onToggleWholeWord).toHaveBeenCalledOnce();
+  });
+
+  it("regex toggle button reflects active state via aria-pressed", () => {
+    const { rerender } = render(<FindWidget {...makeProps({ useRegex: false })} />);
+    expect(screen.getByRole("button", { name: /use regular expression/i })).toHaveAttribute("aria-pressed", "false");
+    rerender(<FindWidget {...makeProps({ useRegex: true })} />);
+    expect(screen.getByRole("button", { name: /use regular expression/i })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("calls onToggleRegex when regex button clicked", async () => {
+    const onToggleRegex = vi.fn();
+    const user = userEvent.setup();
+    render(<FindWidget {...makeProps({ onToggleRegex })} />);
+    await user.click(screen.getByRole("button", { name: /use regular expression/i }));
+    expect(onToggleRegex).toHaveBeenCalledOnce();
+  });
+
+  it("queryInputRef is attached to the find input", () => {
+    const ref = createRef<HTMLInputElement>();
+    render(<FindWidget {...makeProps({ queryInputRef: ref })} />);
+    expect(ref.current).toBe(screen.getByPlaceholderText(/find/i));
+  });
+
+  it("calls onReplaceTextChange when replace input value changes", async () => {
+    const onReplaceTextChange = vi.fn();
+    const user = userEvent.setup();
+    render(<FindWidget {...makeProps({ onReplaceTextChange })} />);
+    await user.type(screen.getByPlaceholderText(/replace/i), "a");
+    expect(onReplaceTextChange).toHaveBeenCalledWith("a");
+  });
 });
