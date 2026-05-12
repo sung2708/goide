@@ -255,12 +255,15 @@ function EditorShell() {
   });
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityBarTab>("search");
+  const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
   const {
     searchLoading,
     workspaceSearchResults,
     resetWorkspaceSearch,
     handleWorkspaceSearch,
+    replaceMatch: handleReplaceMatch,
+    replaceAllMatches: handleReplaceAllMatches,
   } = useWorkspaceSearchState(workspacePath);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const [explorerRevision, setExplorerRevision] = useState(0);
@@ -272,6 +275,7 @@ function EditorShell() {
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
   const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
+  const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
   const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
@@ -337,6 +341,7 @@ function EditorShell() {
   useEffect(() => {
     setJumpRequest(null);
     setDocumentSymbols([]);
+    setIsSymbolsPending(activeFilePath !== null && activeFilePath !== undefined && activeFilePath.endsWith(".go"));
     setCursorOffset(null);
   }, [workspacePath, activeFilePath]);
 
@@ -381,6 +386,23 @@ function EditorShell() {
       if (autoSaveDebounceRef.current !== null) {
         clearTimeout(autoSaveDebounceRef.current);
       }
+    };
+  }, []);
+
+  // Global keyboard shortcut: Ctrl+Shift+F (or Cmd+Shift+F on Mac) opens search
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      const isMac = navigator.platform.startsWith("Mac");
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        setActiveTab("search");
+        setSearchFocusTrigger((n) => n + 1);
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
     };
   }, []);
 
@@ -1783,6 +1805,13 @@ function EditorShell() {
                     });
                   }}
                   autoFocus
+                  focusTrigger={searchFocusTrigger}
+                  onReplaceMatch={(file, line, searchText, replacement) =>
+                    void handleReplaceMatch(file, line, searchText, replacement)
+                  }
+                  onReplaceAll={(searchText, replacement) =>
+                    void handleReplaceAllMatches(searchText, replacement)
+                  }
                 />
               )}
               {activeTab === "git" && (
@@ -1912,21 +1941,13 @@ function EditorShell() {
           secondary={
             <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
           <ResizableSplit
-            orientation={workspaceLayout.dockMode === "bottom" ? "vertical" : "horizontal"}
-            className={
-              workspaceLayout.dockMode === "bottom"
-                ? "h-full flex-1 flex-col-reverse"
-                : "flex-1 flex-row-reverse"
-            }
+            orientation="vertical"
+            className="h-full flex-1 flex-col-reverse"
             size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
             resizeAnchor="end"
-            defaultSize={
-              workspaceLayout.dockMode === "bottom"
-                ? DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom
-                : DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalRight
-            }
+            defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom}
             minSize={isBottomPanelOpen ? 240 : 0}
-            maxSize={workspaceLayout.dockMode === "bottom" ? 520 : 780}
+            maxSize={520}
             collapsed={!isBottomPanelOpen}
             onResize={handleTerminalPaneResize}
             primary={
@@ -1942,8 +1963,6 @@ function EditorShell() {
                       logEntries={runOutput}
                       surfaceKey={surfaceKey}
                       workspacePath={workspacePath}
-                      dockMode={workspaceLayout.dockMode}
-                      onDockModeChange={workspaceLayout.setDockMode}
                       onClose={() => setIsBottomPanelOpen(false)}
                       isRunning={runStatus === "running"}
                       onClear={handleClearOutput}
@@ -2092,35 +2111,31 @@ function EditorShell() {
                 {workspacePath && activeFilePath && (
                   <div
                     data-testid="editor-active-file-region"
-                    className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden"
+                    className="flex min-h-0 flex-1 overflow-hidden"
                   >
-                    <div className="flex items-center justify-between text-xs text-[var(--overlay2)]">
-                      <span>Active File</span>
-                      {isReading && <span>Loading.</span>}
-                    </div>
                     {fileError && (
-                      <div className="rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
+                      <div className="absolute left-0 right-0 top-0 z-10 mx-3 mt-2 rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 overflow-hidden rounded border border-[rgba(113,125,144,0.25)] bg-[var(--crust)]">
+                    <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--crust)]">
                       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                      <div className="border-b border-[rgba(113,125,144,0.2)] px-3 py-2">
-                        <div className="text-xs text-[var(--subtext1)]">{activeFilePath}</div>
+                      <div className="flex items-center gap-2 border-b border-[rgba(113,125,144,0.2)] px-3 py-1.5">
+                        <span className="min-w-0 truncate text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
+                        {isReading && <span className="shrink-0 text-[10px] text-[var(--overlay0)]">Loading…</span>}
+                        <span className="shrink-0 text-[rgba(113,125,144,0.4)]">/</span>
                         <div
-                          className="mt-1 flex min-h-5 items-center gap-2 text-[11px] text-[var(--overlay1)]"
+                          className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--overlay1)]"
                           data-testid="editor-scope-breadcrumb"
                         >
-                          <span>Scope</span>
-                          <span className="text-[rgba(113,125,144,0.5)]">/</span>
                           {activeDocumentSymbol ? (
                             <button
                               type="button"
-                              className="flex min-w-0 items-center gap-2 rounded px-1.5 py-1 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                              className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
                               onClick={() => requestJump(activeDocumentSymbol.line)}
                               title={`Jump to ${activeDocumentSymbol.name} on line ${activeDocumentSymbol.line}.`}
                             >
-                              <span className="rounded bg-[var(--surface0)] px-1.5 py-0.5 uppercase tracking-[0.04em]">
+                              <span className="rounded bg-[var(--surface0)] px-1 py-0.5 text-[9px] uppercase tracking-[0.04em]">
                                 {activeDocumentSymbol.kind}
                               </span>
                               <span className="truncate text-[var(--subtext1)]">
@@ -2131,7 +2146,7 @@ function EditorShell() {
                               </span>
                             </button>
                           ) : (
-                            <span>No active symbol</span>
+                            <span className="text-[var(--overlay0)]">No active symbol</span>
                           )}
                         </div>
                       </div>
@@ -2193,7 +2208,10 @@ function EditorShell() {
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
-                            onDocumentSymbolsChange={setDocumentSymbols}
+                            onDocumentSymbolsChange={(symbols) => {
+                              setDocumentSymbols(symbols);
+                              setIsSymbolsPending(false);
+                            }}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -2209,6 +2227,7 @@ function EditorShell() {
                       <DocumentOutline
                         activeItemFrom={activeDocumentSymbol?.from ?? null}
                         items={documentSymbols}
+                        isPending={isSymbolsPending}
                         onJumpToLine={(line) => requestJump(line)}
                       />
                     </div>
