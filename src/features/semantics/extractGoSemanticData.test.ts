@@ -22,6 +22,20 @@ function node(
 }
 
 describe("extractGoSemanticData", () => {
+  it("returns selectionRanges sorted ascending by size", () => {
+    const source = "x".repeat(200);
+    const small = node("identifier", 10, 20);
+    const medium = node("expression", 0, 100, { namedChildren: [small] });
+    const large = node("statement", 0, 200, { namedChildren: [medium] });
+    const root = node("source_file", 0, 200, { namedChildren: [large] });
+
+    const { selectionRanges } = extractGoSemanticData(root, source);
+
+    const sizes = selectionRanges.map((r) => r.to - r.from);
+    expect(sizes).toEqual([...sizes].sort((a, b) => a - b));
+    expect(sizes.length).toBeGreaterThan(0);
+  });
+
   it("extracts Go symbols and fold ranges from a syntax tree", () => {
     const source = `package main
 
