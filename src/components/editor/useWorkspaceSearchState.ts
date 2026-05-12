@@ -87,10 +87,12 @@ export function useWorkspaceSearchState(
       const idx = line - 1;
       if (idx < 0 || idx >= lines.length) return;
 
-      const updated = lines[idx].replace(searchText, replacement);
-      if (updated === lines[idx]) return;
-
-      lines[idx] = updated;
+      const before = lines[idx].indexOf(searchText);
+      if (before === -1) return;
+      lines[idx] =
+        lines[idx].slice(0, before) +
+        replacement +
+        lines[idx].slice(before + searchText.length);
       await writeWorkspaceFile(workspacePath, file, lines.join("\n"));
     },
     [workspacePath]
