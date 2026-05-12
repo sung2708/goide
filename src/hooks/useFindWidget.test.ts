@@ -40,6 +40,7 @@ describe("useFindWidget", () => {
     const { result } = renderHook(() => useFindWidget(makeViewRef()));
     expect(result.current.isOpen).toBe(false);
     expect(result.current.query).toBe("");
+    expect(result.current.replaceText).toBe("");
     expect(result.current.matchCase).toBe(false);
     expect(result.current.wholeWord).toBe(false);
     expect(result.current.useRegex).toBe(false);
@@ -104,5 +105,43 @@ describe("useFindWidget", () => {
     const { findNext } = vi.mocked(await import("@codemirror/search"));
     act(() => result.current.handleFindNext());
     expect(findNext).toHaveBeenCalled();
+  });
+
+  it("handleFindPrev calls findPrevious from @codemirror/search", async () => {
+    const { result } = renderHook(() => useFindWidget(makeViewRef()));
+    act(() => result.current.open());
+    const { findPrevious } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleFindPrev());
+    expect(findPrevious).toHaveBeenCalled();
+  });
+
+  it("handleReplace calls replaceNext from @codemirror/search", async () => {
+    const { result } = renderHook(() => useFindWidget(makeViewRef()));
+    act(() => result.current.open());
+    const { replaceNext } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleReplace());
+    expect(replaceNext).toHaveBeenCalled();
+  });
+
+  it("handleReplaceAll calls replaceAll from @codemirror/search", async () => {
+    const { result } = renderHook(() => useFindWidget(makeViewRef()));
+    act(() => result.current.open());
+    const { replaceAll } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleReplaceAll());
+    expect(replaceAll).toHaveBeenCalled();
+  });
+
+  it("dispatches setSearchQuery when query changes while open", () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    act(() => result.current.open());
+    act(() => result.current.setQuery("hello"));
+    expect(viewRef.current.dispatch).toHaveBeenCalled();
+  });
+
+  it("setReplaceText updates replaceText state", () => {
+    const { result } = renderHook(() => useFindWidget(makeViewRef()));
+    act(() => result.current.setReplaceText("bar"));
+    expect(result.current.replaceText).toBe("bar");
   });
 });
