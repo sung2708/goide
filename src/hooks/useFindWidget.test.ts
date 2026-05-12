@@ -1,5 +1,6 @@
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { MutableRefObject } from "react";
 
 vi.mock("@codemirror/view", () => ({
   EditorView: vi.fn(),
@@ -99,44 +100,71 @@ describe("useFindWidget", () => {
     expect(result.current.query).toBe("");
   });
 
-  it("handleFindNext calls findNext from @codemirror/search", async () => {
+  it("open() focuses queryInputRef on the next tick", () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() => useFindWidget(makeViewRef()));
-    act(() => result.current.open());
-    const { findNext } = vi.mocked(await import("@codemirror/search"));
-    act(() => result.current.handleFindNext());
-    expect(findNext).toHaveBeenCalled();
+    const focusMock = vi.fn();
+    // Assign a mock focus to the queryInputRef
+    act(() => {
+      (result.current.queryInputRef as MutableRefObject<HTMLInputElement | null>).current = {
+        focus: focusMock,
+      } as unknown as HTMLInputElement;
+      result.current.open();
+    });
+    expect(focusMock).not.toHaveBeenCalled();
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(focusMock).toHaveBeenCalled();
+    vi.useRealTimers();
   });
 
-  it("handleFindPrev calls findPrevious from @codemirror/search", async () => {
-    const { result } = renderHook(() => useFindWidget(makeViewRef()));
-    act(() => result.current.open());
-    const { findPrevious } = vi.mocked(await import("@codemirror/search"));
-    act(() => result.current.handleFindPrev());
-    expect(findPrevious).toHaveBeenCalled();
-  });
-
-  it("handleReplace calls replaceNext from @codemirror/search", async () => {
-    const { result } = renderHook(() => useFindWidget(makeViewRef()));
-    act(() => result.current.open());
-    const { replaceNext } = vi.mocked(await import("@codemirror/search"));
-    act(() => result.current.handleReplace());
-    expect(replaceNext).toHaveBeenCalled();
-  });
-
-  it("handleReplaceAll calls replaceAll from @codemirror/search", async () => {
-    const { result } = renderHook(() => useFindWidget(makeViewRef()));
-    act(() => result.current.open());
-    const { replaceAll } = vi.mocked(await import("@codemirror/search"));
-    act(() => result.current.handleReplaceAll());
-    expect(replaceAll).toHaveBeenCalled();
-  });
-
-  it("dispatches setSearchQuery when query changes while open", () => {
+  it("handleFindNext calls findNext with the editor view", async () => {
     const viewRef = makeViewRef();
     const { result } = renderHook(() => useFindWidget(viewRef));
     act(() => result.current.open());
+    const { findNext } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleFindNext());
+    expect(findNext).toHaveBeenCalledWith(viewRef.current);
+  });
+
+  it("handleFindPrev calls findPrevious with the editor view", async () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    act(() => result.current.open());
+    const { findPrevious } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleFindPrev());
+    expect(findPrevious).toHaveBeenCalledWith(viewRef.current);
+  });
+
+  it("handleReplace calls replaceNext with the editor view", async () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    act(() => result.current.open());
+    const { replaceNext } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleReplace());
+    expect(replaceNext).toHaveBeenCalledWith(viewRef.current);
+  });
+
+  it("handleReplaceAll calls replaceAll with the editor view", async () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    act(() => result.current.open());
+    const { replaceAll } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.handleReplaceAll());
+    expect(replaceAll).toHaveBeenCalledWith(viewRef.current);
+  });
+
+  it("dispatches setSearchQuery with correct payload when query changes", async () => {
+    const viewRef = makeViewRef();
+    const { result } = renderHook(() => useFindWidget(viewRef));
+    const { setSearchQuery } = vi.mocked(await import("@codemirror/search"));
+    act(() => result.current.open());
     act(() => result.current.setQuery("hello"));
-    expect(viewRef.current.dispatch).toHaveBeenCalled();
+    expect(setSearchQuery.of).toHaveBeenCalled();
+    expect(viewRef.current.dispatch).toHaveBeenCalledWith(
+      expect.objectContaining({ effects: expect.anything() })
+    );
   });
 
   it("setReplaceText updates replaceText state", () => {
