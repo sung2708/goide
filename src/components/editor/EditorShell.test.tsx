@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -30,9 +30,9 @@ describe("EditorShell panels", () => {
   it("shows search panel by default and hides summary/runtime/git by default", () => {
     render(<EditorShell />);
 
-    expect(screen.getByPlaceholderText(/search workspace/i)).toBeVisible();
+    expect(screen.getByPlaceholderText(/^search$/i)).toBeVisible();
     expect(screen.queryByTestId("summary-panel")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /git/i })).toHaveAttribute(
+    expect(screen.getByRole("button", { name: /source control/i })).toHaveAttribute(
       "aria-pressed",
       "false"
     );
@@ -84,6 +84,20 @@ describe("EditorShell panels", () => {
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
     expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
+  });
+
+  it("pressing Ctrl+Shift+F switches to search tab and focuses the search input", async () => {
+    render(<EditorShell />);
+
+    const searchInput = screen.getByPlaceholderText(/^search$/i);
+
+    // Blur the input so focus state is deterministic before testing the shortcut
+    searchInput.blur();
+    expect(document.activeElement).not.toBe(searchInput);
+
+    fireEvent.keyDown(document.body, { key: "F", shiftKey: true, ctrlKey: true });
+
+    expect(document.activeElement).toBe(searchInput);
   });
 
   it("opens and hides the terminal panel without using an overflow menu", async () => {
