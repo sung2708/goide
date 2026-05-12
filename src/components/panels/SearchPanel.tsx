@@ -200,7 +200,7 @@ function SearchPanel({
               : ""}
           </span>
           <div className="flex items-center gap-1.5">
-            {query.length > 0 && onReplaceAll && (
+            {results.length > 0 && onReplaceAll && (
               <button
                 type="button"
                 aria-label="Replace All"

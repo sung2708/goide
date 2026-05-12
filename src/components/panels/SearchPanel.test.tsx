@@ -102,6 +102,22 @@ describe("SearchPanel", () => {
     expect(onReplaceAll).toHaveBeenCalledWith("mu.Lock", "mu.Unlock");
   });
 
+  it("does not show Replace All button when there are no results", async () => {
+    const user = userEvent.setup();
+    render(
+      <SearchPanel
+        results={[]}
+        loading={false}
+        onSearch={vi.fn()}
+        onOpenResult={vi.fn()}
+        onReplaceAll={vi.fn()}
+      />
+    );
+
+    await user.type(screen.getByPlaceholderText(/^search$/i), "mu.Lock");
+    expect(screen.queryByRole("button", { name: /replace all/i })).toBeNull();
+  });
+
   it("focuses the search input when focusTrigger increments", async () => {
     const { rerender } = render(
       <SearchPanel
