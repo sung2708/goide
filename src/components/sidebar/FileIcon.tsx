@@ -1,6 +1,4 @@
 import fileIcon from "../../assets/icons/catppuccin/frappe/_file.svg";
-import folderIcon from "../../assets/icons/catppuccin/frappe/_folder.svg";
-import folderOpenIcon from "../../assets/icons/catppuccin/frappe/_folder_open.svg";
 import configIcon from "../../assets/icons/catppuccin/frappe/config.svg";
 import cppIcon from "../../assets/icons/catppuccin/frappe/cpp.svg";
 import dockerIcon from "../../assets/icons/catppuccin/frappe/docker.svg";
@@ -17,6 +15,8 @@ import rustIcon from "../../assets/icons/catppuccin/frappe/rust.svg";
 import tomlIcon from "../../assets/icons/catppuccin/frappe/toml.svg";
 import typescriptIcon from "../../assets/icons/catppuccin/frappe/typescript.svg";
 import yamlIcon from "../../assets/icons/catppuccin/frappe/yaml.svg";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faFolder, faFolderOpen } from "@fortawesome/free-solid-svg-icons";
 
 type IconProps = {
   className?: string;
@@ -142,11 +142,12 @@ export const FolderIconComponent = ({
   size?: number;
 }) => {
   return (
-    <IconImage
-      src={isOpen ? folderOpenIcon : folderIcon}
-      alt={isOpen ? "folder open" : "folder"}
+    <span
       className={className}
-      size={size}
-    />
+      aria-hidden="true"
+      style={{ width: size, height: size, display: "inline-flex", alignItems: "center", justifyContent: "center" }}
+    >
+      <FontAwesomeIcon icon={isOpen ? faFolderOpen : faFolder} style={{ fontSize: size * 0.9 }} />
+    </span>
   );
 };

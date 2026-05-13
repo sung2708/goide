@@ -1,4 +1,11 @@
 import type { RefObject } from "react";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faAngleDown,
+  faAngleUp,
+  faArrowsTurnToDots,
+  faMagnifyingGlass,
+} from "@fortawesome/free-solid-svg-icons";
 
 export type FindWidgetProps = {
   query: string;
@@ -21,12 +28,12 @@ export type FindWidgetProps = {
 };
 
 function IconBtn({
-  icon,
+  text,
   label,
   active = false,
   onClick,
 }: {
-  icon: string;
+  text: string;
   label: string;
   active?: boolean;
   onClick: () => void;
@@ -44,9 +51,7 @@ function IconBtn({
           : "text-(--overlay1) hover:bg-[rgba(255,255,255,0.06)] hover:text-(--subtext1)"
       }`}
     >
-      <span className="material-symbols-outlined" style={{ fontSize: 13 }}>
-        {icon}
-      </span>
+      <span className="text-[10px] font-semibold">{text}</span>
     </button>
   );
 }
@@ -56,7 +61,7 @@ function NavBtn({
   label,
   onClick,
 }: {
-  icon: string;
+  icon: typeof faAngleUp;
   label: string;
   onClick: () => void;
 }) {
@@ -68,9 +73,7 @@ function NavBtn({
       onClick={onClick}
       className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-(--overlay1) transition-colors duration-100 hover:bg-[rgba(255,255,255,0.06)] hover:text-(--subtext1)"
     >
-      <span className="material-symbols-outlined" style={{ fontSize: 15 }}>
-        {icon}
-      </span>
+      <FontAwesomeIcon icon={icon} className="text-[13px]" />
     </button>
   );
 }
@@ -116,15 +119,12 @@ export default function FindWidget({
   return (
     <div
       data-testid="find-widget"
-      className="absolute right-3 top-2 z-50 w-[420px] overflow-hidden rounded border border-(--surface1) bg-(--mantle) shadow-lg"
+      className="absolute right-3 top-2 z-50 w-[min(420px,calc(100%-1.5rem))] overflow-hidden rounded-md border border-(--border-muted) bg-(--mantle) shadow-(--panel-shadow-soft)"
     >
       {/* Find row */}
       <div className="flex items-center gap-1 border-b border-(--surface1) px-2 py-1">
-        <span
-          className="material-symbols-outlined shrink-0 text-(--overlay1)"
-          style={{ fontSize: 14 }}
-        >
-          search
+        <span className="shrink-0 text-(--overlay1)">
+          <FontAwesomeIcon icon={faMagnifyingGlass} className="text-[13px]" />
         </span>
 
         <input
@@ -148,21 +148,21 @@ export default function FindWidget({
               onClose();
             }
           }}
-          className="min-w-0 flex-1 bg-transparent text-[12px] text-(--text) outline-none placeholder:text-(--overlay0)"
+          className="min-w-0 flex-1 rounded bg-(--crust) px-1.5 py-0.5 text-[12px] text-(--text) outline-none placeholder:text-(--overlay0) focus:ring-1 focus:ring-(--border-active)"
         />
 
         <div className="flex shrink-0 items-center gap-0.5">
-          <IconBtn icon="match_case" label="Match Case" active={matchCase} onClick={onToggleMatchCase} />
-          <IconBtn icon="format_letter_spacing" label="Match Whole Word" active={wholeWord} onClick={onToggleWholeWord} />
-          <IconBtn icon="regular_expression" label="Use Regular Expression" active={useRegex} onClick={onToggleRegex} />
+          <IconBtn text="Aa" label="Match Case" active={matchCase} onClick={onToggleMatchCase} />
+          <IconBtn text="W" label="Match Whole Word" active={wholeWord} onClick={onToggleWholeWord} />
+          <IconBtn text=".*" label="Use Regular Expression" active={useRegex} onClick={onToggleRegex} />
         </div>
 
         <div className="mx-1 h-4 w-px shrink-0 bg-(--surface1)" />
 
         {renderCounter()}
 
-        <NavBtn icon="keyboard_arrow_up" label="Previous Match" onClick={onFindPrev} />
-        <NavBtn icon="keyboard_arrow_down" label="Next Match" onClick={onFindNext} />
+        <NavBtn icon={faAngleUp} label="Previous Match" onClick={onFindPrev} />
+        <NavBtn icon={faAngleDown} label="Next Match" onClick={onFindNext} />
 
         <div className="mx-1 h-4 w-px shrink-0 bg-(--surface1)" />
 
@@ -172,19 +172,14 @@ export default function FindWidget({
           onClick={onClose}
           className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-(--overlay1) transition-colors duration-100 hover:bg-[rgba(255,255,255,0.06)] hover:text-(--subtext1)"
         >
-          <span className="material-symbols-outlined" style={{ fontSize: 14 }}>
-            close
-          </span>
+          <span className="text-[13px] leading-none">x</span>
         </button>
       </div>
 
       {/* Replace row */}
       <div className="flex items-center gap-1 px-2 py-1">
-        <span
-          className="material-symbols-outlined shrink-0 text-(--overlay1)"
-          style={{ fontSize: 14 }}
-        >
-          find_replace
+        <span className="shrink-0 text-(--overlay1)">
+          <FontAwesomeIcon icon={faArrowsTurnToDots} className="text-[13px]" />
         </span>
 
         <input
@@ -199,7 +194,7 @@ export default function FindWidget({
               onClose();
             }
           }}
-          className="min-w-0 flex-1 bg-transparent text-[12px] text-(--text) outline-none placeholder:text-(--overlay0)"
+          className="min-w-0 flex-1 rounded bg-(--crust) px-1.5 py-0.5 text-[12px] text-(--text) outline-none placeholder:text-(--overlay0) focus:ring-1 focus:ring-(--border-active)"
         />
 
         <button

@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RefObject } from "react";
-import type { EditorView } from "@codemirror/view";
+import { EditorView } from "@codemirror/view";
 import {
-  findNext,
-  findPrevious,
-  replaceNext as cmReplaceNext,
-  replaceAll as cmReplaceAll,
   SearchQuery,
+  closeSearchPanel,
+  searchPanelOpen,
   setSearchQuery,
 } from "@codemirror/search";
 
@@ -20,6 +18,7 @@ export type FindWidgetHandlers = {
   matchInfo: { current: number; total: number };
   queryInputRef: RefObject<HTMLInputElement | null>;
   open: () => void;
+  dismiss: () => void;
   close: () => void;
   setQuery: (q: string) => void;
   setReplaceText: (t: string) => void;
@@ -47,6 +46,13 @@ export function useFindWidget(
   const [scanKey, setScanKey] = useState(0);
   const queryInputRef = useRef<HTMLInputElement | null>(null);
   const matchIndexRef = useRef(0);
+  const matchRangesRef = useRef<Array<{ from: number; to: number }>>([]);
+  const lastQueryConfigRef = useRef<{
+    query: string;
+    matchCase: boolean;
+    wholeWord: boolean;
+    useRegex: boolean;
+  } | null>(null);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -74,23 +80,48 @@ export function useFindWidget(
       return;
     }
 
-    const positions: number[] = [];
+    const matches: Array<{ from: number; to: number }> = [];
     const cursor = searchObj.getCursor(view.state);
     let r;
     while (!(r = cursor.next()).done) {
-      positions.push(r.value.from);
+      matches.push({ from: r.value.from, to: r.value.to });
     }
+    matchRangesRef.current = matches;
+
+    const previousQueryConfig = lastQueryConfigRef.current;
+    const queryConfigChanged =
+      !previousQueryConfig ||
+      previousQueryConfig.query !== query ||
+      previousQueryConfig.matchCase !== matchCase ||
+      previousQueryConfig.wholeWord !== wholeWord ||
+      previousQueryConfig.useRegex !== useRegex;
 
     const head = view.state.selection.main.head;
     let idx = 0;
-    for (let i = 0; i < positions.length; i++) {
-      if (positions[i] <= head) idx = i;
+    if (!queryConfigChanged) {
+      for (let i = 0; i < matches.length; i++) {
+        if (matches[i].from <= head) idx = i;
+      }
     }
-    matchIndexRef.current = positions.length > 0 ? idx : 0;
+
+    lastQueryConfigRef.current = {
+      query,
+      matchCase,
+      wholeWord,
+      useRegex,
+    };
+    matchIndexRef.current = matches.length > 0 ? idx : 0;
     setMatchInfo({
-      current: positions.length > 0 ? idx + 1 : 0,
-      total: positions.length,
+      current: matches.length > 0 ? idx + 1 : 0,
+      total: matches.length,
     });
+
+    if (matches.length > 0) {
+      const active = matches[matchIndexRef.current];
+      view.dispatch({
+        selection: { anchor: active.from, head: active.to },
+      });
+    }
   // viewRef is intentionally omitted from deps: RefObjects are stable by
   // convention and including them would cause infinite re-render loops when
   // the ref container is recreated each render (e.g. in tests).
@@ -117,6 +148,10 @@ export function useFindWidget(
     viewRef.current?.focus();
   }, [viewRef]);
 
+  const dismiss = useCallback(() => {
+    setIsOpen(false);
+  }, []);
+
   const setQuery = useCallback((q: string) => {
     matchIndexRef.current = 0;
     setQueryState(q);
@@ -129,11 +164,19 @@ export function useFindWidget(
   const handleFindNext = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
-    findNext(view);
+    if (searchPanelOpen(view.state)) {
+      closeSearchPanel(view);
+    }
+    if (matchRangesRef.current.length === 0) return;
+    const next = (matchIndexRef.current + 1) % matchRangesRef.current.length;
+    matchIndexRef.current = next;
+    const match = matchRangesRef.current[next];
+    view.dispatch({
+      selection: { anchor: match.from, head: match.to },
+      effects: EditorView.scrollIntoView(match.from, { y: "center" }),
+    });
     setMatchInfo((prev) => {
       if (prev.total === 0) return prev;
-      const next = (matchIndexRef.current + 1) % prev.total;
-      matchIndexRef.current = next;
       return { ...prev, current: next + 1 };
     });
   }, [viewRef]);
@@ -141,11 +184,21 @@ export function useFindWidget(
   const handleFindPrev = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
-    findPrevious(view);
+    if (searchPanelOpen(view.state)) {
+      closeSearchPanel(view);
+    }
+    if (matchRangesRef.current.length === 0) return;
+    const next =
+      (matchIndexRef.current - 1 + matchRangesRef.current.length) %
+      matchRangesRef.current.length;
+    matchIndexRef.current = next;
+    const match = matchRangesRef.current[next];
+    view.dispatch({
+      selection: { anchor: match.from, head: match.to },
+      effects: EditorView.scrollIntoView(match.from, { y: "center" }),
+    });
     setMatchInfo((prev) => {
       if (prev.total === 0) return prev;
-      const next = (matchIndexRef.current - 1 + prev.total) % prev.total;
-      matchIndexRef.current = next;
       return { ...prev, current: next + 1 };
     });
   }, [viewRef]);
@@ -153,16 +206,59 @@ export function useFindWidget(
   const handleReplace = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
-    cmReplaceNext(view);
+    if (searchPanelOpen(view.state)) {
+      closeSearchPanel(view);
+    }
+    if (matchRangesRef.current.length === 0) return;
+    const activeIndex = Math.min(
+      matchRangesRef.current.length - 1,
+      Math.max(0, matchIndexRef.current)
+    );
+    const activeMatch = matchRangesRef.current[activeIndex];
+    const currentText = view.state.doc.sliceString(activeMatch.from, activeMatch.to);
+    let replacement = replaceText;
+    if (useRegex && query) {
+      try {
+        const flags = matchCase ? "g" : "gi";
+        replacement = currentText.replace(new RegExp(query, flags), replaceText);
+      } catch {
+        replacement = replaceText;
+      }
+    }
+    view.dispatch({
+      changes: { from: activeMatch.from, to: activeMatch.to, insert: replacement },
+      selection: { anchor: activeMatch.from, head: activeMatch.from + replacement.length },
+    });
     setScanKey((k) => k + 1);
-  }, [viewRef]);
+  }, [matchCase, query, replaceText, useRegex, viewRef]);
 
   const handleReplaceAll = useCallback(() => {
     const view = viewRef.current;
     if (!view) return;
-    cmReplaceAll(view);
+    if (searchPanelOpen(view.state)) {
+      closeSearchPanel(view);
+    }
+    if (matchRangesRef.current.length === 0) return;
+
+    const changes = [...matchRangesRef.current]
+      .sort((a, b) => b.from - a.from)
+      .map((match) => {
+        const currentText = view.state.doc.sliceString(match.from, match.to);
+        let replacement = replaceText;
+        if (useRegex && query) {
+          try {
+            const flags = matchCase ? "g" : "gi";
+            replacement = currentText.replace(new RegExp(query, flags), replaceText);
+          } catch {
+            replacement = replaceText;
+          }
+        }
+        return { from: match.from, to: match.to, insert: replacement };
+      });
+
+    view.dispatch({ changes });
     setScanKey((k) => k + 1);
-  }, [viewRef]);
+  }, [matchCase, query, replaceText, useRegex, viewRef]);
 
   return {
     isOpen,
@@ -174,6 +270,7 @@ export function useFindWidget(
     matchInfo,
     queryInputRef,
     open,
+    dismiss,
     close,
     setQuery,
     setReplaceText: setReplaceTextState,

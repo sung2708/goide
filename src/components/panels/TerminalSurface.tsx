@@ -14,12 +14,13 @@ const DEFAULT_OPTIONS: TerminalCtorOptions = {
   fontSize: 13,
   lineHeight: 1.35,
   letterSpacing: 0,
-  fontFamily: '"Cascadia Mono", "Cascadia Code", "Fira Code", monospace',
+  fontFamily:
+    '"JetBrainsMono Nerd Font", "Cascadia Code PL", "Cascadia Mono", "Cascadia Code", "Fira Code", monospace',
   theme: {
-    background: "#11111b",
-    foreground: "#cdd6f4",
-    cursor: "#f5e0dc",
-    selectionBackground: "#45475a",
+    background: "#2e3440",
+    foreground: "#d8dee9",
+    cursor: "#88c0d0",
+    selectionBackground: "#3a4355",
   },
   cols: 120,
   rows: 40,

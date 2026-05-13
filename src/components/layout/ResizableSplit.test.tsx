@@ -5,6 +5,12 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import ResizableSplit from "./ResizableSplit";
 
+function flushAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    window.requestAnimationFrame(() => resolve());
+  });
+}
+
 function renderSplit(overrides: Partial<Parameters<typeof ResizableSplit>[0]> = {}) {
   const defaults = {
     orientation: "vertical" as const,
@@ -93,7 +99,7 @@ describe("ResizableSplit - pointer capture while dragging", () => {
     expect(onResize).not.toHaveBeenCalled();
   });
 
-  it("increases a right-docked primary pane when dragging the separator left", () => {
+  it("increases a right-docked primary pane when dragging the separator left", async () => {
     const onResize = vi.fn();
     renderSplit({
       orientation: "horizontal",
@@ -108,11 +114,13 @@ describe("ResizableSplit - pointer capture while dragging", () => {
     const hitZone = screen.getByTestId("separator-hit-zone");
     fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 500 });
     fireEvent.pointerMove(hitZone, { pointerId: 7, clientX: 460 });
+    await flushAnimationFrame();
+    fireEvent.pointerUp(hitZone, { pointerId: 7, clientX: 460 });
 
     expect(onResize).toHaveBeenCalledWith(360);
   });
 
-  it("increases a bottom-docked primary pane when dragging the separator up", () => {
+  it("increases a bottom-docked primary pane when dragging the separator up", async () => {
     const onResize = vi.fn();
     renderSplit({
       orientation: "vertical",
@@ -127,11 +135,13 @@ describe("ResizableSplit - pointer capture while dragging", () => {
     const hitZone = screen.getByTestId("separator-hit-zone");
     fireEvent.pointerDown(hitZone, { pointerId: 7, clientY: 500 });
     fireEvent.pointerMove(hitZone, { pointerId: 7, clientY: 460 });
+    await flushAnimationFrame();
+    fireEvent.pointerUp(hitZone, { pointerId: 7, clientY: 460 });
 
     expect(onResize).toHaveBeenCalledWith(360);
   });
 
-  it("continues resizing when pointer movement is delivered on window", () => {
+  it("continues resizing when pointer movement is delivered on window", async () => {
     const onResize = vi.fn();
     renderSplit({
       orientation: "horizontal",
@@ -144,6 +154,26 @@ describe("ResizableSplit - pointer capture while dragging", () => {
     const hitZone = screen.getByTestId("separator-hit-zone");
     fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 320 });
     fireEvent.pointerMove(window, { pointerId: 7, clientX: 380 });
+    await flushAnimationFrame();
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 380 });
+
+    expect(onResize).toHaveBeenCalledWith(380);
+  });
+
+  it("commits pending pointer movement when drag ends before the next animation frame", () => {
+    const onResize = vi.fn();
+    renderSplit({
+      orientation: "horizontal",
+      size: 320,
+      minSize: 240,
+      maxSize: 640,
+      onResize,
+    });
+
+    const hitZone = screen.getByTestId("separator-hit-zone");
+    fireEvent.pointerDown(hitZone, { pointerId: 7, clientX: 320 });
+    fireEvent.pointerMove(window, { pointerId: 7, clientX: 380 });
+    fireEvent.pointerUp(window, { pointerId: 7, clientX: 380 });
 
     expect(onResize).toHaveBeenCalledWith(380);
   });

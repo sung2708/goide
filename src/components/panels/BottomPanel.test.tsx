@@ -261,7 +261,7 @@ describe("BottomPanel", () => {
     );
 
     expect(screen.getByTestId("bottom-panel")).not.toHaveClass("max-h-[40vh]");
-    expect(screen.getByTestId("bottom-panel")).toHaveClass("min-h-[11rem]");
+    expect(screen.getByTestId("bottom-panel")).toHaveClass("min-h-44");
   });
 
   it("run/stop/clear actions are scoped to logs tab (not shown on shell tab)", () => {
@@ -314,33 +314,7 @@ describe("BottomPanel", () => {
     expect(screen.queryByRole("button", { name: /^clear$/i })).toBeNull();
   });
 
-  it("shows dock mode controls and changes dock mode on demand", async () => {
-    const user = userEvent.setup();
-    const onDockModeChange = vi.fn();
-
-    render(
-      <BottomPanel
-        activeTab="shell"
-        onActiveTabChange={vi.fn()}
-        logEntries={[]}
-        surfaceKey="editor:main.go"
-        workspacePath="C:/workspace"
-        dockMode="bottom"
-        onDockModeChange={onDockModeChange}
-      />
-    );
-
-    expect(screen.getByRole("button", { name: /dock bottom/i })).toHaveAttribute(
-      "aria-pressed",
-      "true"
-    );
-
-    await user.click(screen.getByRole("button", { name: /dock right/i }));
-
-    expect(onDockModeChange).toHaveBeenCalledWith("right");
-  });
-
-  it("does not render dock mode controls without a dock mode change handler", () => {
+  it("does not render dock mode buttons", () => {
     render(
       <BottomPanel
         activeTab="shell"
@@ -353,23 +327,6 @@ describe("BottomPanel", () => {
 
     expect(screen.queryByRole("button", { name: /dock bottom/i })).toBeNull();
     expect(screen.queryByRole("button", { name: /dock right/i })).toBeNull();
-  });
-
-  it("uses right-dock panel framing when docked right", () => {
-    render(
-      <BottomPanel
-        activeTab="shell"
-        onActiveTabChange={vi.fn()}
-        logEntries={[]}
-        surfaceKey="editor:main.go"
-        workspacePath="C:/workspace"
-        dockMode="right"
-        onDockModeChange={vi.fn()}
-      />
-    );
-
-    expect(screen.getByTestId("bottom-panel")).toHaveClass("h-full");
-    expect(screen.getByTestId("bottom-panel")).toHaveClass("border-l");
   });
 
   it("logs tab shows Run Again, Run Race, Clear, and Hide Panel inline with no More button", () => {

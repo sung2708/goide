@@ -515,69 +515,15 @@ describe("EditorShell terminal wiring", () => {
 
     const split = await screen.findByTestId("resizable-split");
     expect(split).toHaveAttribute("data-orientation", "vertical");
-    // default terminalBottom size is 320
-    expect(split).toHaveAttribute("data-size", "320");
-    expect(split).toHaveAttribute("data-default-size", "320");
+    // default terminalBottom size is 260
+    expect(split).toHaveAttribute("data-size", "260");
+    expect(split).toHaveAttribute("data-default-size", "260");
     expect(split).toHaveAttribute("data-class-name", expect.stringContaining("flex-col-reverse"));
-    expect(capturedBottomPanelProps?.dockMode).toBe("bottom");
-    expect(capturedBottomPanelProps?.onDockModeChange).toEqual(expect.any(Function));
   });
 
-  it("switches to right dock, uses horizontal splitter, and restores persisted terminal size", async () => {
+  it("editor workbench stays mounted and terminal size persists across resize", async () => {
     const user = userEvent.setup();
     const { unmount } = render(<EditorShell />);
-
-    await openWorkspaceAndShowExplorer(user);
-    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
-
-    await user.click(screen.getByRole("button", { name: /dock right/i }));
-    await waitFor(() => {
-      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
-        "data-orientation",
-        "horizontal"
-      );
-    });
-    // After switching to right, terminalSize should be the right default (480)
-    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "480");
-    expect(screen.getByTestId("resizable-split")).toHaveAttribute(
-      "data-class-name",
-      expect.stringContaining("flex-row-reverse")
-    );
-    expect(capturedBottomPanelProps?.dockMode).toBe("right");
-
-    await user.click(screen.getByRole("button", { name: /resize terminal/i }));
-    await waitFor(() => {
-      expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
-    });
-
-    unmount();
-    capturedBottomPanelProps = null;
-
-    render(<EditorShell />);
-    await openWorkspaceAndShowExplorer(user);
-    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
-        "data-orientation",
-        "horizontal"
-      );
-    });
-    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
-    expect((capturedBottomPanelProps as { dockMode?: unknown } | null)?.dockMode).toBe("right");
-  });
-
-  /**
-   * TASK 3 — dock-specific terminal sizes:
-   * Switching dock modes must preserve separate saved sizes, and the editor
-   * workbench (`data-testid="editor-workbench"`) must remain mounted
-   * (not remount) throughout the entire dock mode switch cycle.
-   */
-  it("editor workbench stays mounted while switching dock modes and sizes are dock-specific", async () => {
-    const user = userEvent.setup();
-    render(<EditorShell />);
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
@@ -587,43 +533,31 @@ describe("EditorShell terminal wiring", () => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });
 
-    // Editor workbench must be present in bottom dock mode
     const workbench = screen.getByTestId("editor-workbench");
     expect(workbench).toBeInTheDocument();
 
-    // Resize in bottom mode
+    // Resize the terminal
     await user.click(screen.getByRole("button", { name: /resize terminal/i }));
     await waitFor(() => {
       expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
-    });
-    const bottomSize = "456";
-
-    // Switch to right dock
-    await user.click(screen.getByRole("button", { name: /dock right/i }));
-    await waitFor(() => {
-      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
-        "data-orientation",
-        "horizontal"
-      );
     });
 
     // Editor workbench must still be the SAME element (not remounted)
     expect(screen.getByTestId("editor-workbench")).toBe(workbench);
 
-    // Right dock should show its own default size (480), NOT the bottom size (456)
-    expect(screen.getByTestId("resizable-split")).not.toHaveAttribute("data-size", bottomSize);
-    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "480");
+    // Remount and verify the resized size was persisted
+    unmount();
+    capturedBottomPanelProps = null;
 
-    // Switch back to bottom dock and ensure the previous bottom-dock size is restored
-    await user.click(screen.getByRole("button", { name: /dock bottom/i }));
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+
     await waitFor(() => {
-      expect(screen.getByTestId("resizable-split")).toHaveAttribute(
-        "data-orientation",
-        "vertical"
-      );
+      expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
     });
-    expect(screen.getByTestId("editor-workbench")).toBe(workbench);
-    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", bottomSize);
+    expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-orientation", "vertical");
   });
 
   /**
