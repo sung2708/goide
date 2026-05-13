@@ -1,87 +1,89 @@
 @import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Material+Symbols+Outlined:wght,FILL@200..700,0..1&display=swap");
 @import "tailwindcss";
 
-/* ═══════════════════════════════════════════════
-   Catppuccin Frappé — IDE Token System
-   ═══════════════════════════════════════════════ */
+/* Nord-inspired token system */
 :root {
+  color-scheme: dark;
   font-family: "Inter", "Segoe UI", system-ui, sans-serif;
   font-size: 14px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 
-  /* ── Catppuccin Frappé palette ── */
-  --rosewater: #f2d5cf;
-  --flamingo: #eebebe;
-  --pink: #f4b8e4;
-  --mauve: #ca9ee6;
-  --red: #e78284;
-  --maroon: #ea999c;
-  --peach: #ef9f76;
-  --yellow: #e5c890;
-  --green: #a6d189;
-  --teal: #81c8be;
-  --sky: #99d1db;
-  --sapphire: #85c1dc;
-  --blue: #8caaee;
-  --lavender: #babbf1;
+  --rosewater: #d8dee9;
+  --flamingo: #d8dee9;
+  --pink: #b48ead;
+  --mauve: #b48ead;
+  --red: #bf616a;
+  --maroon: #bf616a;
+  --peach: #d08770;
+  --yellow: #ebcb8b;
+  --green: #a3be8c;
+  --teal: #8fbcbb;
+  --sky: #88c0d0;
+  --sapphire: #88c0d0;
+  --blue: #81a1c1;
+  --lavender: #81a1c1;
 
-  --text: #c6d0f5;
-  --subtext1: #b5bfe2;
-  --subtext0: #a5adce;
-  --overlay2: #949cbb;
-  --overlay1: #838ba7;
-  --overlay0: #737994;
+  --text: #d8dee9;
+  --subtext1: #c6d0de;
+  --subtext0: #aeb9ca;
+  --overlay2: #9eacc2;
+  --overlay1: #8f9bb3;
+  --overlay0: #7f8ba2;
 
-  --surface2: #626880;
-  --surface1: #51576d;
-  --surface0: #414559;
-  --base: #303446;
-  --mantle: #292c3c;
-  --crust: #232634;
+  --surface2: #4c566a;
+  --surface1: #434c5e;
+  --surface0: #4c566a;
+  --base: #434c5e;
+  --mantle: #3b4252;
+  --crust: #2e3440;
 
-  /* ── Semantic surface tokens ── */
+  --background: var(--crust);
+  --surface: var(--surface0);
+  --surface-hover: rgba(94, 111, 139, 0.18);
+  --border-subtle-1: rgba(143, 155, 179, 0.12);
+  --text-primary: var(--text);
+  --text-muted: var(--overlay1);
+  --accent: var(--sky);
+  --success: var(--green);
+  --warning: var(--yellow);
+  --danger: var(--red);
+
   --bg-editor: var(--base);
   --bg-sidebar: var(--mantle);
   --bg-chrome: var(--crust);
   --bg-elevated: var(--surface0);
-  --bg-hover: rgba(65, 69, 89, 0.5);
-  --bg-active: rgba(140, 170, 238, 0.12);
+  --bg-hover: var(--surface-hover);
+  --bg-active: rgba(136, 192, 208, 0.16);
 
-  /* ── Border tokens ── */
-  --border-muted: rgba(81, 87, 109, 0.45);
-  --border-subtle: rgba(81, 87, 109, 0.25);
-  --border-active: rgba(140, 170, 238, 0.35);
+  --border-muted: rgba(143, 155, 179, 0.18);
+  --border-subtle: var(--border-subtle-1);
+  --border-active: rgba(136, 192, 208, 0.42);
 
-  /* ── Focus & interaction ── */
-  --focus-ring: rgba(140, 170, 238, 0.5);
-  --selection-bg: rgba(140, 170, 238, 0.18);
-  --selection-bg-strong: rgba(140, 170, 238, 0.28);
+  --focus-ring: rgba(136, 192, 208, 0.42);
+  --selection-bg: rgba(129, 161, 193, 0.22);
+  --selection-bg-strong: rgba(129, 161, 193, 0.34);
 
-  /* ── Shadow tokens (subtle only) ── */
-  --panel-shadow: 0 4px 16px rgba(35, 38, 52, 0.5);
-  --panel-shadow-soft: 0 2px 8px rgba(35, 38, 52, 0.4);
+  --panel-shadow: 0 4px 16px rgba(20, 23, 31, 0.5);
+  --panel-shadow-soft: 0 2px 8px rgba(20, 23, 31, 0.4);
 
-  /* ── Concurrency lens signals ── */
   --signal-predicted: var(--overlay0);
-  --signal-predicted-bg: rgba(115, 121, 148, 0.16);
+  --signal-predicted-bg: rgba(127, 139, 162, 0.16);
   --signal-likely: var(--yellow);
-  --signal-likely-bg: rgba(229, 200, 144, 0.12);
+  --signal-likely-bg: rgba(235, 203, 139, 0.14);
   --signal-confirmed: var(--green);
-  --signal-confirmed-bg: rgba(166, 209, 137, 0.12);
+  --signal-confirmed-bg: rgba(163, 190, 140, 0.14);
   --signal-blocked: var(--red);
-  --signal-blocked-bg: rgba(231, 130, 132, 0.12);
-  --signal-flow: var(--blue);
+  --signal-blocked-bg: rgba(191, 97, 106, 0.14);
+  --signal-flow: var(--sky);
 
-  /* ── File decoration indicators ── */
-  --decoration-untracked: #a8c8a0;
-  --decoration-modified: #d4a76a;
-  --decoration-error: #ec7c8a;
-  --decoration-warning: #d2c36a;
-  --decoration-staged: #90baff;
+  --decoration-untracked: #a3be8c;
+  --decoration-modified: #ebcb8b;
+  --decoration-error: #bf616a;
+  --decoration-warning: #d9bf7a;
+  --decoration-staged: #81a1c1;
 }
-
 /* ── Monospace font ── */
 code,
 pre,
@@ -95,11 +97,20 @@ pre,
 html,
 body,
 #root {
+  width: 100%;
   height: 100%;
   margin: 0;
-  background-color: var(--bg-editor);
+  background: var(--bg-chrome);
   color: var(--text);
   overflow: hidden;
+}
+
+body {
+  min-width: 0;
+}
+
+* {
+  box-sizing: border-box;
 }
 
 /* ── Noise overlay (ultra-subtle) ── */

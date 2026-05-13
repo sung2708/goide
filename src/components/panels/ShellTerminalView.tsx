@@ -55,6 +55,7 @@ function ShellTerminalView({
   const [shellSessionId, setShellSessionId] = useState<string | null>(null);
   const [shellError, setShellError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
+  const [isWorkspaceSwitching, setIsWorkspaceSwitching] = useState(false);
   /**
    * surfaceVersion increments each time the active session identity changes so
    * that TerminalSurface is forced to remount with a clean xterm instance.
@@ -156,6 +157,7 @@ function ShellTerminalView({
    * When workspacePath changes, we dispose all sessions from the old workspace.
    */
   const activeWorkspaceRef = useRef<string | null>(null);
+  const workspaceSwitchTokenRef = useRef(0);
 
   // ---- Workspace-level disposal ----
 
@@ -164,22 +166,44 @@ function ShellTerminalView({
     const prevMap = sessionMapRef.current;
 
     if (prevWorkspace !== null && prevWorkspace !== workspacePath) {
+      workspaceSwitchTokenRef.current += 1;
+      const switchToken = workspaceSwitchTokenRef.current;
+      setIsWorkspaceSwitching(true);
+      setShellSessionId(null);
+      setShellError(null);
+      pendingReplayRef.current = "";
+      clearPendingTerminalWrites();
+      resetLatencyTracking();
+      terminalRef.current = null;
+      // Force a fresh terminal host after workspace switch to avoid stale PTY bindings.
+      setSurfaceVersion((k) => k + 1);
+
       // Workspace changed: dispose all sessions from the old workspace.
       // Do this fire-and-forget; don't block the new session setup.
-      for (const [, sessionId] of prevMap) {
-        void disposeShellSession({ shellSessionId: sessionId });
-      }
+      void (async () => {
+        await Promise.allSettled(
+          [...prevMap.values()].map((sessionId) =>
+            disposeShellSession({ shellSessionId: sessionId })
+          )
+        );
+        // Only clear the switching state if this is still the latest switch.
+        if (workspaceSwitchTokenRef.current === switchToken) {
+          setIsWorkspaceSwitching(false);
+        }
+      })();
       // Reset the session map for the new workspace.
       sessionMapRef.current = new Map();
+    } else if (prevWorkspace === null && workspacePath !== null) {
+      setIsWorkspaceSwitching(false);
     }
 
     activeWorkspaceRef.current = workspacePath;
-  }, [workspacePath]);
+  }, [workspacePath, clearPendingTerminalWrites, resetLatencyTracking]);
 
   // ---- Session lifecycle ----
 
   useEffect(() => {
-    if (!workspacePath || !surfaceKey) {
+    if (!workspacePath || !surfaceKey || isWorkspaceSwitching) {
       setShellSessionId(null);
       setShellError(null);
       return;
@@ -206,13 +230,14 @@ function ShellTerminalView({
 
     const startSession = async () => {
       setShellError(null);
+      const switchToken = workspaceSwitchTokenRef.current;
       const response = await ensureShellSession({
         workspaceRoot: workspacePath,
         surfaceKey: surfaceKey,
         cwdRelativePath: cwdRelativePathRef.current ?? undefined,
       });
 
-      if (cancelled) {
+      if (cancelled || switchToken !== workspaceSwitchTokenRef.current) {
         return;
       }
 
@@ -252,7 +277,7 @@ function ShellTerminalView({
   // re-initialization when it changes (e.g. on file switches with a stable
   // workspace-owned surfaceKey).  The ref keeps it readable inside the effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, surfaceKey, clearPendingTerminalWrites, resetLatencyTracking]);
+  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -337,7 +362,7 @@ function ShellTerminalView({
   // ---- Retry handler ----
 
   const handleRetry = useCallback(async () => {
-    if (!workspacePath || !surfaceKey || isRetrying) {
+    if (!workspacePath || !surfaceKey || isRetrying || isWorkspaceSwitching) {
       return;
     }
     setIsRetrying(true);
@@ -361,7 +386,7 @@ function ShellTerminalView({
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, surfaceKey, isRetrying, resetLatencyTracking]);
+  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking]);
 
   // ---- Terminal callbacks ----
 
@@ -415,6 +440,14 @@ function ShellTerminalView({
     return (
       <div className="flex h-full items-center justify-center text-[13px] italic text-[var(--overlay0)]">
         Open a workspace to start a shell session.
+      </div>
+    );
+  }
+
+  if (isWorkspaceSwitching) {
+    return (
+      <div className="flex h-full items-center justify-center text-[12px] italic text-[var(--overlay1)]">
+        Switching workspace shell...
       </div>
     );
   }

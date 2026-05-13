@@ -26,6 +26,7 @@ const SUPPORTED_WAIT_REASONS: &[&str] = &[
 #[derive(Debug, Clone)]
 pub enum LaunchMode {
     /// Debug a single file (legacy path; uses the file's parent directory as the package).
+    #[cfg_attr(not(test), allow(dead_code))]
     Debug,
     /// Debug a test file.
     Test,

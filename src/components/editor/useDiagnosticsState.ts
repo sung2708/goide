@@ -147,21 +147,10 @@ export function useDiagnosticsState({
               }
             }, 1200);
           }
-        } else {
-          setDiagnostics([]);
-          setDiagnosticsAvailability("idle");
-          removeDiagnosticsSummary(diagnosticFilePath);
         }
       } catch (_error) {
-        if (
-          requestId === diagnosticsRequestIdRef.current &&
-          workspacePathRef.current === diagnosticWorkspacePath &&
-          activeFilePathRef.current === diagnosticFilePath
-        ) {
-          setDiagnostics([]);
-          setDiagnosticsAvailability("idle");
-          removeDiagnosticsSummary(diagnosticFilePath);
-        }
+        // Keep the last known diagnostics on transient failures to avoid
+        // flickering between valid and empty states.
       }
     },
     [activeFilePathRef, removeDiagnosticsSummary, workspacePathRef]

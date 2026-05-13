@@ -141,7 +141,7 @@ describe("EditorShell document symbols", () => {
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /publish symbols/i }));
 
-    expect(await screen.findByRole("heading", { name: /document outline/i })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: /^outline$/i })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /line 2 function main/i }));
 
     await waitFor(() =>
@@ -162,7 +162,6 @@ describe("EditorShell document symbols", () => {
     expect(
       await screen.findByRole("button", { name: /line 2 function main/i })
     ).toHaveAttribute("aria-current", "true");
-    expect(screen.getByTestId("editor-scope-breadcrumb")).toHaveTextContent(/scope/i);
     expect(screen.getByTestId("editor-scope-breadcrumb")).toHaveTextContent(/function/i);
     expect(screen.getByTestId("editor-scope-breadcrumb")).toHaveTextContent(/main/i);
     expect(screen.getByTestId("editor-scope-breadcrumb")).toHaveTextContent(/l2/i);

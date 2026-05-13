@@ -916,10 +916,10 @@ fn get_file_completions_via_lsp(
             s
         } else {
             *guard = None;
-            lsp_manager::start_new_lsp_session(workspace_root, &mut *guard)?
+            lsp_manager::start_new_lsp_session(workspace_root, &mut guard)?
         }
     } else {
-        lsp_manager::start_new_lsp_session(workspace_root, &mut *guard)?
+        lsp_manager::start_new_lsp_session(workspace_root, &mut guard)?
     };
 
     let target_uri = path_to_file_uri(target_path);

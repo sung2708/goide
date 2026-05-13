@@ -15,13 +15,6 @@ pub enum FsWatchMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FsWatchChangeKind {
-    Created,
-    Modified,
-    Deleted,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FsWatchEntryKind {
     File,
     Directory,
@@ -82,6 +75,7 @@ impl FsWatchService {
         }
     }
 
+    #[cfg(test)]
     pub fn new_for_test(native_watch_available: bool, force_watcher_start_failure: bool) -> Self {
         Self {
             state: Arc::new(Mutex::new(FsWatchServiceState::default())),
@@ -123,15 +117,6 @@ impl FsWatchService {
             workspace_root: workspace_root_str,
             mode,
         })
-    }
-
-    pub async fn mode_for_workspace(&self, workspace_root: &Path) -> Option<FsWatchMode> {
-        let canonical_root = workspace_root.canonicalize().ok()?;
-        let guard = self.state.lock().await;
-        guard
-            .workspaces
-            .get(&canonical_root)
-            .map(|entry| entry.mode)
     }
 
     async fn try_start_watcher(&self, _workspace_root: &Path) -> Result<()> {
