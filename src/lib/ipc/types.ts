@@ -15,6 +15,13 @@ export type FsEntry = {
   isDir: boolean;
 };
 
+export type WorkspaceFsSyncMode = "watch" | "polling";
+
+export type StartWorkspaceFsWatchResponse = {
+  workspaceRoot: string;
+  mode: WorkspaceFsSyncMode;
+};
+
 export type ConcurrencyConstructKind =
   | "channel"
   | "select"
@@ -198,6 +205,11 @@ export type DebuggerBreakpoint = {
   line: number;
 };
 
+/**
+ * Lower-level debugger session state already used by current debugger
+ * controls. Keep this aligned with `DebugSessionSnapshot`, which is the
+ * higher-level frontend lifecycle wrapper for the rebuilt debug flow.
+ */
 export type DebuggerState = {
   sessionActive: boolean;
   paused: boolean;
@@ -205,6 +217,23 @@ export type DebuggerState = {
   activeLine?: number | null;
   activeColumn?: number | null;
   breakpoints: DebuggerBreakpoint[];
+};
+
+export type DebugFailure = {
+  code: string;
+  title: string;
+  message: string;
+  details: string | null;
+};
+
+export type DebugSessionSnapshot = {
+  status: "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+  paused: boolean;
+  activeRelativePath: string | null;
+  activeLine: number | null;
+  activeColumn: number | null;
+  breakpoints: DebuggerBreakpoint[];
+  failure: DebugFailure | null;
 };
 
 export type ToggleBreakpointRequest = {
@@ -238,4 +267,97 @@ export type WorkspaceGitSnapshot = {
   branch: string;
   changedFiles: WorkspaceGitChangedFile[];
   commits: WorkspaceGitCommit[];
+};
+
+export type WorkspaceGitBranch = {
+  name: string;
+  kind: "current" | "local" | "remote";
+  isCurrent: boolean;
+  upstream?: string | null;
+  isRemoteTrackingCandidate: boolean;
+  /** Remote name for remote-tracking branches, e.g. "origin" or "upstream". */
+  remoteName?: string | null;
+  /**
+   * Full remote ref for remote-tracking branches, e.g. "origin/develop".
+   * This is the value passed to `git switch --track` when creating a local
+   * tracking branch.  Absent for local/current branches.
+   */
+  remoteRef?: string | null;
+};
+
+export type WorkspaceGitChangedFileSummary = {
+  path: string;
+  status: string;
+};
+
+export type WorkspaceBranchSnapshot = {
+  currentBranch: string | null;
+  isDetachedHead: boolean;
+  detachedHeadRef: string | null;
+  branches: WorkspaceGitBranch[];
+  hasUncommittedChanges: boolean;
+  changedFilesSummary: WorkspaceGitChangedFileSummary[];
+};
+
+export type SwitchWorkspaceBranchRequest = {
+  workspaceRoot: string;
+  targetBranch: string;
+  /**
+   * Full remote ref to use as the tracking source when creating a new local
+   * branch (e.g. "upstream/develop").  Should be set from
+   * `WorkspaceGitBranch.remoteRef` when switching to a remote branch.
+   */
+  remoteRef?: string | null;
+  preSwitchAction: "none" | "commit" | "stash" | "discard";
+  commitMessage?: string | null;
+};
+
+// ---- Shell session IPC types ----
+
+/** Identifies which tab in the BottomPanel is active. */
+export type BottomPanelTab = "logs" | "shell";
+
+/** Request to create or reuse a shell session for a given workspace surface. */
+export type EnsureShellSessionRequest = {
+  workspaceRoot: string;
+  surfaceKey: string;
+  cwdRelativePath?: string;
+};
+
+/** Response from ensureShellSession. */
+export type EnsureShellSessionResponse = {
+  shellSessionId: string;
+  reused: boolean;
+  shellHealth: "launch" | "degraded" | "exit";
+  selectedShell: string | null;
+  /**
+   * Buffered PTY output to replay into a fresh xterm surface.
+   * Non-empty when `reused` is true and the session has prior output.
+   * Empty string for brand-new sessions.
+   */
+  replay: string;
+};
+
+/** Send raw PTY input data to an active shell session. */
+export type ShellInputRequest = {
+  shellSessionId: string;
+  data: string;
+};
+
+/** Notify the backend of a terminal resize for an active shell session. */
+export type ShellResizeRequest = {
+  shellSessionId: string;
+  cols: number;
+  rows: number;
+};
+
+/** Dispose (terminate) an active shell session. */
+export type DisposeShellSessionRequest = {
+  shellSessionId: string;
+};
+
+/** Event payload for shell output arriving from the backend. */
+export type ShellOutputPayload = {
+  shellSessionId: string;
+  data: string;
 };

@@ -46,6 +46,20 @@ pub struct FsEntryDto {
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub enum WorkspaceFsSyncModeDto {
+    Watch,
+    Polling,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct StartWorkspaceFsWatchResponseDto {
+    pub workspace_root: String,
+    pub mode: WorkspaceFsSyncModeDto,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum ConcurrencyConfidenceDto {
     Predicted,
     Likely,
@@ -118,14 +132,14 @@ pub struct ActivateDeepTraceResponseDto {
     pub scope_key: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartDebugSessionRequestDto {
     pub workspace_root: String,
     pub relative_path: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
@@ -204,6 +218,9 @@ pub struct DebuggerBreakpointDto {
     pub line: usize,
 }
 
+/// Lower-level debugger session state already used by current debugger
+/// controls. Keep this aligned with `DebugSessionSnapshotDto`, which is the
+/// higher-level frontend lifecycle wrapper for the rebuilt debug flow.
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerStateDto {
@@ -213,6 +230,27 @@ pub struct DebuggerStateDto {
     pub active_line: Option<usize>,
     pub active_column: Option<usize>,
     pub breakpoints: Vec<DebuggerBreakpointDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugFailureDto {
+    pub code: String,
+    pub title: String,
+    pub message: String,
+    pub details: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebugSessionSnapshotDto {
+    pub status: String,
+    pub paused: bool,
+    pub active_relative_path: Option<String>,
+    pub active_line: Option<usize>,
+    pub active_column: Option<usize>,
+    pub breakpoints: Vec<DebuggerBreakpointDto>,
+    pub failure: Option<DebugFailureDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -258,6 +296,54 @@ pub struct WorkspaceGitSnapshotDto {
     pub branch: String,
     pub changed_files: Vec<WorkspaceGitChangedFileDto>,
     pub commits: Vec<WorkspaceGitCommitDto>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitBranchDto {
+    pub name: String,
+    pub kind: String,
+    pub is_current: bool,
+    pub upstream: Option<String>,
+    pub is_remote_tracking_candidate: bool,
+    /// For remote-tracking branches: the remote name (e.g. "origin", "upstream").
+    /// None for local branches.
+    pub remote_name: Option<String>,
+    /// For remote-tracking branches: the full ref as returned by git
+    /// (e.g. "origin/develop"). Used as the --track argument when creating a
+    /// local tracking branch. None for local branches.
+    pub remote_ref: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitChangedFileSummaryDto {
+    pub path: String,
+    pub status: String,
+}
+
+#[derive(Debug, Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceBranchSnapshotDto {
+    pub current_branch: Option<String>,
+    pub is_detached_head: bool,
+    pub detached_head_ref: Option<String>,
+    pub branches: Vec<WorkspaceGitBranchDto>,
+    pub has_uncommitted_changes: bool,
+    pub changed_files_summary: Vec<WorkspaceGitChangedFileSummaryDto>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SwitchWorkspaceBranchRequestDto {
+    pub workspace_root: String,
+    pub target_branch: String,
+    /// Full remote ref to use as the tracking source when creating a new local
+    /// branch (e.g. "upstream/develop"). When None the backend falls back to
+    /// checking whether any remote ref named `<remote>/<target_branch>` exists.
+    pub remote_ref: Option<String>,
+    pub pre_switch_action: String,
+    pub commit_message: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -338,4 +424,116 @@ pub enum DiagnosticsToolingAvailabilityDto {
 pub struct DiagnosticsResponseDto {
     pub diagnostics: Vec<EditorDiagnosticDto>,
     pub tooling_availability: DiagnosticsToolingAvailabilityDto,
+}
+
+// ---------------------------------------------------------------------------
+// Shell session DTOs
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureShellSessionRequestDto {
+    pub workspace_root: String,
+    pub surface_key: String,
+    pub cwd_relative_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct EnsureShellSessionResponseDto {
+    pub shell_session_id: String,
+    pub reused: bool,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: Option<String>,
+    /// Buffered PTY output from the session to replay into a fresh xterm surface.
+    /// Empty string for brand-new sessions; contains prior output for reused sessions.
+    pub replay: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellInputRequestDto {
+    pub shell_session_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellResizeRequestDto {
+    pub shell_session_id: String,
+    pub cols: u16,
+    pub rows: u16,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DisposeShellSessionRequestDto {
+    pub shell_session_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellOutputPayloadDto {
+    pub shell_session_id: String,
+    pub data: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ShellHealthDto {
+    Launch,
+    Degraded,
+    Exit,
+}
+
+/// Event emitted when a PTY reader loop ends unexpectedly (shell exited on its
+/// own, not via an explicit dispose call).  The frontend uses this to surface
+/// a disconnected / retry state inside the Shell tab.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ShellExitPayloadDto {
+    pub shell_session_id: String,
+    pub shell_health: ShellHealthDto,
+    pub selected_shell: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EnsureShellSessionRequestDto, ShellExitPayloadDto, ShellHealthDto};
+
+    #[test]
+    fn shell_exit_payload_serializes_health_and_selected_shell() {
+        let payload = ShellExitPayloadDto {
+            shell_session_id: "shell:abc".to_string(),
+            shell_health: ShellHealthDto::Exit,
+            selected_shell: Some("pwsh".to_string()),
+        };
+
+        let json = serde_json::to_value(payload).expect("payload should serialize");
+        assert_eq!(json["shellSessionId"], "shell:abc");
+        assert_eq!(json["shellHealth"], "exit");
+        assert_eq!(json["selectedShell"], "pwsh");
+    }
+
+    /// Verify that EnsureShellSessionRequestDto serializes to camelCase `surfaceKey`
+    /// and does NOT include any `editorSessionKey` field in the JSON output.
+    #[test]
+    fn ensure_shell_session_request_dto_serializes_surface_key() {
+        let dto = EnsureShellSessionRequestDto {
+            workspace_root: "/workspace".to_string(),
+            surface_key: "panel:shell".to_string(),
+            cwd_relative_path: None,
+        };
+
+        let json = serde_json::to_value(&dto).expect("dto should serialize");
+        assert_eq!(
+            json["surfaceKey"], "panel:shell",
+            "expected surfaceKey field in JSON"
+        );
+        assert!(
+            json.get("editorSessionKey").is_none(),
+            "editorSessionKey must not appear in JSON after rename"
+        );
+        assert_eq!(json["workspaceRoot"], "/workspace");
+    }
 }

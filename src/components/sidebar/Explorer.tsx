@@ -10,6 +10,12 @@ import {
 } from "../../lib/ipc/client";
 import { FileIcon, FolderIconComponent } from "./FileIcon";
 import { cn } from "../../lib/utils/cn";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import {
+  faAngleDown,
+  faAngleRight,
+  faFolderOpen,
+} from "@fortawesome/free-solid-svg-icons";
 
 const IGNORED_FOLDERS = new Set([
   ".git",
@@ -33,6 +39,8 @@ type ExplorerProps = {
   onEntryPathChanged?: (previousPath: string, nextPath: string, isDir: boolean) => void;
   onEntryDeleted?: (deletedPath: string, isDir: boolean) => void;
   fileDecorations?: Map<string, FileDecoration>;
+  /** Incrementing this value from outside forces the tree to reload from disk. */
+  explorerRevision?: number;
 };
 
 type EntryState = {
@@ -109,6 +117,18 @@ function getParentPath(path: string): string | null {
   return segments.join("/");
 }
 
+function formatCreateErrorMessage(rawMessage: string, kind: "file" | "folder"): string {
+  const normalized = rawMessage.trim().toLowerCase();
+  const alreadyExists =
+    normalized.includes("already exists") ||
+    normalized.includes("file exists") ||
+    normalized.includes("exist");
+  if (alreadyExists) {
+    return kind === "file" ? "File already exists in this folder." : "Folder already exists in this location.";
+  }
+  return rawMessage;
+}
+
 function toSortedVisibleEntries(entries: FsEntry[]): FsEntry[] {
   return [...entries]
     .filter((entry) => !IGNORED_FOLDERS.has(entry.name))
@@ -154,7 +174,7 @@ type TreeRowProps = {
   isDropTarget: boolean;
   draggingPath: string | null;
   decoration: FileDecoration | undefined;
-  rowRef: (element: HTMLButtonElement | null) => void;
+  rowRef: (element: HTMLDivElement | null) => void;
   onClick: (entryPath: string, isDir: boolean) => void;
   onContextMenu: (entryPath: string, x: number, y: number) => void;
   onDragStart: (entryPath: string) => void;
@@ -179,9 +199,12 @@ const TreeRow = memo(function TreeRow({
   const gitBadge = gitStatusLabel(decoration?.gitStatus);
 
   return (
-    <button
+    <div
       ref={rowRef}
-      type="button"
+      role="treeitem"
+      aria-selected={isSelected}
+      aria-expanded={entry.isDir ? isExpanded : undefined}
+      tabIndex={-1}
       draggable
       onDragStart={(event) => {
         onDragStart(entry.path);
@@ -207,18 +230,39 @@ const TreeRow = memo(function TreeRow({
         onContextMenu(entry.path, event.clientX, event.clientY);
       }}
       onClick={() => onClick(entry.path, entry.isDir)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onClick(entry.path, entry.isDir);
+        }
+      }}
       title={entry.path}
       className={cn(
-        "group flex w-full items-center gap-1.5 rounded px-2 py-[5px] text-left text-[13px] transition-colors duration-75",
+        "group relative flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[12px] transition-colors duration-75",
         "focus:outline-none focus-visible:ring-1 focus-visible:ring-[var(--blue)]",
         isSelected
           ? "bg-[var(--selection-bg)] text-[var(--text)]"
           : "text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]",
-        isActive && !isSelected && "bg-[rgba(166,209,137,0.08)] text-[var(--text)]",
+        isActive && !isSelected && "text-[var(--subtext1)]",
         isDropTarget && "ring-1 ring-[var(--blue)]"
       )}
       style={{ paddingLeft: rowPaddingLeft }}
     >
+      {depth > 0 && (
+        <div className="pointer-events-none absolute inset-y-0 left-0">
+          {Array.from({ length: depth }).map((_, index) => (
+            <span
+              key={`tree-guide-${entry.path}-${index}`}
+              className="absolute inset-y-0 w-px bg-[rgba(143,155,179,0.16)]"
+              style={{ left: `${index * 12 + 14}px` }}
+            />
+          ))}
+          <span
+            className="absolute h-px w-2 bg-[rgba(143,155,179,0.16)]"
+            style={{ left: `${(depth - 1) * 12 + 14}px`, top: "50%" }}
+          />
+        </div>
+      )}
       <span className="flex w-4 shrink-0 items-center justify-center">
         {entry.isDir ? (
           <button
@@ -231,7 +275,7 @@ const TreeRow = memo(function TreeRow({
             }}
             title={isExpanded ? "Collapse folder" : "Expand folder"}
           >
-            {isExpanded ? "▾" : "▸"}
+            <FontAwesomeIcon icon={isExpanded ? faAngleDown : faAngleRight} />
           </button>
         ) : null}
       </span>
@@ -290,7 +334,7 @@ const TreeRow = memo(function TreeRow({
           )}
         </span>
       )}
-    </button>
+    </div>
   );
 });
 
@@ -301,13 +345,15 @@ function Explorer({
   onEntryPathChanged,
   onEntryDeleted,
   fileDecorations,
+  explorerRevision = 0,
 }: ExplorerProps) {
   const [rootState, setRootState] = useState<EntryState>(emptyState);
   const [childrenByPath, setChildrenByPath] = useState<Record<string, EntryState>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [operationError, setOperationError] = useState<string | null>(null);
-  const [treeRevision, setTreeRevision] = useState(0);
+  const [internalTreeRevision, setInternalTreeRevision] = useState(0);
+  const treeRevision = internalTreeRevision + explorerRevision;
   const [contextMenu, setContextMenu] = useState<ContextMenuState>(null);
   const [renameState, setRenameState] = useState<RenameState | null>(null);
   const [createState, setCreateState] = useState<CreateState | null>(null);
@@ -316,12 +362,24 @@ function Explorer({
   const workspacePathRef = useRef(workspacePath);
   const treeRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const rowRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const rowRefs = useRef<Record<string, HTMLDivElement | null>>({});
   const typeAheadRef = useRef<{ query: string; resetTimer: number | null }>({
     query: "",
     resetTimer: null,
   });
   workspacePathRef.current = workspacePath;
+
+  useEffect(() => {
+    if (!operationError) {
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setOperationError((current) => (current === operationError ? null : current));
+    }, 1500);
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [operationError]);
 
   const loadDirectory = useCallback(
     async (targetPath: string | null): Promise<EntryState> => {
@@ -357,7 +415,7 @@ function Explorer({
   }, []);
 
   const refreshTree = useCallback(() => {
-    setTreeRevision((prev) => prev + 1);
+    setInternalTreeRevision((prev) => prev + 1);
   }, []);
 
   const hydrateExpandedPaths = useCallback(
@@ -662,11 +720,9 @@ function Explorer({
   );
 
   const startCreate = useCallback((kind: "file" | "folder", parentPath: string | null) => {
-    const fallbackName = kind === "file" ? "new.go" : "new-folder";
-    const defaultPath = parentPath ? `${parentPath}/${fallbackName}` : fallbackName;
     setCreateState({
       kind,
-      value: defaultPath,
+      value: "",
       parentPath,
     });
     setContextMenu(null);
@@ -676,26 +732,42 @@ function Explorer({
     if (!workspacePath || !createState) {
       return;
     }
-    const relativePath = createState.value.trim();
-    if (!relativePath) {
+    const entryName = createState.value.trim();
+    if (!entryName) {
       return;
     }
-    const created = await runMutation(
-      () =>
-        createState.kind === "file"
-          ? createWorkspaceFile(workspacePath, relativePath, "")
-          : createWorkspaceFolder(workspacePath, relativePath),
-      relativePath
-    );
-    if (created === null) {
+
+    const relativePath = createState.parentPath
+      ? `${createState.parentPath}/${entryName}`
+      : entryName;
+
+    setOperationError(null);
+    const response =
+      createState.kind === "file"
+        ? await createWorkspaceFile(workspacePath, relativePath, "")
+        : await createWorkspaceFolder(workspacePath, relativePath);
+
+    if (!response.ok) {
+      setOperationError(
+        formatCreateErrorMessage(
+          response.error?.message ?? "Operation failed",
+          createState.kind
+        )
+      );
       return;
     }
+
+    await refreshParentDirectory(relativePath);
+    if (createState.parentPath) {
+      setExpanded((prev) => new Set(prev).add(createState.parentPath as string));
+    }
+
     setCreateState(null);
     selectPath(relativePath);
     if (createState.kind === "file") {
       onOpenFile(relativePath);
     }
-  }, [createState, onOpenFile, runMutation, selectPath, workspacePath]);
+  }, [createState, onOpenFile, refreshParentDirectory, selectPath, workspacePath]);
 
   const openContextMenuForSelected = useCallback(() => {
     if (!selectedPath) {
@@ -1041,36 +1113,41 @@ function Explorer({
 
   return (
     <div className="relative flex h-full flex-col">
-      <div className="border-b border-[var(--border-muted)] bg-[var(--mantle)] px-3 py-2.5">
+      <div className="bg-[var(--mantle)] px-2.5 py-2">
         <div className="flex items-center justify-between">
-          <p className="text-[12px] font-semibold uppercase text-[var(--overlay1)] text-balance">Explorer</p>
+          <p className="text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--overlay1)] text-balance">Explorer</p>
           {workspacePath && (
             <div className="flex items-center gap-1">
               <button
                 type="button"
-                className="rounded border border-[var(--border-subtle)] px-1.5 py-0.5 text-[12px] text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)] transition-colors duration-75"
+                title="New file"
+                aria-label="New file"
+                className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)] transition-colors duration-75"
                 onClick={() => startCreate("file", null)}
               >
-                +File
+                <span className="text-[17px] leading-none">+</span>
               </button>
               <button
                 type="button"
-                className="rounded border border-[var(--border-subtle)] px-1.5 py-0.5 text-[12px] text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)] transition-colors duration-75"
+                title="New folder"
+                aria-label="New folder"
+                className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)] transition-colors duration-75"
                 onClick={() => startCreate("folder", null)}
               >
-                +Dir
+                <FontAwesomeIcon icon={faFolderOpen} className="text-[13px]" />
               </button>
             </div>
           )}
         </div>
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex items-center gap-1.5">
           <span
             className={cn(
               "size-1.5 rounded-full",
               workspacePath ? "bg-[var(--green)]" : "bg-[var(--surface2)]"
             )}
+            title={workspacePath ? "Workspace connected" : "Workspace not open"}
           />
-          <p className="text-[12px] text-[var(--subtext0)]">{headerMeta}</p>
+          <p className="text-[11px] text-[var(--subtext0)] truncate">{workspacePath ? (workspacePath.split(/[\\/]/).pop() ?? "Workspace") : headerMeta}</p>
         </div>
         {createState && (
           <div className="mt-2 flex items-center gap-1">
@@ -1092,29 +1169,18 @@ function Explorer({
                   setCreateState(null);
                 }
               }}
+              onBlur={() => {
+                setCreateState((prev) => (prev && prev.value.trim().length > 0 ? prev : null));
+              }}
               className="flex-1 rounded border border-[var(--surface1)] bg-[var(--crust)] px-2 py-1 text-[13px] text-[var(--text)] outline-none focus:border-[var(--border-active)]"
-              placeholder={
-                createState.kind === "file" ? "new-file.go" : "new-folder"
-              }
             />
-            <button
-              type="button"
-              className="rounded border border-[rgba(166,209,137,0.3)] px-2 py-1 text-[12px] text-[var(--green)] hover:bg-[rgba(166,209,137,0.1)] transition-colors duration-75"
-              onClick={() => void submitCreate()}
-            >
-              Create
-            </button>
-            <button
-              type="button"
-              className="rounded border border-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--subtext0)] hover:bg-[var(--bg-hover)] transition-colors duration-75"
-              onClick={() => setCreateState(null)}
-            >
-              Cancel
-            </button>
           </div>
         )}
         {operationError && (
-          <p className="mt-2 text-[12px] text-[var(--red)]">{operationError}</p>
+          <div className="mt-2 flex items-start gap-2 rounded bg-[rgba(191,97,106,0.12)] px-2.5 py-1.5 text-[12px] text-[var(--red)]">
+            <span className="mt-[1px] text-[12px] leading-none">!</span>
+            <p>{operationError}</p>
+          </div>
         )}
       </div>
 
@@ -1200,3 +1266,5 @@ function Explorer({
 }
 
 export default Explorer;
+
+

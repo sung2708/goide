@@ -1,23 +1,31 @@
 use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
-use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::command::std_command;
+use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
+use crate::integration::fs_watch::{FsWatchMode, FsWatchService};
 use crate::integration::gopls;
 use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
+use crate::integration::shell::{
+    dispose_shell_session_inner, ensure_shell_session_inner, resize_shell_session_inner,
+    write_shell_input_inner, ShellSessionState, ShellSessionStore,
+};
 use crate::ui_bridge::types::{
     ActivateDeepTraceRequestDto, ActivateDeepTraceResponseDto, AnalyzeConcurrencyRequest,
     ApiResponse, ChannelOperationDto, CompletionItemDto, CompletionRangeDto, CompletionRequestDto,
     CompletionTextEditDto, ConcurrencyConfidenceDto, ConcurrencyConstructDto,
     ConcurrencyConstructKindDto, DebuggerBreakpointDto, DebuggerStateDto,
     DeepTraceConstructKindDto, DiagnosticRangeDto, DiagnosticSeverityDto, DiagnosticsResponseDto,
-    DiagnosticsToolingAvailabilityDto, EditorDiagnosticDto, FsEntryDto,
+    DiagnosticsToolingAvailabilityDto, DisposeShellSessionRequestDto, EditorDiagnosticDto,
+    EnsureShellSessionRequestDto, EnsureShellSessionResponseDto, FsEntryDto,
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
-    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, StartDebugSessionRequestDto,
-    ToggleBreakpointRequestDto, ToolAvailabilityDto, ToolchainStatusDto,
-    WorkspaceGitChangedFileDto, WorkspaceGitCommitDto, WorkspaceGitSnapshotDto,
-    WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ShellInputRequestDto,
+    ShellResizeRequestDto, StartDebugSessionRequestDto, StartWorkspaceFsWatchResponseDto,
+    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
+    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
+    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto,
+    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -40,6 +48,7 @@ static DAP_SESSION_HANDLE: std::sync::OnceLock<Arc<Mutex<Option<DapSessionHandle
     std::sync::OnceLock::new();
 static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<RuntimeSignalStore>>> =
     std::sync::OnceLock::new();
+static FS_WATCH_SERVICE: std::sync::OnceLock<FsWatchService> = std::sync::OnceLock::new();
 
 #[derive(Default)]
 struct RuntimeSignalStore {
@@ -66,10 +75,7 @@ enum DebuggerControlKind {
     StepOver,
     StepInto,
     StepOut,
-    ToggleBreakpoint {
-        relative_path: String,
-        line: usize,
-    },
+    ToggleBreakpoint { relative_path: String, line: usize },
 }
 
 struct DebuggerControlCommand {
@@ -87,6 +93,10 @@ fn get_runtime_signals_handle() -> Arc<Mutex<RuntimeSignalStore>> {
     RUNTIME_SIGNALS
         .get_or_init(|| Arc::new(Mutex::new(RuntimeSignalStore::default())))
         .clone()
+}
+
+fn get_fs_watch_service() -> FsWatchService {
+    FS_WATCH_SERVICE.get_or_init(FsWatchService::new).clone()
 }
 
 fn is_blocked_wait_reason(wait_reason: &str) -> bool {
@@ -217,6 +227,25 @@ pub async fn write_workspace_file(
 }
 
 #[tauri::command]
+pub async fn start_workspace_fs_watch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_root: String,
+) -> ApiResponse<StartWorkspaceFsWatchResponseDto> {
+    let service = get_fs_watch_service();
+    let root = PathBuf::from(workspace_root);
+    match service.start(app, &root).await {
+        Ok(result) => ApiResponse::ok(StartWorkspaceFsWatchResponseDto {
+            workspace_root: result.workspace_root,
+            mode: match result.mode {
+                FsWatchMode::Watch => WorkspaceFsSyncModeDto::Watch,
+                FsWatchMode::Polling => WorkspaceFsSyncModeDto::Polling,
+            },
+        }),
+        Err(error) => ApiResponse::err("fs_watch_start_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn run_workspace_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     workspace_root: String,
@@ -240,6 +269,7 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
         .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            #[cfg(debug_assertions)]
             eprintln!("[goide] run_go_file error: {e:#}");
         }
     });
@@ -271,10 +301,41 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
         .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            #[cfg(debug_assertions)]
             eprintln!("[goide] run_go_file error: {e:#}");
         }
     });
-    // Returns immediately — output streams via events
+    // Returns immediately - output streams via events
+    ApiResponse::ok(())
+}
+
+#[cfg(windows)]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    if let Some(pid) = child.id() {
+        let _ = std::process::Command::new("taskkill")
+            .arg("/F")
+            .arg("/T")
+            .arg("/PID")
+            .arg(pid.to_string())
+            .output();
+    }
+}
+
+#[cfg(not(windows))]
+async fn kill_process_group(child: &mut tokio::process::Child) {
+    let _ = child.kill().await;
+}
+
+#[tauri::command]
+pub async fn stop_current_run() -> ApiResponse<()> {
+    let handle = get_process_handle();
+    let mut guard = handle.lock().await;
+
+    if let Some(child) = guard.as_mut() {
+        kill_process_group(child).await;
+    }
+    *guard = None;
+
     ApiResponse::ok(())
 }
 
@@ -499,24 +560,47 @@ async fn start_debug_session_internal(
     );
 
     let workspace_root = std::path::PathBuf::from(&request.workspace_root);
-    let target_file = workspace_root.join(&request.relative_path);
 
-    if !target_file.exists() {
-        return ApiResponse::err(
-            "deep_trace_file_not_found",
-            &format!("Target file not found: {}", target_file.display()),
-        );
-    }
-    let launch_mode = if request.relative_path.ends_with("_test.go") {
+    // Resolve the active file to its Go package and validate that the package
+    // is runnable (has a `package main` declaration). Test files bypass this
+    // check and use the legacy file-based launch path.
+    let is_test_file = request.relative_path.ends_with("_test.go");
+    let launch_mode = if is_test_file {
+        // Test files use the legacy file-based launch so that the test runner
+        // can discover individual test functions correctly.
+        let target_file = workspace_root.join(&request.relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
         LaunchMode::Test
     } else {
-        LaunchMode::Debug
+        // For non-test files, resolve to a Go package pattern so that Delve
+        // receives the correct package context (e.g. `./cmd/app`) instead of
+        // a raw file path.
+        let target = match resolve_debug_target(&workspace_root, &request.relative_path) {
+            Ok(target) => target,
+            Err(message) => {
+                return ApiResponse::err("debug_target_invalid", &message);
+            }
+        };
+        LaunchMode::Package {
+            package: target.package_pattern,
+            cwd: workspace_root.to_string_lossy().to_string(),
+        }
     };
+
+    // For the test-file path we still need a concrete target_file for the
+    // legacy launch; for package launches target_file is unused.
+    let target_file = workspace_root.join(&request.relative_path);
 
     let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
-            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+            let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
+            return ApiResponse::err(&failure.code, &failure.message);
         }
     };
 
@@ -797,12 +881,78 @@ pub async fn start_debug_session(
     .await
 }
 
+/// Testable variant of `start_debug_session_internal` that accepts an optional
+/// override for the `dlv` binary path.  When `dlv_binary` is `Some`, the given
+/// path is used instead of `"dlv"` so tests can simulate a missing Delve
+/// installation without requiring the tool to be absent from the host PATH.
+#[cfg(test)]
+pub(crate) async fn start_debug_session_internal_for_test(
+    workspace_root: &std::path::Path,
+    request: StartDebugSessionRequestDto,
+    dlv_binary: Option<&str>,
+) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    use crate::integration::delve::LaunchMode;
+
+    let workspace_root_path = workspace_root.to_path_buf();
+    let relative_path = request.relative_path.clone();
+
+    // Target resolution (same as production path).
+    let is_test_file = relative_path.ends_with("_test.go");
+    let launch_mode_result: Result<LaunchMode, String> = if is_test_file {
+        let target_file = workspace_root_path.join(&relative_path);
+        if !target_file.exists() {
+            return ApiResponse::err(
+                "deep_trace_file_not_found",
+                &format!("Target file not found: {}", target_file.display()),
+            );
+        }
+        Ok(LaunchMode::Test)
+    } else {
+        match resolve_debug_target(&workspace_root_path, &relative_path) {
+            Ok(target) => Ok(LaunchMode::Package {
+                package: target.package_pattern,
+                cwd: workspace_root_path.to_string_lossy().to_string(),
+            }),
+            Err(message) => Err(message),
+        }
+    };
+
+    if let Err(message) = launch_mode_result {
+        return ApiResponse::err("debug_target_invalid", &message);
+    }
+
+    // Attempt to spawn the Delve DAP server using the overridden binary name.
+    let dlv_cmd = dlv_binary.unwrap_or("dlv");
+    let spawn_result = crate::integration::delve::spawn_dlv_dap_with(
+        dlv_cmd,
+        &["dap", "--listen=127.0.0.1:0"],
+        &workspace_root_path,
+    )
+    .await;
+
+    match spawn_result {
+        Ok(mut dap_process) => {
+            // Minimal cleanup – kill the process immediately; we only care about
+            // whether Delve could be launched at all in this test helper.
+            let _ = dap_process.child.kill().await;
+            ApiResponse::ok(ActivateDeepTraceResponseDto {
+                mode: "deep-trace".to_string(),
+                scope_key: None,
+            })
+        }
+        Err(error) => {
+            let raw = error.to_string();
+            let user_message = format!("Delve debugger could not be started: {raw}");
+            ApiResponse::err("debug_session_start_failed", &user_message)
+        }
+    }
+}
+
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        std_command("dlv").arg("version").output()
-    })
-    .await;
+    let result =
+        tauri::async_runtime::spawn_blocking(move || std_command("dlv").arg("version").output())
+            .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -901,9 +1051,10 @@ pub async fn create_workspace_folder(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || fs::create_folder(&workspace_root, &relative_path))
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::create_folder(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -917,9 +1068,10 @@ pub async fn delete_workspace_entry(
     workspace_root: String,
     relative_path: String,
 ) -> ApiResponse<()> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || fs::delete_entry(&workspace_root, &relative_path))
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        fs::delete_entry(&workspace_root, &relative_path)
+    })
+    .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
@@ -994,6 +1146,63 @@ fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> Debug
     }
 }
 
+/// Maps a raw backend error into a normalized, user-facing [`DebugFailureDto`].
+/// Strips any internal `code::` prefix from `raw` before placing it in the
+/// `message` field, and picks a human-readable title based on the failure code.
+///
+/// This helper is used in the session-start and session-lifecycle paths and
+/// will also be wired into the frontend controller state machine (Task 4).
+fn map_debug_failure(code: &str, raw: &str) -> crate::ui_bridge::types::DebugFailureDto {
+    let message = strip_error_prefix(raw).to_string();
+    let title = match code {
+        "debug_tool_missing" => "Unable to start debug session",
+        "debug_target_invalid" => "Invalid debug target",
+        _ => "Debug session failed",
+    };
+
+    crate::ui_bridge::types::DebugFailureDto {
+        code: code.to_string(),
+        title: title.to_string(),
+        message,
+        details: Some(raw.to_string()),
+    }
+}
+
+/// Produces a [`DebugSessionSnapshotDto`] that captures the full session state
+/// including an explicit `status` discriminant derived from the combination of
+/// `session_active`, store state, and an optional failure payload.
+///
+/// Status transitions: `failed` → `idle` → `paused` / `running`
+///
+/// This helper is the single canonical place for snapshot construction and is
+/// used by `get_debugger_state` to derive the canonical session status before
+/// projecting back into the legacy DTO shape.
+fn map_debugger_state_snapshot(
+    store: &RuntimeSignalStore,
+    session_active: bool,
+    failure: Option<crate::ui_bridge::types::DebugFailureDto>,
+) -> crate::ui_bridge::types::DebugSessionSnapshotDto {
+    let status = if failure.is_some() {
+        "failed"
+    } else if !session_active {
+        "idle"
+    } else if store.paused {
+        "paused"
+    } else {
+        "running"
+    };
+
+    crate::ui_bridge::types::DebugSessionSnapshotDto {
+        status: status.to_string(),
+        paused: store.paused,
+        active_relative_path: store.active_relative_path.clone(),
+        active_line: store.active_line,
+        active_column: store.active_column,
+        breakpoints: flatten_breakpoints(store),
+        failure,
+    }
+}
+
 fn toggle_breakpoint_in_store(store: &mut RuntimeSignalStore, relative_path: &str, line: usize) {
     let mut remove_entry = false;
     {
@@ -1037,13 +1246,11 @@ async fn refresh_debugger_location(client: &mut DapClient, store: &mut RuntimeSi
         return;
     };
     store.active_thread_id = Some(thread_id);
-    if let Ok(frame) = client.stack_trace(thread_id).await {
-        if let Some(frame) = frame {
-            store.active_relative_path = Some(frame.relative_path);
-            store.active_line = Some(frame.line);
-            store.active_column = Some(frame.column);
-            return;
-        }
+    if let Ok(Some(frame)) = client.stack_trace(thread_id).await {
+        store.active_relative_path = Some(frame.relative_path);
+        store.active_line = Some(frame.line);
+        store.active_column = Some(frame.column);
+        return;
     }
     store.active_relative_path = None;
     store.active_line = None;
@@ -1175,7 +1382,19 @@ pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
     };
     let signals_handle = get_runtime_signals_handle();
     let store = signals_handle.lock().await;
-    ApiResponse::ok(map_debugger_state(session_active, &store))
+    // Use the canonical snapshot classifier as the single source of truth for
+    // session status, then project the result back into the legacy DebuggerStateDto
+    // shape for frontend compatibility.
+    let snapshot = map_debugger_state_snapshot(&store, session_active, None);
+    let adapted_session_active = snapshot.status != "idle";
+    ApiResponse::ok(DebuggerStateDto {
+        session_active: adapted_session_active,
+        paused: snapshot.paused,
+        active_relative_path: snapshot.active_relative_path,
+        active_line: snapshot.active_line,
+        active_column: snapshot.active_column,
+        breakpoints: snapshot.breakpoints,
+    })
 }
 
 #[tauri::command]
@@ -1271,25 +1490,12 @@ fn should_search_file(path: &Path) -> bool {
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|value| value.to_ascii_lowercase());
-    match extension.as_deref() {
-        Some("go")
-        | Some("mod")
-        | Some("sum")
-        | Some("md")
-        | Some("txt")
-        | Some("json")
-        | Some("yaml")
-        | Some("yml")
-        | Some("toml")
-        | Some("rs")
-        | Some("ts")
-        | Some("tsx")
-        | Some("js")
-        | Some("jsx")
-        | Some("css")
-        | Some("html") => true,
-        _ => false,
-    }
+    matches!(
+        extension.as_deref(),
+        Some("go") | Some("mod") | Some("sum") | Some("md") | Some("txt") | Some("json")
+        | Some("yaml") | Some("yml") | Some("toml") | Some("rs") | Some("ts") | Some("tsx")
+        | Some("js") | Some("jsx") | Some("css") | Some("html")
+    )
 }
 
 fn collect_search_results(
@@ -1327,7 +1533,7 @@ fn collect_search_results(
         if !file_type.is_file() || !should_search_file(&path) {
             continue;
         }
-        
+
         // Skip large files (> 1MB) for search performance
         if let Ok(metadata) = path.metadata() {
             if metadata.len() > 1_000_000 {
@@ -1365,12 +1571,10 @@ fn collect_search_results(
     }
 }
 
-fn search_with_git_grep(
-    root: &Path,
-    query: &str,
-) -> Result<Vec<WorkspaceSearchFileDto>, String> {
+fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchFileDto>, String> {
     let output = std_command("git")
         .arg("grep")
+        .arg("-F")
         .arg("-i")
         .arg("-I")
         .arg("--line-number")
@@ -1386,22 +1590,22 @@ fn search_with_git_grep(
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let mut file_map: HashMap<String, Vec<WorkspaceSearchMatchDto>> = HashMap::new();
-    
+
     for line in stdout.lines() {
         let parts: Vec<&str> = line.splitn(3, ':').collect();
         if parts.len() < 3 {
             continue;
         }
-        
+
         let path = parts[0].replace('\\', "/");
         let line_num = parts[1].parse::<usize>().unwrap_or(0);
         let preview = parts[2].trim().to_string();
-        
+
         if line_num == 0 {
             continue;
         }
-        
-        let matches = file_map.entry(path).or_insert_with(Vec::new);
+
+        let matches = file_map.entry(path).or_default();
         if matches.len() < 10 {
             matches.push(WorkspaceSearchMatchDto {
                 line: line_num,
@@ -1417,14 +1621,14 @@ fn search_with_git_grep(
             matches,
         })
         .collect();
-    
+
     results.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-    
+
     // Limit to 100 files for git grep to maintain UI performance
     if results.len() > 100 {
         results.truncate(100);
     }
-    
+
     Ok(results)
 }
 
@@ -1446,17 +1650,19 @@ pub async fn search_workspace_text(
     let query_clone = trimmed.clone();
     let root_clone = root.clone();
 
-    let result = tauri::async_runtime::spawn_blocking(move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
-        if is_git {
-            if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
-                return Ok(results);
+    let result = tauri::async_runtime::spawn_blocking(
+        move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
+            if is_git {
+                if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
+                    return Ok(results);
+                }
             }
-        }
-        
-        let mut files = Vec::new();
-        collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
-        Ok(files)
-    })
+
+            let mut files = Vec::new();
+            collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
+            Ok(files)
+        },
+    )
     .await;
 
     match result {
@@ -1466,7 +1672,7 @@ pub async fn search_workspace_text(
     }
 }
 
-fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
+fn git_command_output(root: &Path, args: &[&str], trim_stdout: bool) -> Result<String, String> {
     let output = std_command("git")
         .args(args)
         .current_dir(root)
@@ -1480,7 +1686,27 @@ fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
             stderr
         });
     }
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    Ok(if trim_stdout {
+        stdout.trim().to_string()
+    } else {
+        stdout
+    })
+}
+
+fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
+    git_command_output(root, args, false)
+}
+
+/// Strip internal `<code>::` prefixes from error messages before surfacing
+/// them to users.  Internal errors use the pattern `some_code::human message`
+/// so that the command handler can inspect the code programmatically.  Only
+/// the human portion after `::` should reach the UI.
+fn strip_error_prefix(message: &str) -> &str {
+    match message.split_once("::") {
+        Some((_, human)) if !human.is_empty() => human,
+        _ => message,
+    }
 }
 
 #[tauri::command]
@@ -1555,6 +1781,201 @@ pub async fn get_workspace_git_snapshot(
     }
 }
 
+fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
+    git_command_output(root, args, true)
+}
+
+/// Parse a full remote ref (e.g. "origin/feature/demo") into its (remote, branch) components.
+/// Returns None if the ref is empty, has no slash, or ends with "/HEAD".
+fn parse_remote_ref(name: &str) -> Option<(&str, &str)> {
+    let normalized = name.trim();
+    if normalized.is_empty() || normalized.ends_with("/HEAD") {
+        return None;
+    }
+    normalized
+        .split_once('/')
+        .filter(|(remote, branch)| !remote.is_empty() && !branch.is_empty())
+}
+
+// Keep the original helper for callers that only need the branch name.
+#[cfg(test)]
+fn normalize_remote_branch_name(name: &str) -> Option<String> {
+    parse_remote_ref(name).map(|(_, branch)| branch.to_string())
+}
+
+fn parse_changed_files_summary(status_output: &str) -> Vec<WorkspaceGitChangedFileSummaryDto> {
+    status_output
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let status = line[..2].trim().to_string();
+            let path = line[3..].trim().replace('\\', "/");
+            if path.is_empty() {
+                return None;
+            }
+            Some(WorkspaceGitChangedFileSummaryDto { path, status })
+        })
+        .collect()
+}
+
+fn build_workspace_branch_snapshot_with_git_runner<F>(
+    root: &Path,
+    git_runner: F,
+) -> Result<WorkspaceBranchSnapshotDto, String>
+where
+    F: Fn(&Path, &[&str]) -> Result<String, String>,
+{
+    // Determine current branch or detached HEAD state
+    let head_ref = git_runner(root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map_err(|error| format!("git_unavailable::{error}"))?;
+
+    let is_detached_head = head_ref.trim() == "HEAD";
+    let current_branch = if is_detached_head {
+        None
+    } else {
+        Some(head_ref.trim().to_string())
+    };
+    let detached_head_ref = if is_detached_head {
+        git_runner(root, &["rev-parse", "--short", "HEAD"]).ok()
+    } else {
+        None
+    };
+
+    let local_raw = git_runner(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)",
+            "refs/heads/",
+        ],
+    )
+    .map_err(|error| format!("git_local_branches_failed::{error}"))?;
+
+    let remote_raw = git_runner(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+    )
+    .map_err(|error| format!("git_remote_branches_failed::{error}"))?;
+
+    // Parse remote refs preserving full identity: (branch_name, remote_name, full_ref).
+    // Multiple remotes may have the same branch name (e.g. "origin/develop" and
+    // "upstream/develop"), so we keep all of them keyed by branch_name.
+    let mut remote_refs: Vec<(String, String, String)> = Vec::new(); // (branch_name, remote_name, full_ref)
+    let mut remote_branch_names = HashSet::new();
+    for line in remote_raw.lines() {
+        if let Some((remote, branch)) = parse_remote_ref(line.trim()) {
+            remote_branch_names.insert(branch.to_string());
+            remote_refs.push((
+                branch.to_string(),
+                remote.to_string(),
+                line.trim().to_string(),
+            ));
+        }
+    }
+
+    let mut branches: Vec<WorkspaceGitBranchDto> = Vec::new();
+    let mut local_branch_names = HashSet::new();
+
+    for line in local_raw.lines() {
+        let parts: Vec<&str> = line.splitn(3, '\t').collect();
+        let name = parts.first().map(|s| s.trim()).unwrap_or("").to_string();
+        if name.is_empty() {
+            continue;
+        }
+        let upstream = parts
+            .get(1)
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string);
+        let is_current = parts.get(2).map(|s| s.trim()) == Some("*");
+        let is_remote_tracking_candidate =
+            upstream.is_some() || remote_branch_names.contains(name.as_str());
+        let kind = if is_current {
+            "current".to_string()
+        } else {
+            "local".to_string()
+        };
+
+        local_branch_names.insert(name.clone());
+        branches.push(WorkspaceGitBranchDto {
+            name,
+            kind,
+            is_current,
+            upstream,
+            is_remote_tracking_candidate,
+            remote_name: None,
+            remote_ref: None,
+        });
+    }
+
+    // Emit one DTO per remote ref.  If two remotes have the same branch name
+    // we emit both — each carries its own remote_name and remote_ref so the
+    // frontend and backend can always refer to the exact tracking source.
+    for (branch_name, remote_name, full_ref) in remote_refs {
+        // Skip if a local branch with the same name already exists; that local
+        // branch takes precedence and the upstream field already records the
+        // remote ref.
+        if local_branch_names.contains(&branch_name) {
+            continue;
+        }
+
+        branches.push(WorkspaceGitBranchDto {
+            name: branch_name,
+            kind: "remote".to_string(),
+            is_current: false,
+            upstream: None,
+            is_remote_tracking_candidate: true,
+            remote_name: Some(remote_name),
+            remote_ref: Some(full_ref),
+        });
+    }
+
+    let status_output = git_runner(root, &["status", "--porcelain"])
+        .map_err(|error| format!("git_status_failed::{error}"))?;
+    let changed_files_summary = parse_changed_files_summary(&status_output);
+    let has_uncommitted_changes = !changed_files_summary.is_empty();
+
+    Ok(WorkspaceBranchSnapshotDto {
+        current_branch,
+        is_detached_head,
+        detached_head_ref,
+        branches,
+        has_uncommitted_changes,
+        changed_files_summary,
+    })
+}
+
+fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapshotDto, String> {
+    build_workspace_branch_snapshot_with_git_runner(root, git_output)
+}
+
+#[tauri::command]
+pub async fn get_workspace_branches(
+    workspace_root: String,
+) -> ApiResponse<WorkspaceBranchSnapshotDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_branches_failed::{error}"))?;
+        build_workspace_branch_snapshot(&root)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
+        Ok(Err(message)) => {
+            // Internal errors use `<code>::<human>` format; extract both parts.
+            let (code, user_message) = match message.split_once("::") {
+                Some((code, human)) if !code.is_empty() && !human.is_empty() => (code, human),
+                _ => ("git_branches_failed", message.as_str()),
+            };
+            ApiResponse::err(code, user_message)
+        }
+        Err(error) => ApiResponse::err("git_branches_failed", &error.to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     let session_handle = get_dap_session_handle();
@@ -1577,6 +1998,156 @@ pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     store.active_column = None;
     store.active_thread_id = None;
     ApiResponse::ok(())
+}
+
+fn collect_dirty_files(root: &Path) -> Result<Vec<String>, String> {
+    let output = git_output(root, &["status", "--porcelain"])?;
+    let files = output
+        .lines()
+        .filter_map(|line| {
+            if line.len() < 4 {
+                return None;
+            }
+            let path = line[3..].trim().to_string();
+            if path.is_empty() {
+                None
+            } else {
+                Some(path)
+            }
+        })
+        .collect();
+    Ok(files)
+}
+
+fn local_branch_exists(root: &Path, branch: &str) -> Result<bool, String> {
+    let output = git_output(
+        root,
+        &[
+            "for-each-ref",
+            "--format=%(refname:short)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )?;
+    Ok(!output.trim().is_empty())
+}
+
+fn commit_dirty_changes(root: &Path, message: Option<&str>) -> Result<(), String> {
+    git_output(root, &["add", "-A"])?;
+    let commit_message = message
+        .map(str::trim)
+        .filter(|m| !m.is_empty())
+        .unwrap_or("WIP: auto-commit before branch switch");
+    git_output(root, &["commit", "-m", commit_message])?;
+    Ok(())
+}
+
+fn stash_dirty_changes(root: &Path) -> Result<(), String> {
+    git_output(root, &["stash", "push", "--include-untracked"])?;
+    Ok(())
+}
+
+fn discard_dirty_changes(root: &Path) -> Result<(), String> {
+    git_output(root, &["reset", "--hard", "HEAD"])?;
+    git_output(root, &["clean", "-fd"])?;
+    Ok(())
+}
+
+fn find_remote_ref_for_branch(root: &Path, branch: &str) -> Option<String> {
+    // Ask git for all remote refs that match this branch name.
+    // We take the first one (typically "origin/<branch>") when no explicit ref
+    // was supplied by the caller.
+    let output = git_output(
+        root,
+        &["for-each-ref", "--format=%(refname:short)", "refs/remotes/"],
+    )
+    .ok()?;
+    output.lines().find_map(|line| {
+        parse_remote_ref(line.trim())
+            .filter(|(_, b)| *b == branch)
+            .map(|_| line.trim().to_string())
+    })
+}
+
+fn execute_branch_switch(
+    root: &Path,
+    request: SwitchWorkspaceBranchRequestDto,
+) -> Result<(), String> {
+    let dirty_files = collect_dirty_files(root)?;
+    if !dirty_files.is_empty() {
+        match request.pre_switch_action.as_str() {
+            "commit" => commit_dirty_changes(root, request.commit_message.as_deref())?,
+            "stash" => stash_dirty_changes(root)?,
+            "discard" => discard_dirty_changes(root)?,
+            "none" => {
+                return Err("git_branch_dirty_action_required".to_string());
+            }
+            other => return Err(format!("unsupported pre-switch action: {other}")),
+        }
+    }
+
+    if local_branch_exists(root, &request.target_branch)? {
+        git_output(root, &["switch", &request.target_branch])?;
+    } else {
+        // Determine the remote ref to track.  Prefer the explicit ref carried
+        // in the request (set by the frontend when the user picked a remote
+        // branch DTO that has a remote_ref field).  Fall back to scanning the
+        // remote refs ourselves so that callers which don't supply it still
+        // work for simple single-remote repos.
+        let tracking = request
+            .remote_ref
+            .as_deref()
+            .filter(|r| !r.trim().is_empty())
+            .map(str::to_string)
+            .or_else(|| find_remote_ref_for_branch(root, &request.target_branch));
+
+        if let Some(remote_ref) = tracking {
+            git_output(
+                root,
+                &[
+                    "switch",
+                    "-c",
+                    &request.target_branch,
+                    "--track",
+                    &remote_ref,
+                ],
+            )?;
+        } else {
+            // No remote ref found: create a plain local branch.
+            git_output(root, &["switch", "-c", &request.target_branch])?;
+        }
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn switch_workspace_branch(
+    request: SwitchWorkspaceBranchRequestDto,
+) -> ApiResponse<WorkspaceBranchSnapshotDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_branch_switch_failed::{error}"))?;
+        execute_branch_switch(&root, request)?;
+        build_workspace_branch_snapshot(&root)
+            .map_err(|error| format!("git_branch_switch_failed::{error}"))
+    })
+    .await;
+
+    match result {
+        Ok(Ok(snapshot)) => ApiResponse::ok(snapshot),
+        Ok(Err(message)) if message == "git_branch_dirty_action_required" => {
+            ApiResponse::err(
+                "git_branch_dirty_action_required",
+                "Working tree has uncommitted changes. Please commit, stash, or discard them before switching branches.",
+            )
+        }
+        Ok(Err(message)) => {
+            // Strip any internal protocol prefix before surfacing to the UI.
+            let user_message = strip_error_prefix(&message);
+            ApiResponse::err("git_branch_switch_failed", user_message)
+        }
+        Err(error) => ApiResponse::err("git_branch_switch_failed", &error.to_string()),
+    }
 }
 
 fn validate_go_analysis_path(relative_path: &str) -> Result<(), String> {
@@ -1630,6 +2201,101 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
     Ok(())
 }
 
+/// Checks that a directory contains at least one `.go` file with `package main`.
+/// Returns an error if the directory has no Go files, or all Go files declare a
+/// non-`main` package — i.e. the package is a library and cannot be run or
+/// debugged directly.
+fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
+    let entries = std_fs::read_dir(package_dir)
+        .map_err(|error| format!("cannot read package directory: {error}"))?;
+
+    let mut found_go_file = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("go") {
+            continue;
+        }
+        // Skip test files — they always declare `package X` or `package X_test`
+        // but we still want to allow debugging a package that only has tests.
+        found_go_file = true;
+        let content = match std_fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(_) => continue,
+        };
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("//") {
+                continue;
+            }
+            if trimmed.starts_with("package ") {
+                let package_name = trimmed
+                    .trim_start_matches("package ")
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or("");
+                if package_name == "main" {
+                    return Ok(());
+                }
+                break;
+            }
+        }
+    }
+
+    if !found_go_file {
+        return Err("not a runnable Go package: directory contains no .go files".to_string());
+    }
+
+    Err(
+        "not a runnable Go package: package is a library (no 'package main' declaration found)"
+            .to_string(),
+    )
+}
+
+/// Resolved debug target, holding the package directory and the Go package
+/// pattern suitable for use with `dlv dap` launch arguments (e.g. `./cmd/app`).
+#[derive(Debug)]
+pub struct DebugTarget {
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub package_dir: PathBuf,
+    pub package_pattern: String,
+}
+
+/// Resolves a workspace-relative file path to a runnable Go package target.
+///
+/// Returns an error if:
+/// - the file does not exist
+/// - the resolved directory escapes the workspace root
+/// - the package is not runnable (no `package main`)
+pub fn resolve_debug_target(
+    workspace_root: &Path,
+    active_relative_path: &str,
+) -> Result<DebugTarget, String> {
+    let canonical_root = workspace_root
+        .canonicalize()
+        .map_err(|error| format!("workspace root does not exist: {error}"))?;
+    let absolute = canonical_root.join(active_relative_path);
+    let canonical = absolute.canonicalize().map_err(|error| error.to_string())?;
+    let package_dir = canonical
+        .parent()
+        .ok_or_else(|| "active file has no parent directory".to_string())?;
+    let relative_dir = package_dir
+        .strip_prefix(&canonical_root)
+        .map_err(|_| "debug target escapes workspace root".to_string())?;
+
+    let package_pattern = if relative_dir.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        format!("./{}", relative_dir.to_string_lossy().replace('\\', "/"))
+    };
+
+    validate_runnable_go_package(package_dir)?;
+
+    Ok(DebugTarget {
+        package_dir: package_dir.to_path_buf(),
+        package_pattern,
+    })
+}
+
 fn validate_workspace_scoped_go_path(
     workspace_root: &str,
     relative_path: &str,
@@ -1659,19 +2325,386 @@ fn validate_workspace_scoped_go_path(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Shell session – global store and Tauri commands
+// ---------------------------------------------------------------------------
+
+static SHELL_SESSIONS: std::sync::OnceLock<ShellSessionStore> = std::sync::OnceLock::new();
+
+fn get_shell_sessions_handle() -> ShellSessionStore {
+    SHELL_SESSIONS
+        .get_or_init(|| Arc::new(Mutex::new(ShellSessionState::default())))
+        .clone()
+}
+
+#[tauri::command]
+pub async fn ensure_shell_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    request: EnsureShellSessionRequestDto,
+) -> ApiResponse<EnsureShellSessionResponseDto> {
+    match ensure_shell_session_inner(
+        app,
+        get_shell_sessions_handle(),
+        &request.workspace_root,
+        &request.surface_key,
+        request.cwd_relative_path.as_deref(),
+    )
+    .await
+    {
+        Ok(response) => ApiResponse::ok(EnsureShellSessionResponseDto {
+            shell_session_id: response.shell_session_id,
+            reused: response.reused,
+            shell_health: response.shell_health,
+            selected_shell: response.selected_shell,
+            replay: response.replay,
+        }),
+        Err(error) => ApiResponse::err("shell_session_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn write_shell_input(request: ShellInputRequestDto) -> ApiResponse<()> {
+    match write_shell_input_inner(
+        get_shell_sessions_handle(),
+        &request.shell_session_id,
+        &request.data,
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_input_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn resize_shell_session(request: ShellResizeRequestDto) -> ApiResponse<()> {
+    match resize_shell_session_inner(
+        get_shell_sessions_handle(),
+        &request.shell_session_id,
+        request.cols,
+        request.rows,
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_resize_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn dispose_shell_session(request: DisposeShellSessionRequestDto) -> ApiResponse<()> {
+    match dispose_shell_session_inner(get_shell_sessions_handle(), &request.shell_session_id).await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("shell_dispose_failed", &error.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        deactivate_deep_trace, debugger_toggle_breakpoint, get_dap_session_handle,
-        get_runtime_signals, get_runtime_signals_handle, validate_completion_cursor,
-        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
-        validate_workspace_scoped_go_path,
+        build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
+        debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
+        get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
+        map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
+        resolve_debug_target, search_with_git_grep, start_debug_session_internal_for_test, strip_error_prefix,
+        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
+        validate_go_completion_path, validate_go_diagnostics_path,
+        validate_workspace_scoped_go_path, RuntimeSignalStore,
     };
-    use std::sync::OnceLock;
-    use crate::ui_bridge::types::ToggleBreakpointRequestDto;
+    use crate::ui_bridge::types::{
+        StartDebugSessionRequestDto, SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto,
+    };
+    use std::collections::HashMap;
     use std::fs;
+    use std::process::Command;
+    use std::sync::OnceLock;
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::sync::Mutex;
+
+    fn unique_suffix() -> u128 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock must be after unix epoch")
+            .as_nanos()
+    }
+
+    fn create_temp_workspace(label: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("goide_{label}_{}", unique_suffix()));
+        fs::create_dir_all(&dir).expect("create temp workspace dir");
+        dir
+    }
+
+    fn init_git_repo(dir: &std::path::PathBuf) {
+        let init_result = Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(dir)
+            .output()
+            .expect("git init should spawn");
+
+        if !init_result.status.success() {
+            git(dir, &["init"]);
+            git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
+        }
+
+        git(dir, &["config", "user.email", "test@goide.test"]);
+        git(dir, &["config", "user.name", "GoIDE Test"]);
+    }
+
+    fn git(dir: &std::path::PathBuf, args: &[&str]) {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git command failed to spawn");
+        if !output.status.success() {
+            panic!(
+                "git command failed: git {}\nstdout: {}\nstderr: {}",
+                args.join(" "),
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
+
+    fn write_file(path: std::path::PathBuf, content: &str) {
+        fs::write(path, content).expect("write temp file");
+    }
+
+    fn add_commit(dir: &std::path::PathBuf, path: &str, content: &str, message: &str) {
+        write_file(dir.join(path), content);
+        git(dir, &["add", path]);
+        git(dir, &["commit", "-m", message]);
+    }
+
+    #[test]
+    fn search_with_git_grep_treats_query_as_plain_text() {
+        let repo_dir = create_temp_workspace("search_git_grep_plain_text");
+        init_git_repo(&repo_dir);
+        add_commit(
+            &repo_dir,
+            "main.go",
+            "package main\n\nfunc main() { println(\"[\") }\n",
+            "add searchable file",
+        );
+
+        let results = search_with_git_grep(&repo_dir, "[").expect("git grep should succeed");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "main.go");
+        assert_eq!(results[0].matches.len(), 1);
+        assert_eq!(results[0].matches[0].line, 3);
+        assert!(
+            results[0].matches[0].preview.contains('['),
+            "preview should preserve the literal query match"
+        );
+    }
+
+    fn add_remote(dir: &std::path::PathBuf, name: &str) -> std::path::PathBuf {
+        let remote_dir = create_temp_workspace(&format!("remote_{name}"));
+        git(&remote_dir, &["init", "--bare"]);
+        git(
+            dir,
+            &[
+                "remote",
+                "add",
+                name,
+                remote_dir.to_str().expect("remote path"),
+            ],
+        );
+        remote_dir
+    }
+
+    fn init_bare_git_repo(dir: &std::path::PathBuf) {
+        git(dir, &["init", "--bare"]);
+    }
+
+    fn clone_git_repo(remote: &std::path::PathBuf, local: &std::path::PathBuf) {
+        let output = Command::new("git")
+            .args([
+                "clone",
+                remote.to_str().expect("remote path"),
+                local.to_str().expect("local path"),
+            ])
+            .output()
+            .expect("git clone should spawn");
+        if !output.status.success() {
+            panic!(
+                "git clone failed:\nstdout: {}\nstderr: {}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        git(local, &["config", "user.email", "test@goide.test"]);
+        git(local, &["config", "user.name", "GoIDE Test"]);
+    }
+
+    fn git_output_in_test(dir: &std::path::PathBuf, args: &[&str]) -> Result<String, String> {
+        let output = Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !output.status.success() {
+            return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
+    fn create_dirty_git_repo(label: &str) -> std::path::PathBuf {
+        let repo_dir = create_temp_workspace(label);
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        // Leave a dirty file in the working tree
+        write_file(repo_dir.join("dirty.txt"), "dirty content\n");
+        repo_dir
+    }
+
+    fn assert_head_branch(dir: &std::path::PathBuf, expected: &str) {
+        let current = git_output_in_test(dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+            .expect("head branch should be readable");
+        assert_eq!(current, expected);
+    }
+
+    fn assert_clean_worktree(dir: &std::path::PathBuf) {
+        let status =
+            git_output_in_test(dir, &["status", "--porcelain"]).expect("status should be readable");
+        assert!(status.is_empty(), "expected clean worktree, got: {status}");
+    }
+
+    #[tokio::test]
+    async fn get_workspace_branches_lists_current_local_remote_and_dirty_state_details() {
+        let repo_dir = create_temp_workspace("branch_snapshot_repo");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "hello\n", "init");
+        git(&repo_dir, &["branch", "develop"]);
+
+        let _remote_dir = add_remote(&repo_dir, "origin");
+        git(&repo_dir, &["push", "-u", "origin", "main"]);
+
+        let feature_branch_name = "feature/remote-only";
+        git(&repo_dir, &["checkout", "-b", feature_branch_name]);
+        add_commit(
+            &repo_dir,
+            "feature.txt",
+            "remote feature\n",
+            "add remote feature",
+        );
+        git(&repo_dir, &["push", "-u", "origin", feature_branch_name]);
+        git(&repo_dir, &["checkout", "main"]);
+        git(&repo_dir, &["branch", "-D", feature_branch_name]);
+        write_file(repo_dir.join("dirty.txt"), "dirty\n");
+
+        let response = get_workspace_branches(repo_dir.to_string_lossy().to_string()).await;
+
+        assert!(response.ok, "get_workspace_branches should succeed");
+        let snapshot = response.data.expect("snapshot should be present");
+        assert_eq!(snapshot.current_branch.as_deref(), Some("main"));
+        assert!(
+            snapshot.has_uncommitted_changes,
+            "working tree changes should be reflected in snapshot"
+        );
+        assert!(
+            snapshot
+                .changed_files_summary
+                .iter()
+                .any(|file| file.path == "dirty.txt" && file.status == "??"),
+            "dirty state summary should include untracked file"
+        );
+
+        let branch_map: HashMap<&str, (&str, bool, Option<&str>)> = snapshot
+            .branches
+            .iter()
+            .map(|branch| {
+                (
+                    branch.name.as_str(),
+                    (
+                        branch.kind.as_str(),
+                        branch.is_remote_tracking_candidate,
+                        branch.upstream.as_deref(),
+                    ),
+                )
+            })
+            .collect();
+
+        assert_eq!(
+            branch_map.get("main"),
+            Some(&("current", true, Some("origin/main")))
+        );
+        assert_eq!(branch_map.get("develop"), Some(&("local", false, None)));
+        assert_eq!(
+            branch_map.get("feature/remote-only"),
+            Some(&("remote", true, None)),
+            "remote branch should be present with normalized name and remote kind"
+        );
+        assert!(
+            !branch_map.contains_key("origin/feature/remote-only"),
+            "remote branch DTO name should not include remote prefix"
+        );
+    }
+
+    #[test]
+    fn normalize_remote_branch_name_removes_remote_prefix() {
+        assert_eq!(
+            normalize_remote_branch_name("origin/feature/demo"),
+            Some("feature/demo".to_string())
+        );
+        assert_eq!(normalize_remote_branch_name("origin/HEAD"), None);
+        assert_eq!(normalize_remote_branch_name(""), None);
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_local_branch_listing_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-local-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Err("local refs failed".to_string())
+            }
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("local branch enumeration errors should propagate");
+
+        assert!(error.contains("git_local_branches_failed::local refs failed"));
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_remote_branch_listing_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-remote-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Ok("main\torigin/main\t*\n".to_string())
+            }
+            ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                Err("remote refs failed".to_string())
+            }
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("remote branch enumeration errors should propagate");
+
+        assert!(error.contains("git_remote_branches_failed::remote refs failed"));
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_propagates_status_failures() {
+        let root = std::path::Path::new("/tmp/branch-snapshot-status-error");
+        let error = build_workspace_branch_snapshot_with_git_runner(root, |_, args| match args {
+            ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+            ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                Ok("main\torigin/main\t*\n".to_string())
+            }
+            ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                Ok("origin/main\n".to_string())
+            }
+            ["status", "--porcelain"] => Err("status failed".to_string()),
+            _ => panic!("unexpected git args: {args:?}"),
+        })
+        .expect_err("git status errors should propagate");
+
+        assert!(error.contains("git_status_failed::status failed"));
+    }
 
     fn shared_state_test_lock() -> &'static Mutex<()> {
         static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -1837,7 +2870,10 @@ mod tests {
             line: 12,
         })
         .await;
-        assert!(first.ok, "should allow storing breakpoints before debug starts");
+        assert!(
+            first.ok,
+            "should allow storing breakpoints before debug starts"
+        );
         let first_state = first.data.expect("state payload should be returned");
         assert!(!first_state.session_active);
         assert_eq!(first_state.breakpoints.len(), 1);
@@ -1873,10 +2909,575 @@ mod tests {
         }
 
         let response = deactivate_deep_trace().await;
-        assert!(response.ok, "deactivate should succeed without a live session");
+        assert!(
+            response.ok,
+            "deactivate should succeed without a live session"
+        );
 
         let store = signals_handle.lock().await;
         assert_eq!(store.breakpoints.get("main.go"), Some(&vec![7, 9]));
         assert!(!store.healthy);
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_creates_tracking_branch_for_remote_only_target() {
+        let remote_dir = create_temp_workspace("branch_switch_remote");
+        init_bare_git_repo(&remote_dir);
+
+        let local_dir = create_temp_workspace("branch_switch_local");
+        clone_git_repo(&remote_dir, &local_dir);
+        // The clone starts with no commits on main; create an initial commit first
+        add_commit(&local_dir, "README.md", "main\n", "init");
+        git(&local_dir, &["push", "-u", "origin", "main"]);
+        git(&local_dir, &["switch", "-c", "develop"]);
+        write_file(local_dir.join("README.md"), "dev\n");
+        git(&local_dir, &["add", "README.md"]);
+        git(&local_dir, &["commit", "-m", "dev"]);
+        git(&local_dir, &["push", "-u", "origin", "develop"]);
+        git(&local_dir, &["switch", "main"]);
+        git(&local_dir, &["branch", "-D", "develop"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: local_dir.to_string_lossy().to_string(),
+            target_branch: "develop".to_string(),
+            remote_ref: None,
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "switch to remote-only branch should succeed");
+        let current =
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
+        assert_eq!(current, "develop");
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_requires_user_action_when_worktree_is_dirty() {
+        let repo_dir = create_dirty_git_repo("branch_switch_dirty");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(
+            !response.ok,
+            "dirty worktree with 'none' action should fail"
+        );
+        assert_eq!(
+            response.error.expect("error").code,
+            "git_branch_dirty_action_required"
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_switches_to_existing_local_branch_on_clean_tree() {
+        let repo_dir = create_temp_workspace("branch_switch_clean_local");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "clean local branch switch should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_commit_action_commits_changes_before_switching() {
+        let repo_dir = create_temp_workspace("branch_switch_commit_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "commit".to_string(),
+            commit_message: Some("save branch switch work".to_string()),
+        })
+        .await;
+
+        assert!(response.ok, "commit action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let original_branch_commit_subject =
+            git_output_in_test(&repo_dir, &["log", "main", "-1", "--pretty=%s"])
+                .expect("original branch latest commit subject");
+        assert_eq!(original_branch_commit_subject, "save branch switch work");
+        let committed_files =
+            git_output_in_test(&repo_dir, &["show", "--pretty=", "--name-only", "main"])
+                .expect("original branch latest commit files");
+        assert!(committed_files.lines().any(|line| line == "README.md"));
+        assert!(committed_files.lines().any(|line| line == "notes.txt"));
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_stash_action_stashes_changes_before_switching() {
+        let repo_dir = create_temp_workspace("branch_switch_stash_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "stash".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "stash action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let stash_list = git_output_in_test(&repo_dir, &["stash", "list"]).expect("stash list");
+        assert!(
+            stash_list.lines().any(|line| line.contains("WIP on main")),
+            "stash action should create a stash entry, got: {stash_list}"
+        );
+    }
+
+    #[tokio::test]
+    async fn switch_workspace_branch_discard_action_resets_staged_and_untracked_changes_before_switching(
+    ) {
+        let repo_dir = create_temp_workspace("branch_switch_discard_action");
+        init_git_repo(&repo_dir);
+        add_commit(&repo_dir, "README.md", "initial\n", "init");
+        git(&repo_dir, &["branch", "feature"]);
+        write_file(repo_dir.join("README.md"), "updated\n");
+        git(&repo_dir, &["add", "README.md"]);
+        write_file(repo_dir.join("notes.txt"), "notes\n");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "discard".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(response.ok, "discard action should succeed");
+        assert_head_branch(&repo_dir, "feature");
+        assert_clean_worktree(&repo_dir);
+        let readme_contents = fs::read_to_string(repo_dir.join("README.md")).expect("read README");
+        assert_eq!(readme_contents.replace("\r\n", "\n"), "initial\n");
+        assert!(
+            !repo_dir.join("notes.txt").exists(),
+            "discard action should remove untracked files"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocker 1: Remote branch identity – non-origin remote and duplicate names
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn switch_workspace_branch_uses_explicit_remote_ref_for_non_origin_remote() {
+        // Set up a repo with an "upstream" remote (not "origin") that has a
+        // "develop" branch.  The caller passes remote_ref = "upstream/develop".
+        let upstream_bare = create_temp_workspace("upstream_bare");
+        init_bare_git_repo(&upstream_bare);
+
+        let local_dir = create_temp_workspace("non_origin_local");
+        init_git_repo(&local_dir);
+        add_commit(&local_dir, "README.md", "main\n", "init");
+
+        // Add "upstream" as the remote (not "origin").
+        let upstream_path = upstream_bare.to_str().expect("upstream path");
+        git(&local_dir, &["remote", "add", "upstream", upstream_path]);
+        git(&local_dir, &["push", "upstream", "main:main"]);
+
+        // Create the "develop" branch on the upstream remote directly.
+        git(&local_dir, &["switch", "-c", "develop"]);
+        add_commit(&local_dir, "dev.txt", "dev\n", "dev commit");
+        git(&local_dir, &["push", "upstream", "develop:develop"]);
+        git(&local_dir, &["switch", "main"]);
+        git(&local_dir, &["branch", "-D", "develop"]);
+        git(&local_dir, &["fetch", "upstream"]);
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: local_dir.to_string_lossy().to_string(),
+            target_branch: "develop".to_string(),
+            // Explicitly tell the backend which remote ref to track.
+            remote_ref: Some("upstream/develop".to_string()),
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(
+            response.ok,
+            "switch using explicit non-origin remote_ref should succeed"
+        );
+        let current =
+            git_output_in_test(&local_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).expect("head");
+        assert_eq!(current, "develop");
+        // Verify that the new local branch tracks the upstream remote.
+        let tracking = git_output_in_test(
+            &local_dir,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .expect("upstream tracking ref");
+        assert_eq!(tracking, "upstream/develop");
+    }
+
+    #[test]
+    fn build_workspace_branch_snapshot_emits_full_remote_identity_per_ref() {
+        // A repo with two remotes both having a "develop" branch should produce
+        // two remote DTOs – one per remote – each carrying the correct
+        // remote_name and remote_ref.
+        let root = std::path::Path::new("/tmp/multi-remote-snapshot");
+
+        let snapshot = build_workspace_branch_snapshot_with_git_runner(root, |_, args| {
+            match args {
+                ["rev-parse", "--abbrev-ref", "HEAD"] => Ok("main\n".to_string()),
+                ["for-each-ref", "--format=%(refname:short)\t%(upstream:short)\t%(HEAD)", "refs/heads/"] => {
+                    Ok("main\torigin/main\t*\n".to_string())
+                }
+                ["for-each-ref", "--format=%(refname:short)", "refs/remotes/"] => {
+                    // Two remotes both expose "develop".
+                    Ok("origin/main\norigin/develop\nupstream/develop\n".to_string())
+                }
+                ["status", "--porcelain"] => Ok(String::new()),
+                _ => panic!("unexpected git args: {args:?}"),
+            }
+        })
+        .expect("snapshot should succeed");
+
+        // Collect the two remote "develop" DTOs.
+        let develop_remotes: Vec<_> = snapshot
+            .branches
+            .iter()
+            .filter(|b| b.name == "develop" && b.kind == "remote")
+            .collect();
+
+        assert_eq!(
+            develop_remotes.len(),
+            2,
+            "both origin/develop and upstream/develop should produce separate DTOs"
+        );
+
+        let origin_dto = develop_remotes
+            .iter()
+            .find(|b| b.remote_name.as_deref() == Some("origin"))
+            .expect("origin/develop DTO should be present");
+        assert_eq!(origin_dto.remote_ref.as_deref(), Some("origin/develop"));
+
+        let upstream_dto = develop_remotes
+            .iter()
+            .find(|b| b.remote_name.as_deref() == Some("upstream"))
+            .expect("upstream/develop DTO should be present");
+        assert_eq!(upstream_dto.remote_ref.as_deref(), Some("upstream/develop"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Blocker 2: Error message sanitization
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn strip_error_prefix_removes_code_prefix_from_message() {
+        assert_eq!(
+            strip_error_prefix(
+                "git_branches_failed::workspace root does not exist: No such file or directory"
+            ),
+            "workspace root does not exist: No such file or directory"
+        );
+    }
+
+    #[test]
+    fn strip_error_prefix_returns_message_unchanged_when_no_prefix() {
+        assert_eq!(
+            strip_error_prefix("git command failed"),
+            "git command failed"
+        );
+    }
+
+    #[test]
+    fn strip_error_prefix_returns_message_unchanged_for_empty_human_part() {
+        // A bare "::" with nothing after should be returned as-is.
+        let raw = "git_failed::";
+        let result = strip_error_prefix(raw);
+        // The human part is empty so the original string is returned.
+        assert_eq!(result, raw);
+    }
+
+    #[test]
+    fn parse_remote_ref_returns_remote_and_branch() {
+        assert_eq!(
+            parse_remote_ref("origin/develop"),
+            Some(("origin", "develop"))
+        );
+        assert_eq!(
+            parse_remote_ref("upstream/feature/my-feat"),
+            Some(("upstream", "feature/my-feat"))
+        );
+    }
+
+    #[test]
+    fn parse_remote_ref_rejects_head_and_empty() {
+        assert_eq!(parse_remote_ref("origin/HEAD"), None);
+        assert_eq!(parse_remote_ref(""), None);
+        assert_eq!(parse_remote_ref("  "), None);
+    }
+
+    #[tokio::test]
+    async fn dirty_dialog_cancel_path_does_not_switch_branch() {
+        // When the user cancels the dirty-tree dialog the frontend should simply
+        // not call switchWorkspaceBranch.  On the backend side, calling switch
+        // with pre_switch_action="none" on a dirty repo must return the
+        // structured error code and a human-readable message without any
+        // internal protocol prefix.
+        let repo_dir = create_dirty_git_repo("dirty_cancel_no_switch");
+
+        let response = switch_workspace_branch(SwitchWorkspaceBranchRequestDto {
+            workspace_root: repo_dir.to_string_lossy().to_string(),
+            target_branch: "feature".to_string(),
+            remote_ref: None,
+            pre_switch_action: "none".to_string(),
+            commit_message: None,
+        })
+        .await;
+
+        assert!(!response.ok, "canceling the dirty dialog should not switch");
+        let error = response.error.expect("error payload must be present");
+        assert_eq!(error.code, "git_branch_dirty_action_required");
+
+        // The user-facing message must not start with an internal prefix.
+        assert!(
+            !error.message.starts_with("git_"),
+            "user-facing message must not start with internal prefix, got: {}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("::"),
+            "user-facing message must not contain internal '::' separator, got: {}",
+            error.message
+        );
+
+        // The branch must not have changed.
+        assert_head_branch(&repo_dir, "main");
+    }
+
+    #[tokio::test]
+    async fn get_workspace_branches_error_message_is_sanitized() {
+        // Supplying a non-existent workspace root should surface a clean error
+        // without the internal "git_branches_failed::" prefix in the message.
+        let response =
+            get_workspace_branches("/this/path/does/absolutely/not/exist/anywhere".to_string())
+                .await;
+
+        assert!(!response.ok, "non-existent workspace should fail");
+        let error = response.error.expect("error payload must be present");
+
+        assert!(
+            !error.message.starts_with("git_"),
+            "user-facing message must not start with internal prefix, got: {}",
+            error.message
+        );
+        assert!(
+            !error.message.contains("::"),
+            "user-facing message must not contain '::' separator, got: {}",
+            error.message
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug target resolution — package-aware
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_cmd_package_target() {
+        let workspace = create_temp_workspace("debug_cmd_target");
+        init_git_repo(&workspace);
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
+        std::fs::create_dir_all(workspace.join("cmd/app")).unwrap();
+        write_file(
+            workspace.join("cmd/app/main.go"),
+            "package main\nfunc main() {}\n",
+        );
+
+        let resolved = resolve_debug_target(&workspace, "cmd/app/main.go").expect("target");
+
+        assert_eq!(
+            resolved.package_dir,
+            workspace.join("cmd/app").canonicalize().unwrap()
+        );
+        assert_eq!(resolved.package_pattern, "./cmd/app");
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_resolves_root_package_target() {
+        let workspace = create_temp_workspace("debug_root_target");
+        init_git_repo(&workspace);
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
+        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
+
+        let resolved = resolve_debug_target(&workspace, "main.go").expect("target");
+
+        assert_eq!(resolved.package_dir, workspace.canonicalize().unwrap());
+        assert_eq!(resolved.package_pattern, ".");
+    }
+
+    #[tokio::test]
+    async fn start_debug_session_rejects_non_runnable_target() {
+        let workspace = create_temp_workspace("debug_invalid_target");
+        init_git_repo(&workspace);
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
+        std::fs::create_dir_all(workspace.join("internal/logger")).unwrap();
+        write_file(
+            workspace.join("internal/logger/logger.go"),
+            "package logger\nfunc New() string { return \"ok\" }\n",
+        );
+
+        let error = resolve_debug_target(&workspace, "internal/logger/logger.go").unwrap_err();
+        assert!(error.contains("not a runnable Go package"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Debug session lifecycle — failure payload normalization
+    // -------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn start_debug_session_returns_user_facing_failure_when_delve_is_missing() {
+        let workspace = create_temp_workspace("debug_missing_dlv");
+        init_git_repo(&workspace);
+        write_file(
+            workspace.join("go.mod"),
+            "module example.com/app\n\ngo 1.22\n",
+        );
+        write_file(workspace.join("main.go"), "package main\nfunc main() {}\n");
+
+        let response = start_debug_session_internal_for_test(
+            &workspace,
+            StartDebugSessionRequestDto {
+                workspace_root: workspace.to_string_lossy().to_string(),
+                relative_path: "main.go".to_string(),
+            },
+            Some("missing-dlv"),
+        )
+        .await;
+
+        assert!(!response.ok);
+        let error = response.error.expect("error");
+        assert_eq!(error.code, "debug_session_start_failed");
+        assert!(
+            error.message.contains("Delve"),
+            "user-facing message should mention Delve, got: {}",
+            error.message
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debug_failure participates in production failure semantics
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debug_failure` produces the normalized failure shape
+    /// used by the production `start_debug_session_internal` spawn-failure path.
+    /// When the raw error carries an internal `code::` prefix, the helper must
+    /// strip it so only the human-readable portion reaches the `message` field.
+    #[test]
+    fn map_debug_failure_strips_internal_prefix_and_sets_correct_title() {
+        let failure = map_debug_failure(
+            "debug_session_start_failed",
+            "debug_session_start_failed::Delve binary not found in PATH",
+        );
+
+        assert_eq!(failure.code, "debug_session_start_failed");
+        assert_eq!(failure.title, "Debug session failed");
+        // The message field must contain only the human part, not the prefix.
+        assert_eq!(
+            failure.message, "Delve binary not found in PATH",
+            "map_debug_failure must strip the code:: prefix; got: {}",
+            failure.message
+        );
+        // details carries the original raw string for diagnostics.
+        assert!(
+            failure
+                .details
+                .as_deref()
+                .unwrap_or("")
+                .contains("debug_session_start_failed::"),
+            "details should preserve the original raw error"
+        );
+    }
+
+    // -------------------------------------------------------------------------
+    // Task 3 — map_debugger_state_snapshot is canonical source of truth for
+    // get_debugger_state status classification
+    // -------------------------------------------------------------------------
+
+    /// Proves that `map_debugger_state_snapshot` correctly classifies the full
+    /// range of session states. Because `get_debugger_state` now delegates all
+    /// status classification to this function, these invariants directly govern
+    /// production behavior of the command.
+    #[test]
+    fn map_debugger_state_snapshot_classifies_all_session_states() {
+        // idle: no active session, no failure
+        let idle_store = RuntimeSignalStore::default();
+        let idle_snapshot = map_debugger_state_snapshot(&idle_store, false, None);
+        assert_eq!(idle_snapshot.status, "idle");
+        assert!(!idle_snapshot.paused);
+        assert!(idle_snapshot.failure.is_none());
+
+        // running: session active, not paused
+        let running_store = RuntimeSignalStore {
+            paused: false,
+            ..RuntimeSignalStore::default()
+        };
+        let running_snapshot = map_debugger_state_snapshot(&running_store, true, None);
+        assert_eq!(running_snapshot.status, "running");
+        assert!(!running_snapshot.paused);
+
+        // paused: session active and paused
+        let paused_store = RuntimeSignalStore {
+            paused: true,
+            active_relative_path: Some("main.go".to_string()),
+            active_line: Some(10),
+            active_column: Some(1),
+            ..RuntimeSignalStore::default()
+        };
+        let paused_snapshot = map_debugger_state_snapshot(&paused_store, true, None);
+        assert_eq!(paused_snapshot.status, "paused");
+        assert!(paused_snapshot.paused);
+        assert_eq!(
+            paused_snapshot.active_relative_path.as_deref(),
+            Some("main.go")
+        );
+
+        // failed: failure payload overrides session_active
+        let failure = map_debug_failure("debug_session_start_failed", "spawn error");
+        let failed_snapshot =
+            map_debugger_state_snapshot(&RuntimeSignalStore::default(), true, Some(failure));
+        assert_eq!(failed_snapshot.status, "failed");
+        assert!(failed_snapshot.failure.is_some());
     }
 }

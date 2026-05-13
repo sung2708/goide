@@ -21,6 +21,13 @@ For the full IDE experience, these commands must be available on `PATH`:
 
 The app runs a toolchain preflight and surfaces missing tools in the status bar and editor shell.
 
+## Terminal
+
+- Shell sessions are owned by the workspace and stay alive when you switch files.
+- The shell starts in the workspace root by default.
+- Bottom and right dock layouts keep separate persisted splitter sizes.
+- The Debug sidebar entry appears only when the current context supports debugging.
+
 ## Runtime behavior notes
 
 ### Runtime signal timeout

@@ -11,14 +11,22 @@ import type {
   DiagnosticsResponse,
   DebuggerState,
   FsEntry,
+  StartWorkspaceFsWatchResponse,
   RuntimeAvailabilityResponse,
   RuntimePanelSnapshot,
   RuntimeTopologySnapshot,
   RuntimeSignal,
   ToolchainStatus,
   ToggleBreakpointRequest,
+  WorkspaceBranchSnapshot,
   WorkspaceGitSnapshot,
   WorkspaceSearchFile,
+  SwitchWorkspaceBranchRequest,
+  EnsureShellSessionRequest,
+  EnsureShellSessionResponse,
+  ShellInputRequest,
+  ShellResizeRequest,
+  DisposeShellSessionRequest,
 } from "./types";
 
 function hasTauriInternals(): boolean {
@@ -57,6 +65,20 @@ export async function writeWorkspaceFile(
   });
 }
 
+export async function startWorkspaceFsWatch(
+  workspaceRoot: string
+): Promise<ApiResponse<StartWorkspaceFsWatchResponse>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: { workspaceRoot, mode: "watch" },
+    };
+  }
+  return invoke<ApiResponse<StartWorkspaceFsWatchResponse>>("start_workspace_fs_watch", {
+    workspaceRoot,
+  });
+}
+
 export async function analyzeActiveFileConcurrency(
   request: AnalyzeConcurrencyRequest
 ): Promise<ApiResponse<ConcurrencyConstruct[]>> {
@@ -90,6 +112,10 @@ export async function runWorkspaceFileWithRace(
     relativePath,
     runId,
   });
+}
+
+export async function stopCurrentRun(): Promise<ApiResponse<void>> {
+  return invoke<ApiResponse<void>>("stop_current_run");
 }
 
 export async function fetchWorkspaceDiagnostics(
@@ -330,6 +356,12 @@ export async function searchWorkspaceText(
   workspaceRoot: string,
   query: string
 ): Promise<ApiResponse<WorkspaceSearchFile[]>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: [],
+    };
+  }
   return invoke<ApiResponse<WorkspaceSearchFile[]>>("search_workspace_text", {
     workspaceRoot,
     query,
@@ -355,4 +387,86 @@ export async function getWorkspaceGitSnapshot(
       workspaceRoot,
     }
   );
+}
+
+export async function getWorkspaceBranches(
+  workspaceRoot: string,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("get_workspace_branches", {
+    workspaceRoot,
+  });
+}
+
+export async function switchWorkspaceBranch(
+  request: SwitchWorkspaceBranchRequest,
+): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
+    request,
+  });
+}
+
+// ---- Shell session client wrappers ----
+
+/**
+ * Ensure a shell session exists for the given workspace surface.
+ * Creates a new PTY session or returns the existing one.
+ *
+ * This wrapper is intentionally a no-op guard: in non-Tauri environments
+ * (tests, browser), it returns a stable mock response so the frontend can
+ * be wired and tested without the backend.
+ */
+export async function ensureShellSession(
+  request: EnsureShellSessionRequest
+): Promise<ApiResponse<EnsureShellSessionResponse>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        shellSessionId: `shell:${request.surfaceKey}`,
+        reused: false,
+        shellHealth: "launch",
+        selectedShell: null,
+        replay: "",
+      },
+    };
+  }
+  return invoke<ApiResponse<EnsureShellSessionResponse>>("ensure_shell_session", {
+    request,
+  });
+}
+
+/**
+ * Write raw PTY input to an active shell session.
+ */
+export async function writeShellInput(
+  request: ShellInputRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("write_shell_input", { request });
+}
+
+/**
+ * Notify the backend of a terminal resize for an active shell session.
+ */
+export async function resizeShellSession(
+  request: ShellResizeRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("resize_shell_session", { request });
+}
+
+/**
+ * Dispose (terminate) an active shell session.
+ */
+export async function disposeShellSession(
+  request: DisposeShellSessionRequest
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("dispose_shell_session", { request });
 }
