@@ -298,6 +298,68 @@ pub struct WorkspaceGitSnapshotDto {
     pub commits: Vec<WorkspaceGitCommitDto>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitFileActionRequestDto {
+    pub workspace_root: String,
+    pub relative_path: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitCommitRequestDto {
+    pub workspace_root: String,
+    pub message: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitCommitFileStatDto {
+    pub path: String,
+    pub additions: usize,
+    pub deletions: usize,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitCommitDetailDto {
+    pub hash: String,
+    pub short_hash: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub relative_time: String,
+    pub date_iso: String,
+    pub subject: String,
+    pub body: String,
+    pub files_changed: usize,
+    pub insertions: usize,
+    pub deletions: usize,
+    pub files: Vec<WorkspaceGitCommitFileStatDto>,
+    pub patch_preview: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitGraphEntryDto {
+    pub line: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceGitGraphCommitDto {
+    pub graph_prefix: String,
+    pub hash: String,
+    pub short_hash: String,
+    pub parents: Vec<String>,
+    pub author: String,
+    pub email: String,
+    pub date_iso: String,
+    pub relative_time: String,
+    pub refs: String,
+    pub subject: String,
+}
+
 #[derive(Debug, Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkspaceGitBranchDto {

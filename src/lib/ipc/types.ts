@@ -269,6 +269,56 @@ export type WorkspaceGitSnapshot = {
   commits: WorkspaceGitCommit[];
 };
 
+export type WorkspaceGitGraphEntry = {
+  line: string;
+};
+
+export type WorkspaceGitGraphCommit = {
+  graphPrefix: string;
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  dateIso: string;
+  relativeTime: string;
+  refs: string;
+  subject: string;
+};
+
+export type WorkspaceGitFileActionRequest = {
+  workspaceRoot: string;
+  relativePath: string;
+};
+
+export type WorkspaceGitCommitRequest = {
+  workspaceRoot: string;
+  message: string;
+};
+
+export type WorkspaceGitCommitFileStat = {
+  path: string;
+  additions: number;
+  deletions: number;
+};
+
+export type WorkspaceGitCommitDetail = {
+  hash: string;
+  shortHash: string;
+  parents: string[];
+  author: string;
+  email: string;
+  relativeTime: string;
+  dateIso: string;
+  subject: string;
+  body: string;
+  filesChanged: number;
+  insertions: number;
+  deletions: number;
+  files: WorkspaceGitCommitFileStat[];
+  patchPreview: string;
+};
+
 export type WorkspaceGitBranch = {
   name: string;
   kind: "current" | "local" | "remote";
