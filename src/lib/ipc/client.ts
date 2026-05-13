@@ -27,6 +27,11 @@ import type {
   ShellInputRequest,
   ShellResizeRequest,
   DisposeShellSessionRequest,
+  WorkspaceGitCommitDetail,
+  WorkspaceGitCommitRequest,
+  WorkspaceGitFileActionRequest,
+  WorkspaceGitGraphEntry,
+  WorkspaceGitGraphCommit,
 } from "./types";
 
 function hasTauriInternals(): boolean {
@@ -402,6 +407,86 @@ export async function switchWorkspaceBranch(
 ): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
   return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
     request,
+  });
+}
+
+export async function stageWorkspaceGitFile(
+  request: WorkspaceGitFileActionRequest,
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("stage_workspace_git_file", { request });
+}
+
+export async function unstageWorkspaceGitFile(
+  request: WorkspaceGitFileActionRequest,
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("unstage_workspace_git_file", { request });
+}
+
+export async function commitWorkspaceGitChanges(
+  request: WorkspaceGitCommitRequest,
+): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("commit_workspace_git_changes", { request });
+}
+
+export async function getWorkspaceCommitDetail(
+  workspaceRoot: string,
+  hash: string,
+): Promise<ApiResponse<WorkspaceGitCommitDetail>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: {
+        hash,
+        shortHash: hash.slice(0, 7),
+        parents: [],
+        author: "unknown",
+        email: "",
+        relativeTime: "just now",
+        dateIso: "",
+        subject: "",
+        body: "",
+        filesChanged: 0,
+        insertions: 0,
+        deletions: 0,
+        files: [],
+        patchPreview: "",
+      },
+    };
+  }
+  return invoke<ApiResponse<WorkspaceGitCommitDetail>>("get_workspace_commit_detail", {
+    workspaceRoot,
+    hash,
+  });
+}
+
+export async function getWorkspaceGitGraph(
+  workspaceRoot: string,
+): Promise<ApiResponse<WorkspaceGitGraphEntry[]>> {
+  if (!hasTauriInternals()) {
+    return { ok: true, data: [] };
+  }
+  return invoke<ApiResponse<WorkspaceGitGraphEntry[]>>("get_workspace_git_graph", {
+    workspaceRoot,
+  });
+}
+
+export async function getWorkspaceGitGraphCommits(
+  workspaceRoot: string,
+): Promise<ApiResponse<WorkspaceGitGraphCommit[]>> {
+  if (!hasTauriInternals()) {
+    return { ok: true, data: [] };
+  }
+  return invoke<ApiResponse<WorkspaceGitGraphCommit[]>>("get_workspace_git_graph_commits", {
+    workspaceRoot,
   });
 }
 

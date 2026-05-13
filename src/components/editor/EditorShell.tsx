@@ -13,6 +13,10 @@ import {
   writeWorkspaceFile,
   runWorkspaceFile,
   runWorkspaceFileWithRace,
+  stageWorkspaceGitFile,
+  unstageWorkspaceGitFile,
+  commitWorkspaceGitChanges,
+  getWorkspaceCommitDetail,
   switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
@@ -32,6 +36,7 @@ import type {
   DebugFailure,
   RuntimeSignal,
   WorkspaceGitBranch,
+  WorkspaceGitCommitDetail,
   DebuggerState,
   FsEntry,
 } from "../../lib/ipc/types";
@@ -295,8 +300,10 @@ function EditorShell() {
     gitSnapshot,
     gitError,
     branchSnapshot,
+    gitGraph,
     setBranchSnapshot,
     refreshBranchSnapshot,
+    reloadGitSnapshot,
     reloadGitState,
   } = useWorkspaceGitState(workspacePath);
   const [isBranchPickerOpen, setIsBranchPickerOpen] = useState(false);
@@ -305,6 +312,7 @@ function EditorShell() {
   const [isBranchDialogOpen, setIsBranchDialogOpen] = useState(false);
   const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
   const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
+  const [gitCommitLoading, setGitCommitLoading] = useState(false);
 
   useEffect(() => {
     if (isBottomPanelOpen) {
@@ -1952,6 +1960,58 @@ function EditorShell() {
     return `${baseName}${isDirty ? " *" : ""}`;
   }, [activeFilePath, isDirty]);
 
+  const handleStageGitFile = useCallback(async (relativePath: string) => {
+    if (!workspacePathRef.current) {
+      return;
+    }
+    const response = await stageWorkspaceGitFile({
+      workspaceRoot: workspacePathRef.current,
+      relativePath,
+    });
+    if (response.ok) {
+      await reloadGitSnapshot(workspacePathRef.current);
+    }
+  }, [reloadGitSnapshot]);
+
+  const handleUnstageGitFile = useCallback(async (relativePath: string) => {
+    if (!workspacePathRef.current) {
+      return;
+    }
+    const response = await unstageWorkspaceGitFile({
+      workspaceRoot: workspacePathRef.current,
+      relativePath,
+    });
+    if (response.ok) {
+      await reloadGitSnapshot(workspacePathRef.current);
+    }
+  }, [reloadGitSnapshot]);
+
+  const handleCommitGitChanges = useCallback(async (message: string) => {
+    if (!workspacePathRef.current || !message.trim()) {
+      return;
+    }
+    setGitCommitLoading(true);
+    try {
+      const response = await commitWorkspaceGitChanges({
+        workspaceRoot: workspacePathRef.current,
+        message: message.trim(),
+      });
+      if (response.ok) {
+        await reloadGitState(workspacePathRef.current);
+      }
+    } finally {
+      setGitCommitLoading(false);
+    }
+  }, [reloadGitState]);
+
+  const handleLoadCommitDetail = useCallback(async (hash: string): Promise<WorkspaceGitCommitDetail | null> => {
+    if (!workspacePathRef.current) {
+      return null;
+    }
+    const response = await getWorkspaceCommitDetail(workspacePathRef.current, hash);
+    return response.ok && response.data ? response.data : null;
+  }, []);
+
   /**
    * Stable session key for the workspace-owned interactive shell.
    *
@@ -2019,10 +2079,17 @@ function EditorShell() {
               {activeTab === "git" && (
                 <GitPanel
                   loading={!gitSnapshot && Boolean(workspacePath)}
+                  workspaceRoot={workspacePath}
                   snapshot={gitSnapshot}
+                  graph={gitGraph}
                   branchSnapshot={branchSnapshot}
                   error={gitError}
+                  commitLoading={gitCommitLoading}
                   onOpenBranchPicker={() => setIsBranchPickerOpen(true)}
+                  onStageFile={handleStageGitFile}
+                  onUnstageFile={handleUnstageGitFile}
+                  onCommit={handleCommitGitChanges}
+                  onLoadCommitDetail={(hash) => handleLoadCommitDetail(hash)}
                 />
               )}
               {activeTab === "concurrency" && (
@@ -2529,7 +2596,7 @@ function EditorShell() {
 
 
       {isBranchPickerOpen && branchSnapshot && (
-        <div className="absolute bottom-10 left-[240px] z-50 w-72">
+        <div className="absolute bottom-8 left-3 z-50 w-72">
           <BranchPicker
             open={isBranchPickerOpen}
             currentBranch={branchSnapshot.currentBranch}

@@ -24,8 +24,10 @@ use crate::ui_bridge::types::{
     ShellResizeRequestDto, StartDebugSessionRequestDto, StartWorkspaceFsWatchResponseDto,
     SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
     ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
-    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto,
-    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDetailDto,
+    WorkspaceGitCommitDto, WorkspaceGitCommitFileStatDto, WorkspaceGitCommitRequestDto,
+    WorkspaceGitFileActionRequestDto, WorkspaceGitGraphCommitDto, WorkspaceGitGraphEntryDto, WorkspaceGitSnapshotDto, WorkspaceSearchFileDto,
+    WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -1731,7 +1733,7 @@ pub async fn get_workspace_git_snapshot(
                 if line.len() < 4 {
                     return None;
                 }
-                let status = line[..2].trim().to_string();
+                let status = line[..2].to_string();
                 let path = line[3..].trim().replace('\\', "/");
                 if path.is_empty() {
                     return None;
@@ -1781,6 +1783,266 @@ pub async fn get_workspace_git_snapshot(
     }
 }
 
+fn validate_workspace_relative_path(relative_path: &str) -> Result<(), String> {
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty() {
+        return Err("relative path is required".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("absolute paths are not allowed".to_string());
+    }
+    for component in path.components() {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            return Err("relative path must stay within workspace".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stage_workspace_git_file(request: WorkspaceGitFileActionRequestDto) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_relative_path(&request.relative_path)?;
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_stage_failed::{error}"))?;
+        git_output(&root, &["add", "--", request.relative_path.trim()])?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_stage_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_stage_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn unstage_workspace_git_file(request: WorkspaceGitFileActionRequestDto) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_relative_path(&request.relative_path)?;
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_unstage_failed::{error}"))?;
+        git_output(&root, &["reset", "HEAD", "--", request.relative_path.trim()])?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_unstage_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_unstage_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn commit_workspace_git_changes(request: WorkspaceGitCommitRequestDto) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let commit_message = request.message.trim().to_string();
+        if commit_message.is_empty() {
+            return Err("git_commit_failed::commit message is required".to_string());
+        }
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_commit_failed::{error}"))?;
+        git_output(&root, &["commit", "-m", &commit_message])?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_commit_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_commit_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_commit_detail(
+    workspace_root: String,
+    hash: String,
+) -> ApiResponse<WorkspaceGitCommitDetailDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let commit_hash = hash.trim().to_string();
+        if commit_hash.is_empty() {
+            return Err("git_commit_detail_failed::commit hash is required".to_string());
+        }
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_commit_detail_failed::{error}"))?;
+
+        let header = git_output(
+            &root,
+            &[
+                "show",
+                "-s",
+                "--format=%H%x09%h%x09%P%x09%an%x09%ae%x09%ar%x09%aI%x09%s%x09%b",
+                &commit_hash,
+            ],
+        )?;
+        let header_parts: Vec<&str> = header.splitn(9, '\t').collect();
+        if header_parts.len() < 9 {
+            return Err("git_commit_detail_failed::unable to parse commit metadata".to_string());
+        }
+        let parents = header_parts[2]
+            .split_whitespace()
+            .map(ToString::to_string)
+            .collect::<Vec<String>>();
+
+        let numstat = git_output(&root, &["show", "--numstat", "--format=", &commit_hash])?;
+        let mut files: Vec<WorkspaceGitCommitFileStatDto> = Vec::new();
+        let mut total_additions = 0usize;
+        let mut total_deletions = 0usize;
+        for line in numstat.lines() {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let additions = parts[0].parse::<usize>().unwrap_or(0);
+            let deletions = parts[1].parse::<usize>().unwrap_or(0);
+            let path = parts[2].trim().replace('\\', "/");
+            total_additions += additions;
+            total_deletions += deletions;
+            files.push(WorkspaceGitCommitFileStatDto {
+                path,
+                additions,
+                deletions,
+            });
+        }
+
+        let patch = git_output(&root, &["show", "--format=", "--unified=0", &commit_hash])?;
+        let patch_preview = patch.lines().take(60).collect::<Vec<&str>>().join("\n");
+
+        Ok::<WorkspaceGitCommitDetailDto, String>(WorkspaceGitCommitDetailDto {
+            hash: header_parts[0].to_string(),
+            short_hash: header_parts[1].to_string(),
+            parents,
+            author: header_parts[3].to_string(),
+            email: header_parts[4].to_string(),
+            relative_time: header_parts[5].to_string(),
+            date_iso: header_parts[6].to_string(),
+            subject: header_parts[7].to_string(),
+            body: header_parts[8].trim().to_string(),
+            files_changed: files.len(),
+            insertions: total_additions,
+            deletions: total_deletions,
+            files,
+            patch_preview,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(detail)) => ApiResponse::ok(detail),
+        Ok(Err(message)) => ApiResponse::err("git_commit_detail_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_commit_detail_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_git_graph(
+    workspace_root: String,
+) -> ApiResponse<Vec<WorkspaceGitGraphEntryDto>> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_graph_failed::{error}"))?;
+        let output = git_output(
+            &root,
+            &[
+                "log",
+                "--graph",
+                "--decorate",
+                "--oneline",
+                "--all",
+                "-n",
+                "80",
+            ],
+        )?;
+        let lines = output
+            .lines()
+            .map(|line| WorkspaceGitGraphEntryDto {
+                line: line.to_string(),
+            })
+            .collect::<Vec<WorkspaceGitGraphEntryDto>>();
+        Ok::<Vec<WorkspaceGitGraphEntryDto>, String>(lines)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(lines)) => ApiResponse::ok(lines),
+        Ok(Err(message)) => ApiResponse::err("git_graph_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_graph_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_git_graph_commits(
+    workspace_root: String,
+) -> ApiResponse<Vec<WorkspaceGitGraphCommitDto>> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_graph_failed::{error}"))?;
+        let output = git_output(
+            &root,
+            &[
+                "log",
+                "--graph",
+                "--decorate",
+                "-n",
+                "250",
+                "--pretty=format:%x1f%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%d%x1f%s",
+                "--all",
+            ],
+        )?;
+        let commits = output
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split('\u{001f}');
+                let graph_prefix = parts.next()?.to_string();
+                let hash = parts.next()?.to_string();
+                if hash.trim().is_empty() {
+                    return None;
+                }
+                let short_hash = parts.next().unwrap_or_default().to_string();
+                let parent_raw = parts.next().unwrap_or_default().to_string();
+                let parents = parent_raw
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>();
+                let author = parts.next().unwrap_or_default().to_string();
+                let email = parts.next().unwrap_or_default().to_string();
+                let date_iso = parts.next().unwrap_or_default().to_string();
+                let relative_time = parts.next().unwrap_or_default().to_string();
+                let refs = parts.next().unwrap_or_default().to_string();
+                let subject = parts.next().unwrap_or_default().to_string();
+
+                Some(WorkspaceGitGraphCommitDto {
+                    graph_prefix,
+                    hash,
+                    short_hash,
+                    parents,
+                    author,
+                    email,
+                    date_iso,
+                    relative_time,
+                    refs,
+                    subject,
+                })
+            })
+            .collect::<Vec<WorkspaceGitGraphCommitDto>>();
+        Ok::<Vec<WorkspaceGitGraphCommitDto>, String>(commits)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(commits)) => ApiResponse::ok(commits),
+        Ok(Err(message)) => ApiResponse::err("git_graph_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_graph_failed", &error.to_string()),
+    }
+}
+
 fn git_output(root: &Path, args: &[&str]) -> Result<String, String> {
     git_command_output(root, args, true)
 }
@@ -1810,7 +2072,7 @@ fn parse_changed_files_summary(status_output: &str) -> Vec<WorkspaceGitChangedFi
             if line.len() < 4 {
                 return None;
             }
-            let status = line[..2].trim().to_string();
+            let status = line[..2].to_string();
             let path = line[3..].trim().replace('\\', "/");
             if path.is_empty() {
                 return None;

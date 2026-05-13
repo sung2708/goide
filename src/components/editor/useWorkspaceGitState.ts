@@ -1,13 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { getWorkspaceBranches, getWorkspaceGitSnapshot } from "../../lib/ipc/client";
-import type { WorkspaceBranchSnapshot, WorkspaceGitSnapshot } from "../../lib/ipc/types";
+import { getWorkspaceBranches, getWorkspaceGitGraphCommits, getWorkspaceGitSnapshot } from "../../lib/ipc/client";
+import type {
+  WorkspaceBranchSnapshot,
+  WorkspaceGitGraphCommit,
+  WorkspaceGitSnapshot,
+} from "../../lib/ipc/types";
 
 type WorkspaceGitState = {
   gitSnapshot: WorkspaceGitSnapshot | null;
   gitError: string | null;
   branchSnapshot: WorkspaceBranchSnapshot | null;
+  gitGraph: WorkspaceGitGraphCommit[];
   setBranchSnapshot: React.Dispatch<React.SetStateAction<WorkspaceBranchSnapshot | null>>;
   refreshBranchSnapshot: (workspaceRoot: string) => Promise<WorkspaceBranchSnapshot | null>;
+  reloadGitSnapshot: (workspaceRoot: string) => Promise<void>;
   reloadGitState: (workspaceRoot: string) => Promise<void>;
 };
 
@@ -15,6 +21,7 @@ export function useWorkspaceGitState(workspacePath: string | null): WorkspaceGit
   const [gitSnapshot, setGitSnapshot] = useState<WorkspaceGitSnapshot | null>(null);
   const [gitError, setGitError] = useState<string | null>(null);
   const [branchSnapshot, setBranchSnapshot] = useState<WorkspaceBranchSnapshot | null>(null);
+  const [gitGraph, setGitGraph] = useState<WorkspaceGitGraphCommit[]>([]);
 
   const refreshBranchSnapshot = useCallback(async (workspaceRoot: string) => {
     try {
@@ -28,19 +35,41 @@ export function useWorkspaceGitState(workspacePath: string | null): WorkspaceGit
     }
   }, []);
 
-  const reloadGitState = useCallback(async (workspaceRoot: string) => {
-    const [gitRes, branchRes] = await Promise.all([
+  const reloadGitSnapshot = useCallback(async (workspaceRoot: string) => {
+    const [gitRes, graphRes] = await Promise.all([
       getWorkspaceGitSnapshot(workspaceRoot),
-      getWorkspaceBranches(workspaceRoot),
+      getWorkspaceGitGraphCommits(workspaceRoot),
     ]);
 
     if (gitRes.ok && gitRes.data) {
       setGitSnapshot(gitRes.data);
+      setGitError(null);
+    }
+    if (graphRes.ok && graphRes.data) {
+      setGitGraph(graphRes.data);
+    }
+  }, []);
+
+  const reloadGitState = useCallback(async (workspaceRoot: string) => {
+    const [gitRes, branchRes, graphRes] = await Promise.all([
+      getWorkspaceGitSnapshot(workspaceRoot),
+      getWorkspaceBranches(workspaceRoot),
+      getWorkspaceGitGraphCommits(workspaceRoot),
+    ]);
+
+    if (gitRes.ok && gitRes.data) {
+      setGitSnapshot(gitRes.data);
+      setGitError(null);
     }
     if (branchRes.ok && branchRes.data) {
       setBranchSnapshot(branchRes.data);
     } else {
       setBranchSnapshot(null);
+    }
+    if (graphRes.ok && graphRes.data) {
+      setGitGraph(graphRes.data);
+    } else {
+      setGitGraph([]);
     }
   }, []);
 
@@ -48,30 +77,39 @@ export function useWorkspaceGitState(workspacePath: string | null): WorkspaceGit
     if (!workspacePath) {
       setGitSnapshot(null);
       setGitError(null);
+      setGitGraph([]);
       return;
     }
     let isCancelled = false;
     const pollGit = async () => {
       if (isCancelled) return;
       try {
-        const res = await getWorkspaceGitSnapshot(workspacePath);
-        if (!isCancelled && res.ok && res.data) {
-          setGitSnapshot(res.data);
+        const [gitRes, graphRes] = await Promise.all([
+          getWorkspaceGitSnapshot(workspacePath),
+          getWorkspaceGitGraphCommits(workspacePath),
+        ]);
+        if (!isCancelled && gitRes.ok && gitRes.data) {
+          setGitSnapshot(gitRes.data);
           setGitError(null);
+          if (graphRes.ok && graphRes.data) {
+            setGitGraph(graphRes.data);
+          }
           const latestBranchSnapshot = await refreshBranchSnapshot(workspacePath);
           if (!isCancelled) {
             setBranchSnapshot(latestBranchSnapshot);
           }
         } else if (!isCancelled) {
           setGitSnapshot(null);
-          setGitError(res.error?.message ?? "Git data unavailable");
+          setGitError(gitRes.error?.message ?? "Git data unavailable");
           setBranchSnapshot(null);
+          setGitGraph([]);
         }
-      } catch (err) {
+      } catch (_error) {
         if (!isCancelled) {
           setGitSnapshot(null);
           setGitError("Git data unavailable");
           setBranchSnapshot(null);
+          setGitGraph([]);
         }
       }
       if (!isCancelled) {
@@ -82,7 +120,7 @@ export function useWorkspaceGitState(workspacePath: string | null): WorkspaceGit
     return () => {
       isCancelled = true;
     };
-  }, [refreshBranchSnapshot, workspacePath]);
+  }, [workspacePath]);
 
   useEffect(() => {
     if (!workspacePath) {
@@ -105,8 +143,10 @@ export function useWorkspaceGitState(workspacePath: string | null): WorkspaceGit
     gitSnapshot,
     gitError,
     branchSnapshot,
+    gitGraph,
     setBranchSnapshot,
     refreshBranchSnapshot,
+    reloadGitSnapshot,
     reloadGitState,
   };
 }
