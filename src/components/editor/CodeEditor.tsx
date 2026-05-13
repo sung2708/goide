@@ -19,7 +19,15 @@ import {
   semanticFoldingExtension,
   setSemanticAnalysisEffect,
 } from "./semanticFolding";
-import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
+import {
+  Decoration,
+  EditorView,
+  GutterMarker,
+  WidgetType,
+  gutter,
+  keymap,
+  type DecorationSet,
+} from "@codemirror/view";
 import {
   defaultKeymap,
   history,
@@ -46,6 +54,13 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from "@codemirror/autocomplete";
+import {
+  closeSearchPanel,
+  SearchQuery,
+  search,
+  searchPanelOpen,
+  setSearchQuery,
+} from "@codemirror/search";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import type {
   CompletionItem,
@@ -61,7 +76,7 @@ import { useFindWidget } from "../../hooks/useFindWidget";
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
-const GOPLS_AUTO_PREFIX_LENGTH = 2;
+const GOPLS_AUTO_PREFIX_LENGTH = 1;
 
 const snippetSection = { name: "Go snippets", rank: -1 };
 
@@ -115,47 +130,68 @@ const PACKAGE_SNIPPETS: Completion[] = [
 ];
 
 const GO_SNIPPETS: Completion[] = [
+  snippetCompletion('fmt.Println("${}")', {
+    label: "fmtp",
+    detail: "quick print line",
+    type: "function",
+    section: snippetSection,
+    boost: 70,
+  }),
+  snippetCompletion("if err != nil {\n\treturn ${}\n}", {
+    label: "ife",
+    detail: "error guard (fast)",
+    type: "keyword",
+    section: snippetSection,
+    boost: 68,
+  }),
+  snippetCompletion("go func() {\n\t${}\n}()", {
+    label: "gor",
+    detail: "goroutine (fast)",
+    type: "function",
+    section: snippetSection,
+    boost: 66,
+  }),
   snippetCompletion("func ${name}(${params}) {\n\t${}\n}", {
     label: "func",
     detail: "function declaration",
     type: "function",
     section: snippetSection,
-    boost: 30,
+    boost: 50,
   }),
   snippetCompletion("func main() {\n\t${}\n}", {
     label: "main",
     detail: "main function",
     type: "function",
     section: snippetSection,
-    boost: 30,
+    boost: 48,
   }),
   snippetCompletion("if ${condition} {\n\t${}\n}", {
     label: "if",
     detail: "if block",
     type: "keyword",
     section: snippetSection,
-    boost: 25,
+    boost: 46,
   }),
   snippetCompletion("if err != nil {\n\treturn ${}\n}", {
     label: "iferr",
     detail: "error guard",
     type: "keyword",
     section: snippetSection,
-    boost: 25,
+    boost: 60,
   }),
   snippetCompletion("for ${condition} {\n\t${}\n}", {
     label: "for",
     detail: "for loop",
     type: "keyword",
     section: snippetSection,
-    boost: 20,
+    boost: 44,
   }),
   snippetCompletion("for ${key}, ${value} := range ${collection} {\n\t${}\n}", {
     label: "forr",
     detail: "range loop",
     type: "keyword",
     section: snippetSection,
-    boost: 20,
+    boost: 42,
   }),
   snippetCompletion("switch ${value} {\ncase ${caseValue}:\n\t${}\ndefault:\n\t${}\n}", {
     label: "switch",
@@ -473,6 +509,63 @@ const breakpointField = StateField.define<RangeSet<BreakpointMarker>>({
   })
 });
 
+type InlineDiagnosticPayload = {
+  lineFrom: number;
+  rangeTo: number;
+  message: string;
+  severity: "error" | "warning" | "info";
+};
+
+const inlineDiagnosticEffect = StateEffect.define<InlineDiagnosticPayload | null>();
+
+class InlineDiagnosticWidget extends WidgetType {
+  constructor(
+    private readonly message: string,
+    private readonly severity: "error" | "warning" | "info"
+  ) {
+    super();
+  }
+
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = `goide-inline-diagnostic goide-inline-diagnostic-${this.severity}`;
+    el.textContent = this.message;
+    return el;
+  }
+}
+
+const inlineDiagnosticField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (!effect.is(inlineDiagnosticEffect)) {
+        continue;
+      }
+      const payload = effect.value;
+      if (!payload) {
+        deco = Decoration.none;
+        continue;
+      }
+      const lineClass =
+        payload.severity === "error"
+          ? "goide-inline-diagnostic-line-error"
+          : "goide-inline-diagnostic-line-warning";
+      deco = Decoration.set([
+        Decoration.line({ class: lineClass }).range(payload.lineFrom),
+        Decoration.widget({
+          widget: new InlineDiagnosticWidget(payload.message, payload.severity),
+          side: 1,
+        }).range(payload.rangeTo),
+      ]);
+    }
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 type CodeEditorProps = {
   value: string;
   selectionContextKey?: string | null;
@@ -499,6 +592,8 @@ type CodeEditorProps = {
   diagnostics?: EditorDiagnostic[];
   breakpoints?: number[];
   onToggleBreakpoint?: (line: number) => void;
+  suppressFindWidget?: boolean;
+  externalSearchQuery?: string | null;
 };
 
 
@@ -527,6 +622,8 @@ function CodeEditor({
   diagnostics = [],
   breakpoints = [],
   onToggleBreakpoint,
+  suppressFindWidget = false,
+  externalSearchQuery = null,
 }: CodeEditorProps) {
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   const internalSemanticClient = useMemo(() => {
@@ -895,10 +992,12 @@ function CodeEditor({
     ...goideEditorExtensions,
     semanticFoldingExtension,
     breakpointField,
+    inlineDiagnosticField,
     EditorState.readOnly.of(!editable),
     EditorState.tabSize.of(4),
     EditorView.editable.of(editable),
     history(),
+    search(),
     lintGutter(),
     linter(() => []),
     closeBrackets(),
@@ -907,7 +1006,7 @@ function CodeEditor({
       activateOnTyping: true,
       defaultKeymap: false,
       maxRenderedOptions: 80,
-      updateSyncTime: 80,
+      updateSyncTime: 35,
     }),
     Prec.highest(keymap.of([
       {
@@ -931,6 +1030,9 @@ function CodeEditor({
       {
         key: "Enter",
         run: (view) => {
+          if (hasNextSnippetField(view.state)) {
+            return nextSnippetField(view);
+          }
           if (isPackageContextAtSelection(view)) {
             return false;
           }
@@ -981,6 +1083,9 @@ function CodeEditor({
       {
         key: "Mod-f",
         run: () => {
+          if (suppressFindWidget) {
+            return true;
+          }
           findWidgetRef.current.open();
           return true;
         },
@@ -997,6 +1102,10 @@ function CodeEditor({
       ...defaultKeymap,
     ])),
     EditorView.updateListener.of((update) => {
+      if (suppressFindWidget && searchPanelOpen(update.state)) {
+        closeSearchPanel(update.view);
+      }
+
       if (update.selectionSet) {
         const head = update.state.selection.main.head;
         const nextLine = update.state.doc.lineAt(head).number;
@@ -1057,6 +1166,7 @@ function CodeEditor({
     onInteractionAnchorChange,
     onSelectionLineChange,
     onSave,
+    suppressFindWidget,
   ]);
   const viewRef = useRef<EditorView | null>(null);
   const findWidget = useFindWidget(viewRef);
@@ -1068,6 +1178,35 @@ function CodeEditor({
   const selectedLineRef = useRef<number | null>(null);
   const cursorOffsetRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
+
+  useEffect(() => {
+    if (suppressFindWidget && findWidgetRef.current.isOpen) {
+      findWidgetRef.current.dismiss();
+    }
+
+    if (suppressFindWidget && editorView && searchPanelOpen(editorView.state)) {
+      closeSearchPanel(editorView);
+    }
+  }, [editorView, suppressFindWidget]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const query = externalSearchQuery?.trim() ?? "";
+    if (!view || !query) {
+      return;
+    }
+    try {
+      const searchObj = new SearchQuery({
+        search: query,
+        caseSensitive: false,
+        wholeWord: false,
+        regexp: false,
+      });
+      view.dispatch({ effects: setSearchQuery.of(searchObj) });
+    } catch {
+      // Ignore invalid externally provided search patterns.
+    }
+  }, [externalSearchQuery, editorView, value]);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const handledJumpRequestIdRef = useRef<number | null>(null);
   const handledWheelEventsRef = useRef(new WeakSet<Event>());
@@ -1156,7 +1295,41 @@ function CodeEditor({
     }
 
     const cmDiagnostics = buildCodeMirrorDiagnostics(view);
-    view.dispatch(setDiagnostics(view.state, cmDiagnostics));
+    const primaryDiagnostic = [...cmDiagnostics].sort((a, b) => {
+      const score = (severity: Diagnostic["severity"]) =>
+        severity === "error" ? 0 : severity === "warning" ? 1 : 2;
+      return score(a.severity) - score(b.severity) || a.from - b.from;
+    })[0];
+    const diagnosticsTransaction = setDiagnostics(view.state, cmDiagnostics);
+    const normalizedSeverity: InlineDiagnosticPayload["severity"] =
+      primaryDiagnostic?.severity === "warning"
+        ? "warning"
+        : primaryDiagnostic?.severity === "info" || primaryDiagnostic?.severity === "hint"
+          ? "info"
+          : "error";
+    const diagnosticsEffects = diagnosticsTransaction.effects;
+    const normalizedDiagnosticsEffects = Array.isArray(diagnosticsEffects)
+      ? diagnosticsEffects
+      : diagnosticsEffects
+        ? [diagnosticsEffects]
+        : [];
+
+    view.dispatch({
+      ...diagnosticsTransaction,
+      effects: [
+        ...normalizedDiagnosticsEffects,
+        inlineDiagnosticEffect.of(
+          primaryDiagnostic
+            ? {
+                lineFrom: view.state.doc.lineAt(primaryDiagnostic.from).from,
+                rangeTo: primaryDiagnostic.to,
+                message: primaryDiagnostic.message,
+                severity: normalizedSeverity,
+              }
+            : null
+        ),
+      ],
+    });
   }, [diagnostics, value, editorView]);
 
   useEffect(() => {
@@ -1195,7 +1368,7 @@ function CodeEditor({
       return;
     }
 
-    return activeSemanticClient.subscribe((result) => {
+    const unsubscribe = activeSemanticClient.subscribe((result) => {
       if (result.filePath !== filePath || result.version < 1) {
         return;
       }
@@ -1219,6 +1392,12 @@ function CodeEditor({
         effects: setSemanticAnalysisEffect.of(result),
       });
     });
+
+    // Re-request in case the worker responded before this subscription was established
+    // (race condition: editorView mounts after the initial requestAnalysis fires)
+    activeSemanticClient.requestAnalysis(filePath);
+
+    return unsubscribe;
   }, [activeSemanticClient, editorView, filePath, onDocumentSymbolsChange]);
 
   useEffect(() => {
@@ -1469,9 +1648,12 @@ function CodeEditor({
         const nextLine = pos === null ? null : view_.state.doc.lineAt(pos).number;
 
 
-        // Handle breakpoint toggle on gutter click
         const target = event.target as HTMLElement;
-        if (target.closest(".cm-gutter") || target.closest(".cm-lineNumbers")) {
+        if (target.closest(".cm-foldGutter")) {
+          return;
+        }
+
+        if (target.closest(".cm-breakpoint-gutter")) {
           if (nextLine !== null) {
             onToggleBreakpoint?.(nextLine);
             event.preventDefault();
@@ -1513,7 +1695,7 @@ function CodeEditor({
         emitInteractionAnchor(nextLine);
       }}
     >
-      {findWidget.isOpen && (
+      {!suppressFindWidget && findWidget.isOpen && (
         <FindWidget
           query={findWidget.query}
           replaceText={findWidget.replaceText}

@@ -316,7 +316,7 @@ describe("EditorShell diagnostics", () => {
     ).toBeInTheDocument();
   });
 
-  it("autosaves after five seconds of typing inactivity", async () => {
+  it("autosaves after 2.5 seconds of typing inactivity", async () => {
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     writeWorkspaceFileMock.mockResolvedValue({ ok: true });
@@ -338,7 +338,7 @@ describe("EditorShell diagnostics", () => {
     expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(2500);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -350,7 +350,7 @@ describe("EditorShell diagnostics", () => {
     );
   }, 15000);
 
-  it("rechecks diagnostics until errors clear", async () => {
+  it("rechecks diagnostics after autosave until errors clear", async () => {
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     fetchWorkspaceDiagnosticsMock
@@ -394,7 +394,7 @@ describe("EditorShell diagnostics", () => {
     fireEvent.click(typeInvalidButton);
 
     await act(async () => {
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(2500);
       await Promise.resolve();
       await Promise.resolve();
     });

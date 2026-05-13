@@ -356,6 +356,12 @@ export async function searchWorkspaceText(
   workspaceRoot: string,
   query: string
 ): Promise<ApiResponse<WorkspaceSearchFile[]>> {
+  if (!hasTauriInternals()) {
+    return {
+      ok: true,
+      data: [],
+    };
+  }
   return invoke<ApiResponse<WorkspaceSearchFile[]>>("search_workspace_text", {
     workspaceRoot,
     query,

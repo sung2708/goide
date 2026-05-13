@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils/cn";
-import type { DockMode } from "../../features/layout/useWorkspaceLayout";
 import type { BottomPanelTab, RunOutputPayload } from "../../lib/ipc/types";
+import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
+import { faEyeSlash, faTrashCan } from "@fortawesome/free-solid-svg-icons";
 import AlertDialog from "../primitives/AlertDialog";
 import LogsTerminalView from "./LogsTerminalView";
 import ShellTerminalView from "./ShellTerminalView";
@@ -22,8 +23,6 @@ type BottomPanelProps = {
   onRunWithRace?: () => void;
   onStop?: () => void;
   canRunWithRace?: boolean;
-  dockMode?: DockMode;
-  onDockModeChange?: (mode: DockMode) => void;
 };
 
 function BottomPanel({
@@ -39,8 +38,6 @@ function BottomPanel({
   onRunWithRace,
   onStop,
   canRunWithRace = false,
-  dockMode = "bottom",
-  onDockModeChange,
 }: BottomPanelProps) {
   const [isClearConfirmOpen, setIsClearConfirmOpen] = useState(false);
   const [shellFitRequestKey, setShellFitRequestKey] = useState(0);
@@ -63,94 +60,45 @@ function BottomPanel({
   const tabActive = "bg-[var(--bg-active)] text-[var(--lavender)]";
   const tabInactive =
     "text-[var(--overlay1)] hover:text-[var(--subtext1)] hover:bg-[var(--bg-hover)]";
-  const dockButtonBase =
-    "rounded-sm border px-2 py-1 text-[11px] font-semibold transition-colors duration-100";
-  const dockButtonActive =
-    "border-[rgba(140,170,238,0.45)] bg-[rgba(140,170,238,0.12)] text-[var(--blue)]";
-  const dockButtonInactive =
-    "border-[var(--border-subtle)] text-[var(--overlay1)] hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]";
-
   return (
     <section
       id="bottom-panel"
       aria-label="Bottom panel"
-      className={cn(
-        "relative z-40 flex flex-col bg-[var(--mantle)]",
-        dockMode === "right"
-          ? "h-full min-h-0 border-l border-[var(--border-muted)]"
-          : "h-full min-h-[11rem] border-t border-[var(--border-muted)]"
-      )}
+      className="relative z-40 flex h-full min-h-44 flex-col border-t border-(--border-muted) bg-(--crust)"
       data-testid="bottom-panel"
     >
       {/* Header: tabs + logs-scoped action buttons */}
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[var(--border-subtle)] bg-[var(--mantle)] px-3 py-2.5">
-        {/* Tab strip */}
-        <div className="flex items-center gap-1" role="tablist" aria-label="Terminal tabs">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "logs"}
-            className={cn(tabBase, activeTab === "logs" ? tabActive : tabInactive)}
-            onClick={() => onActiveTabChange("logs")}
-          >
-            Logs
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === "shell"}
-            className={cn(tabBase, activeTab === "shell" ? tabActive : tabInactive)}
-            onClick={() => onActiveTabChange("shell")}
-          >
-            Shell
-          </button>
-          {activeTab === "logs" && isRunning && (
-            <span className="ml-2 flex items-center gap-2">
-              <span className="size-[6px] rounded-full bg-[var(--green)]"></span>
-              <span className="text-[12px] font-semibold text-[var(--green)]">Running</span>
-            </span>
-          )}
-        </div>
+      <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--crust) px-3 py-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2 overflow-x-auto" role="tablist" aria-label="Terminal tabs">
+          {/* Tab strip */}
+          <div className="flex items-center gap-1 rounded bg-[var(--base)]/40 p-0.5">
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "logs"}
+              className={cn(tabBase, activeTab === "logs" ? tabActive : tabInactive)}
+              onClick={() => onActiveTabChange("logs")}
+            >
+              Logs
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "shell"}
+              className={cn(tabBase, activeTab === "shell" ? tabActive : tabInactive)}
+              onClick={() => onActiveTabChange("shell")}
+            >
+              Shell
+            </button>
+          </div>
 
-        <div className="flex max-w-full items-center gap-1.5 overflow-x-auto pb-0.5">
-          {onDockModeChange && (
-            <div className="flex items-center gap-1" aria-label="Dock mode">
-              <button
-                type="button"
-                aria-label="Dock bottom"
-                aria-pressed={dockMode === "bottom"}
-                className={cn(
-                  dockButtonBase,
-                  dockMode === "bottom" ? dockButtonActive : dockButtonInactive
-                )}
-                onClick={() => onDockModeChange("bottom")}
-                title="Dock terminal at bottom."
-              >
-                Bottom
-              </button>
-              <button
-                type="button"
-                aria-label="Dock right"
-                aria-pressed={dockMode === "right"}
-                className={cn(
-                  dockButtonBase,
-                  dockMode === "right" ? dockButtonActive : dockButtonInactive
-                )}
-                onClick={() => onDockModeChange("right")}
-                title="Dock terminal on right."
-              >
-                Right
-              </button>
-            </div>
-          )}
-
-          {/* Logs-scoped action buttons */}
+          {/* Logs-scoped run controls */}
           {activeTab === "logs" && (
-            <>
+            <div className="flex items-center gap-1 rounded bg-[var(--base)]/25 p-0.5">
               {showRunAgain && (
                 <button
                   type="button"
-                  className="cursor-pointer rounded border border-[rgba(166,209,137,0.3)] bg-[rgba(166,209,137,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.16)]"
+                  className="cursor-pointer rounded px-2.5 py-1 text-[12px] font-semibold text-[var(--green)] transition-colors duration-100 hover:bg-[rgba(166,209,137,0.12)]"
                   onClick={onRun}
                   title="Run the active Go file again."
                 >
@@ -160,7 +108,7 @@ function BottomPanel({
               {showRunRace && (
                 <button
                   type="button"
-                  className="cursor-pointer rounded border border-[rgba(140,170,238,0.3)] bg-[rgba(140,170,238,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.16)] disabled:cursor-not-allowed disabled:opacity-40"
+                  className="cursor-pointer rounded px-2.5 py-1 text-[12px] font-semibold text-[var(--blue)] transition-colors duration-100 hover:bg-[rgba(140,170,238,0.12)] disabled:cursor-not-allowed disabled:opacity-40"
                   onClick={onRunWithRace}
                   disabled={!canRunWithRace}
                   title="Run the active Go file with race detection."
@@ -171,42 +119,57 @@ function BottomPanel({
               {showStop && (
                 <button
                   type="button"
-                  className="cursor-pointer rounded border border-[rgba(231,130,132,0.3)] bg-[rgba(231,130,132,0.08)] px-3 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.16)]"
+                  className="cursor-pointer rounded px-2.5 py-1 text-[12px] font-semibold text-[var(--red)] transition-colors duration-100 hover:bg-[rgba(231,130,132,0.12)]"
                   onClick={onStop}
                   title="Stop the current run."
                 >
                   Stop
                 </button>
               )}
-              {showClear && (
-                <button
-                  type="button"
-                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                  onClick={() => setIsClearConfirmOpen(true)}
-                  title="Clear terminal output."
-                >
-                  Clear
-                </button>
-              )}
-              {showHidePanel && (
-                <button
-                  type="button"
-                  className="cursor-pointer rounded border border-[var(--border-subtle)] px-3 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
-                  onClick={onClose}
-                  title="Hide the terminal panel."
-                >
-                  Hide Panel
-                </button>
-              )}
-            </>
+            </div>
+          )}
+
+          {activeTab === "logs" && isRunning && (
+            <span className="ml-1 flex items-center gap-1.5 text-[11px] text-[var(--green)]">
+              <span className="size-[6px] rounded-full bg-[var(--green)]"></span>
+              <span className="font-semibold">Running</span>
+            </span>
           )}
         </div>
+
+        {/* Utility actions */}
+        {activeTab === "logs" && (
+          <div className="ml-auto flex shrink-0 items-center gap-1 rounded bg-[var(--base)]/25 p-0.5">
+            {showClear && (
+              <button
+                type="button"
+                aria-label="Clear"
+                className="cursor-pointer rounded px-2 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                onClick={() => setIsClearConfirmOpen(true)}
+                title="Clear terminal output."
+              >
+                <FontAwesomeIcon icon={faTrashCan} />
+              </button>
+            )}
+            {showHidePanel && (
+              <button
+                type="button"
+                aria-label="Hide Panel"
+                className="cursor-pointer rounded px-2 py-1 text-[12px] font-semibold text-[var(--subtext0)] transition-colors duration-100 hover:bg-[var(--bg-hover)] hover:text-[var(--subtext1)]"
+                onClick={onClose}
+                title="Hide the terminal panel."
+              >
+                <FontAwesomeIcon icon={faEyeSlash} />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Tab content — both panels stay mounted so ShellTerminalView keeps its PTY
           session alive across tab switches. Visibility is toggled via the HTML
           `hidden` attribute rather than conditional rendering. */}
-      <div className="relative flex-1 min-h-0 overflow-hidden">
+      <div className="relative min-h-0 flex-1 overflow-hidden bg-(--crust)">
         <div
           aria-hidden={activeTab !== "logs"}
           className={cn(

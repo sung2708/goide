@@ -192,15 +192,13 @@ pub async fn run_go_file<R: tauri::Runtime>(
         if let Some(child) = guard.as_mut() {
             if child.id() != run_child_pid {
                 None
-            } else {
-                if let Some(mut owned_child) = guard.take() {
-                    match owned_child.wait().await {
-                        Ok(status) => status.code(),
-                        Err(_) => None,
-                    }
-                } else {
-                    None
+            } else if let Some(mut owned_child) = guard.take() {
+                match owned_child.wait().await {
+                    Ok(status) => status.code(),
+                    Err(_) => None,
                 }
+            } else {
+                None
             }
         } else {
             None

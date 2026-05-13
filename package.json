@@ -23,6 +23,8 @@
     "preview": "vite preview",
     "tauri": "node scripts/tauri-wrapper.mjs",
     "tauri:dev:msvc": "set CC=cl&& set CXX=cl&& npm run tauri -- dev",
+    "cargo:check:msvc": "set CC=cl&& set CXX=cl&& set HOST_CC=cl&& set HOST_CXX=cl&& cargo check --manifest-path src-tauri/Cargo.toml",
+    "cargo:test:msvc": "set CC=cl&& set CXX=cl&& set HOST_CC=cl&& set HOST_CXX=cl&& cargo test --manifest-path src-tauri/Cargo.toml",
     "test": "vitest run"
   },
   "dependencies": {

@@ -23,68 +23,43 @@ describe("useWorkspaceLayout", () => {
     }
   });
 
-  it("persists dock mode per workspace", () => {
-    const { result, unmount } = renderHook(() => useWorkspaceLayout("C:/repo"));
-
-    act(() => result.current.setDockMode("right"));
-    expect(result.current.dockMode).toBe("right");
-
-    unmount();
-
-    const { result: restored } = renderHook(() => useWorkspaceLayout("C:/repo"));
-    expect(restored.current.dockMode).toBe("right");
-
-    const { result: otherWorkspace } = renderHook(() => useWorkspaceLayout("C:/other"));
-    expect(otherWorkspace.current.dockMode).toBe("bottom");
-  });
-
   it("persists split sizes and resets them to defaults", () => {
     const { result, unmount } = renderHook(() => useWorkspaceLayout("C:/repo"));
 
-    act(() => result.current.setSplitSizes({ left: 300, terminalBottom: 420, terminalRight: 500 }));
-    expect(result.current.splitSizes).toEqual({ left: 300, terminalBottom: 420, terminalRight: 500 });
+    act(() => result.current.setSplitSizes({ left: 300, terminalBottom: 420 }));
+    expect(result.current.splitSizes).toEqual({ left: 300, terminalBottom: 420 });
 
     unmount();
 
     const { result: restored } = renderHook(() => useWorkspaceLayout("C:/repo"));
-    expect(restored.current.splitSizes).toEqual({ left: 300, terminalBottom: 420, terminalRight: 500 });
+    expect(restored.current.splitSizes).toEqual({ left: 300, terminalBottom: 420 });
 
     act(() => restored.current.resetLayout());
-    expect(restored.current.dockMode).toBe("bottom");
-    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 320, terminalRight: 480 });
+    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 260 });
   });
 
-  it("persists bottom and right terminal sizes independently", () => {
+  it("persists terminal size and restores after remount", () => {
     const { result, unmount } = renderHook(() => useWorkspaceLayout("C:/repo"));
 
-    // Default dock is bottom; set terminal size for bottom mode
     act(() => result.current.setTerminalSize(400));
     expect(result.current.terminalSize).toBe(400);
     expect(result.current.splitSizes.terminalBottom).toBe(400);
 
-    // Switch to right dock mode; size starts at the right default
-    act(() => result.current.setDockMode("right"));
-    expect(result.current.dockMode).toBe("right");
-    // terminalRight should still be the default (480), not the bottom size (400)
-    expect(result.current.terminalSize).toBe(480);
-
-    // Set a different size for right mode
-    act(() => result.current.setTerminalSize(600));
-    expect(result.current.terminalSize).toBe(600);
-    expect(result.current.splitSizes.terminalRight).toBe(600);
-
-    // Switch back to bottom — must restore the bottom-mode size (400), not right (600)
-    act(() => result.current.setDockMode("bottom"));
-    expect(result.current.terminalSize).toBe(400);
-    expect(result.current.splitSizes.terminalBottom).toBe(400);
-
     unmount();
 
-    // After remount, both sizes must be persisted independently
     const { result: restored } = renderHook(() => useWorkspaceLayout("C:/repo"));
-    expect(restored.current.dockMode).toBe("bottom");
     expect(restored.current.terminalSize).toBe(400);
-    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 400, terminalRight: 600 });
+    expect(restored.current.splitSizes).toEqual({ left: 240, terminalBottom: 400 });
+  });
+
+  it("uses separate layout per workspace path", () => {
+    const { result: repoA } = renderHook(() => useWorkspaceLayout("C:/repo-a"));
+    const { result: repoB } = renderHook(() => useWorkspaceLayout("C:/repo-b"));
+
+    act(() => repoA.current.setTerminalSize(500));
+
+    expect(repoA.current.terminalSize).toBe(500);
+    expect(repoB.current.terminalSize).toBe(260); // default for repo-b
   });
 });
 

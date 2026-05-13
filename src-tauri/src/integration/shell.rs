@@ -68,6 +68,7 @@ impl ShellSessionHandle {
 }
 
 /// Returns the shell command appropriate for the current OS.
+#[cfg(not(windows))]
 fn shell_command() -> CommandBuilder {
     #[cfg(windows)]
     {
@@ -100,7 +101,7 @@ fn resolve_windows_shell_with_cached<F>(
 where
     F: Fn(&str) -> bool,
 {
-    *cache.get_or_init(|| resolve_windows_shell_with(is_available))
+    cache.get_or_init(|| resolve_windows_shell_with(is_available))
 }
 
 #[cfg(windows)]

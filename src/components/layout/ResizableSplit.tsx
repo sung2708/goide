@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { cn } from "../../lib/utils/cn";
 
 type SplitOrientation = "horizontal" | "vertical";
@@ -37,8 +37,24 @@ function ResizableSplit({
 }: ResizableSplitProps) {
   const dragStartRef = useRef<{ pointerId: number; pointerPosition: number; size: number } | null>(null);
   const dragTargetRef = useRef<HTMLDivElement | null>(null);
+  const isDraggingRef = useRef(false);
+  const hasResizedDuringDragRef = useRef(false);
+  const pendingPointerPositionRef = useRef<number | null>(null);
+  const resizeFrameHandleRef = useRef<number | null>(null);
   const isHorizontal = orientation === "horizontal";
   const resolvedSize = clamp(size, minSize, maxSize);
+  const [liveSize, setLiveSize] = useState(resolvedSize);
+  const liveSizeRef = useRef(resolvedSize);
+
+  useEffect(() => {
+    liveSizeRef.current = liveSize;
+  }, [liveSize]);
+
+  useEffect(() => {
+    if (!isDraggingRef.current) {
+      setLiveSize(resolvedSize);
+    }
+  }, [resolvedSize]);
 
   const resizeFromPointerPosition = useCallback(
     (pointerPosition: number) => {
@@ -48,31 +64,60 @@ function ResizableSplit({
       }
       const rawDelta = pointerPosition - dragStart.pointerPosition;
       const delta = resizeAnchor === "end" ? -rawDelta : rawDelta;
-      onResize(clamp(dragStart.size + delta, minSize, maxSize));
+      const nextSize = clamp(dragStart.size + delta, minSize, maxSize);
+      if (nextSize !== dragStart.size) {
+        hasResizedDuringDragRef.current = true;
+      }
+      liveSizeRef.current = nextSize;
+      setLiveSize(nextSize);
     },
-    [maxSize, minSize, onResize, resizeAnchor]
+    [maxSize, minSize, resizeAnchor]
   );
 
   const handlePointerMove = useCallback(
     (event: PointerEvent) => {
-      resizeFromPointerPosition(isHorizontal ? event.clientX : event.clientY);
+      pendingPointerPositionRef.current = isHorizontal ? event.clientX : event.clientY;
+      if (resizeFrameHandleRef.current !== null) {
+        return;
+      }
+      resizeFrameHandleRef.current = window.requestAnimationFrame(() => {
+        resizeFrameHandleRef.current = null;
+        const pointerPosition = pendingPointerPositionRef.current;
+        if (pointerPosition === null) {
+          return;
+        }
+        pendingPointerPositionRef.current = null;
+        resizeFromPointerPosition(pointerPosition);
+      });
     },
     [isHorizontal, resizeFromPointerPosition]
   );
 
   const handleMouseMove = useCallback(
     (event: MouseEvent) => {
-      resizeFromPointerPosition(isHorizontal ? event.clientX : event.clientY);
+      pendingPointerPositionRef.current = isHorizontal ? event.clientX : event.clientY;
+      if (resizeFrameHandleRef.current !== null) {
+        return;
+      }
+      resizeFrameHandleRef.current = window.requestAnimationFrame(() => {
+        resizeFrameHandleRef.current = null;
+        const pointerPosition = pendingPointerPositionRef.current;
+        if (pointerPosition === null) {
+          return;
+        }
+        pendingPointerPositionRef.current = null;
+        resizeFromPointerPosition(pointerPosition);
+      });
     },
     [isHorizontal, resizeFromPointerPosition]
   );
 
   const stopDragging = useCallback(() => {
     const pointerId = dragStartRef.current?.pointerId;
-    dragStartRef.current = null;
+    const didDrag = isDraggingRef.current;
+    isDraggingRef.current = false;
     const dragTarget = dragTargetRef.current;
     if (dragTarget) {
-      dragTarget.removeEventListener("pointermove", handlePointerMove);
       dragTarget.removeEventListener("pointerup", stopDragging);
       dragTarget.removeEventListener("pointercancel", stopDragging);
       if (typeof dragTarget.releasePointerCapture === "function") {
@@ -90,8 +135,22 @@ function ResizableSplit({
     window.removeEventListener("pointercancel", stopDragging);
     window.removeEventListener("mousemove", handleMouseMove);
     window.removeEventListener("mouseup", stopDragging);
+    if (resizeFrameHandleRef.current !== null) {
+      window.cancelAnimationFrame(resizeFrameHandleRef.current);
+      resizeFrameHandleRef.current = null;
+    }
+    const pendingPointerPosition = pendingPointerPositionRef.current;
+    if (pendingPointerPosition !== null) {
+      resizeFromPointerPosition(pendingPointerPosition);
+    }
+    pendingPointerPositionRef.current = null;
+    dragStartRef.current = null;
     dragTargetRef.current = null;
-  }, [handlePointerMove, handleMouseMove]);
+    if (didDrag && hasResizedDuringDragRef.current) {
+      onResize(liveSizeRef.current);
+    }
+    hasResizedDuringDragRef.current = false;
+  }, [handlePointerMove, handleMouseMove, onResize, resizeFromPointerPosition]);
 
   useEffect(() => {
     return () => {
@@ -110,19 +169,20 @@ function ResizableSplit({
         }
       }
       dragTargetRef.current = event.currentTarget;
+      isDraggingRef.current = true;
+      hasResizedDuringDragRef.current = false;
       dragStartRef.current = {
         pointerId: event.pointerId,
         pointerPosition: isHorizontal ? event.clientX : event.clientY,
-        size: resolvedSize,
+        size: liveSizeRef.current,
       };
-      event.currentTarget.addEventListener("pointermove", handlePointerMove);
       event.currentTarget.addEventListener("pointerup", stopDragging);
       event.currentTarget.addEventListener("pointercancel", stopDragging);
       window.addEventListener("pointermove", handlePointerMove);
       window.addEventListener("pointerup", stopDragging);
       window.addEventListener("pointercancel", stopDragging);
     },
-    [handlePointerMove, isHorizontal, resolvedSize, stopDragging]
+    [handlePointerMove, isHorizontal, stopDragging]
   );
 
   const startMouseDragging = useCallback(
@@ -137,15 +197,17 @@ function ResizableSplit({
       }
       event.preventDefault();
       dragTargetRef.current = event.currentTarget;
+      isDraggingRef.current = true;
+      hasResizedDuringDragRef.current = false;
       dragStartRef.current = {
         pointerId: -1,
         pointerPosition: isHorizontal ? event.clientX : event.clientY,
-        size: resolvedSize,
+        size: liveSizeRef.current,
       };
       window.addEventListener("mousemove", handleMouseMove);
       window.addEventListener("mouseup", stopDragging);
     },
-    [handleMouseMove, isHorizontal, resolvedSize, stopDragging]
+    [handleMouseMove, isHorizontal, stopDragging]
   );
 
   const handleKeyDown = useCallback(
@@ -193,13 +255,14 @@ function ResizableSplit({
     [isHorizontal, maxSize, minSize, onResize, resizeAnchor, resolvedSize]
   );
 
+  const displaySize = clamp(liveSize, minSize, maxSize);
   const primaryStyle = collapsed
     ? isHorizontal
       ? { width: 0, minWidth: 0, maxWidth: 0 }
       : { height: 0, minHeight: 0, maxHeight: 0 }
     : isHorizontal
-      ? { width: resolvedSize, minWidth: minSize, maxWidth: maxSize }
-      : { height: resolvedSize, minHeight: minSize, maxHeight: maxSize };
+      ? { width: displaySize, minWidth: minSize, maxWidth: maxSize }
+      : { height: displaySize, minHeight: minSize, maxHeight: maxSize };
 
   return (
     <div
@@ -225,8 +288,8 @@ function ResizableSplit({
           tabIndex={0}
           data-testid="separator-hit-zone"
           className={cn(
-            "relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--lavender)]",
-            isHorizontal ? "w-5 cursor-col-resize" : "h-5 cursor-row-resize"
+            "group relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--bg-active)]",
+            isHorizontal ? "w-3 cursor-col-resize" : "h-3 cursor-row-resize"
           )}
           style={{ touchAction: "none" }}
           onPointerDown={startDragging}
@@ -237,7 +300,7 @@ function ResizableSplit({
           <div
             aria-hidden="true"
             className={cn(
-              "pointer-events-none shrink-0 bg-[var(--border-subtle)] transition-colors duration-100",
+              "pointer-events-none shrink-0 bg-(--border-muted) transition-colors duration-100 group-hover:bg-(--border-active) group-focus-visible:bg-(--border-active)",
               isHorizontal ? "h-full w-px" : "h-px w-full"
             )}
           />

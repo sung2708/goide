@@ -384,7 +384,7 @@ describe("CodeEditor", () => {
         activateOnTyping: true,
         defaultKeymap: false,
         maxRenderedOptions: 80,
-        updateSyncTime: 80,
+        updateSyncTime: 35,
       })
     );
     expect(latestAutocompleteOverrides).toHaveLength(2);
@@ -403,6 +403,18 @@ describe("CodeEditor", () => {
     const handled = tabBinding?.run?.({} as any);
     expect(handled).toBe(true);
     expect(acceptCompletionMock).toHaveBeenCalled();
+  });
+
+  it("suppresses the in-file find widget while workspace search is active", () => {
+    render(<CodeEditor value={"package main\n"} suppressFindWidget />);
+
+    const modFBinding = latestKeyBindings.find((binding) => binding.key === "Mod-f");
+    expect(modFBinding?.run).toBeDefined();
+
+    const handled = modFBinding?.run?.({} as any);
+
+    expect(handled).toBe(true);
+    expect(screen.queryByTestId("find-widget")).not.toBeInTheDocument();
   });
 
   it("does not accept completion on Enter while editing package declaration context", () => {
@@ -592,7 +604,7 @@ describe("CodeEditor", () => {
 
     const editorContainer = container.firstElementChild as HTMLElement;
     const gutter = document.createElement("div");
-    gutter.className = "cm-gutter";
+    gutter.className = "cm-gutter cm-breakpoint-gutter";
     editorContainer.appendChild(gutter);
 
     fireEvent.mouseDown(gutter, { clientX: 8, clientY: 60, button: 0 });
@@ -611,6 +623,25 @@ describe("CodeEditor", () => {
 
     const editorContainer = container.firstElementChild as HTMLElement;
     fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not toggle breakpoint when clicking the fold gutter", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    const gutter = document.createElement("div");
+    gutter.className = "cm-gutter cm-foldGutter";
+    editorContainer.appendChild(gutter);
+
+    fireEvent.mouseDown(gutter, { clientX: 8, clientY: 60, button: 0 });
 
     expect(toggleBreakpointSpy).not.toHaveBeenCalled();
   });
@@ -1067,7 +1098,7 @@ describe("CodeEditor", () => {
         },
       },
     });
-    const goplsResult = await latestAutocompleteOverride?.({
+    await latestAutocompleteOverride?.({
       pos: 15,
       explicit: false,
       matchBefore: () => ({ from: 13, to: 14, text: "f" }),
@@ -1086,8 +1117,7 @@ describe("CodeEditor", () => {
         expect.objectContaining({ label: "for" }),
       ])
     );
-    expect(goplsResult).toBeNull();
-    expect(requestCompletions).not.toHaveBeenCalled();
+    expect(requestCompletions).toHaveBeenCalledTimes(1);
   });
 
   it("uses function-name snippets after func keyword without duplicating func", async () => {

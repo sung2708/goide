@@ -60,7 +60,7 @@ export default defineConfig(async () => ({
   test: {
     environment: "jsdom",
     globals: false,
-    setupFiles: ["./src/test/setup.ts"],
+    setupFiles: ["src/test/setup.ts"],
     exclude: [...configDefaults.exclude, ".worktrees/**"],
   },
 

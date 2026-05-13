@@ -269,6 +269,7 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
         .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            #[cfg(debug_assertions)]
             eprintln!("[goide] run_go_file error: {e:#}");
         }
     });
@@ -300,6 +301,7 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
         .await
         {
             emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
+            #[cfg(debug_assertions)]
             eprintln!("[goide] run_go_file error: {e:#}");
         }
     });
@@ -1244,13 +1246,11 @@ async fn refresh_debugger_location(client: &mut DapClient, store: &mut RuntimeSi
         return;
     };
     store.active_thread_id = Some(thread_id);
-    if let Ok(frame) = client.stack_trace(thread_id).await {
-        if let Some(frame) = frame {
-            store.active_relative_path = Some(frame.relative_path);
-            store.active_line = Some(frame.line);
-            store.active_column = Some(frame.column);
-            return;
-        }
+    if let Ok(Some(frame)) = client.stack_trace(thread_id).await {
+        store.active_relative_path = Some(frame.relative_path);
+        store.active_line = Some(frame.line);
+        store.active_column = Some(frame.column);
+        return;
     }
     store.active_relative_path = None;
     store.active_line = None;
@@ -1490,12 +1490,12 @@ fn should_search_file(path: &Path) -> bool {
         .extension()
         .and_then(|ext| ext.to_str())
         .map(|value| value.to_ascii_lowercase());
-    match extension.as_deref() {
+    matches!(
+        extension.as_deref(),
         Some("go") | Some("mod") | Some("sum") | Some("md") | Some("txt") | Some("json")
         | Some("yaml") | Some("yml") | Some("toml") | Some("rs") | Some("ts") | Some("tsx")
-        | Some("js") | Some("jsx") | Some("css") | Some("html") => true,
-        _ => false,
-    }
+        | Some("js") | Some("jsx") | Some("css") | Some("html")
+    )
 }
 
 fn collect_search_results(
@@ -1574,6 +1574,7 @@ fn collect_search_results(
 fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchFileDto>, String> {
     let output = std_command("git")
         .arg("grep")
+        .arg("-F")
         .arg("-i")
         .arg("-I")
         .arg("--line-number")
@@ -1604,7 +1605,7 @@ fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchF
             continue;
         }
 
-        let matches = file_map.entry(path).or_insert_with(Vec::new);
+        let matches = file_map.entry(path).or_default();
         if matches.len() < 10 {
             matches.push(WorkspaceSearchMatchDto {
                 line: line_num,
@@ -1797,6 +1798,7 @@ fn parse_remote_ref(name: &str) -> Option<(&str, &str)> {
 }
 
 // Keep the original helper for callers that only need the branch name.
+#[cfg(test)]
 fn normalize_remote_branch_name(name: &str) -> Option<String> {
     parse_remote_ref(name).map(|(_, branch)| branch.to_string())
 }
@@ -2253,6 +2255,7 @@ fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
 /// pattern suitable for use with `dlv dap` launch arguments (e.g. `./cmd/app`).
 #[derive(Debug)]
 pub struct DebugTarget {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub package_dir: PathBuf,
     pub package_pattern: String,
 }
@@ -2404,7 +2407,7 @@ mod tests {
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
         map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
-        resolve_debug_target, start_debug_session_internal_for_test, strip_error_prefix,
+        resolve_debug_target, search_with_git_grep, start_debug_session_internal_for_test, strip_error_prefix,
         switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
         validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path, RuntimeSignalStore,
@@ -2472,6 +2475,29 @@ mod tests {
         write_file(dir.join(path), content);
         git(dir, &["add", path]);
         git(dir, &["commit", "-m", message]);
+    }
+
+    #[test]
+    fn search_with_git_grep_treats_query_as_plain_text() {
+        let repo_dir = create_temp_workspace("search_git_grep_plain_text");
+        init_git_repo(&repo_dir);
+        add_commit(
+            &repo_dir,
+            "main.go",
+            "package main\n\nfunc main() { println(\"[\") }\n",
+            "add searchable file",
+        );
+
+        let results = search_with_git_grep(&repo_dir, "[").expect("git grep should succeed");
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].relative_path, "main.go");
+        assert_eq!(results[0].matches.len(), 1);
+        assert_eq!(results[0].matches[0].line, 3);
+        assert!(
+            results[0].matches[0].preview.contains('['),
+            "preview should preserve the literal query match"
+        );
     }
 
     fn add_remote(dir: &std::path::PathBuf, name: &str) -> std::path::PathBuf {

@@ -8,6 +8,7 @@ import {
   deactivateDeepTrace,
   getRuntimeAvailability,
   getRuntimeSignals,
+  listWorkspaceEntries,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
@@ -32,6 +33,7 @@ import type {
   RuntimeSignal,
   WorkspaceGitBranch,
   DebuggerState,
+  FsEntry,
 } from "../../lib/ipc/types";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -67,6 +69,7 @@ import { useWorkspaceSearchState } from "./useWorkspaceSearchState";
 import { useRunOutputState, type RunMode } from "./useRunOutputState";
 
 const DEBUG_UI_ENABLED = true;
+const QUICK_OPEN_IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "target", ".turbo", ".cache"]);
 const LazyBottomPanel = lazy(() => import("../panels/BottomPanel"));
 const LazyRuntimeTopologyPanel = lazy(() => import("../panels/RuntimeTopologyPanel"));
 const LazyDebugFailureDialog = lazy(() => import("../panels/DebugFailureDialog"));
@@ -91,6 +94,78 @@ const ACTIVE_DEBUG_POLL_INTERVAL_MS = 600;
 const DEBUG_POLL_BACKOFF_STEP_MS = 900;
 const DEBUG_POLL_MAX_INTERVAL_MS = 5000;
 type DebugUiState = "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+
+type GoOutlineMatch = {
+  name: string;
+  kind: DocumentOutlineItem["kind"];
+  startIndex: number;
+};
+
+function getLineNumberAtOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let index = 0; index < offset; index += 1) {
+    if (source[index] === "\n") {
+      line += 1;
+    }
+  }
+  return line;
+}
+
+function findBlockEnd(source: string, startIndex: number): number {
+  let depth = 0;
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
+  }
+  return source.length;
+}
+
+function buildFallbackDocumentSymbols(source: string): DocumentOutlineItem[] {
+  const matches: GoOutlineMatch[] = [];
+  const functionRegex = /^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm;
+  const typeRegex = /^type\s+([A-Za-z_][A-Za-z0-9_]*)\s+(struct|interface)\b/gm;
+
+  for (const match of source.matchAll(functionRegex)) {
+    const name = match[1];
+    if (!name) continue;
+    matches.push({
+      name,
+      kind: match[0].startsWith("func (") ? "method" : "function",
+      startIndex: match.index ?? 0,
+    });
+  }
+
+  for (const match of source.matchAll(typeRegex)) {
+    const name = match[1];
+    const typeKind = match[2];
+    if (!name || !typeKind) continue;
+    matches.push({
+      name,
+      kind: typeKind === "struct" ? "struct" : "interface",
+      startIndex: match.index ?? 0,
+    });
+  }
+
+  return matches
+    .sort((a, b) => a.startIndex - b.startIndex)
+    .map((match) => {
+      const blockStart = source.indexOf("{", match.startIndex);
+      return {
+        name: match.name,
+        kind: match.kind,
+        line: getLineNumberAtOffset(source, match.startIndex),
+        from: match.startIndex,
+        to: blockStart === -1 ? match.startIndex + match.name.length : findBlockEnd(source, blockStart),
+      };
+    });
+}
 
 function isBlockedWaitReason(waitReason: string): boolean {
   const normalized = waitReason.trim().toLowerCase();
@@ -254,8 +329,15 @@ function EditorShell() {
     nextPollingDelay,
   });
   const [isDirty, setIsDirty] = useState(false);
-  const [activeTab, setActiveTab] = useState<ActivityBarTab>("search");
+  const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
+  const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [quickOpenFiles, setQuickOpenFiles] = useState<string[]>([]);
+  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
+  const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
+  const quickOpenRequestIdRef = useRef(0);
+  const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
   const {
     searchLoading,
@@ -274,6 +356,7 @@ function EditorShell() {
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
+  const [editorHighlightQuery, setEditorHighlightQuery] = useState<string | null>(null);
   const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
@@ -300,7 +383,6 @@ function EditorShell() {
     invalidateDiagnosticsRequests,
     resetDiagnosticsState,
     refreshDiagnosticsForFile,
-    scheduleDiagnosticsRefresh,
   } = useDiagnosticsState({
     workspacePathRef,
     activeFilePathRef,
@@ -341,9 +423,19 @@ function EditorShell() {
   useEffect(() => {
     setJumpRequest(null);
     setDocumentSymbols([]);
-    setIsSymbolsPending(activeFilePath !== null && activeFilePath !== undefined && activeFilePath.endsWith(".go"));
     setCursorOffset(null);
+    setIsSymbolsPending(Boolean(activeFilePath?.toLowerCase().endsWith(".go")));
   }, [workspacePath, activeFilePath]);
+
+  useEffect(() => {
+    if (!activeFilePath?.toLowerCase().endsWith(".go") || activeFileContent === null) {
+      return;
+    }
+
+    const fallbackSymbols = buildFallbackDocumentSymbols(activeFileContent);
+    setDocumentSymbols(fallbackSymbols);
+    setIsSymbolsPending(false);
+  }, [activeFilePath, activeFileContent]);
 
   const activeDocumentSymbol = useMemo(() => {
     if (cursorOffset === null) {
@@ -394,6 +486,16 @@ function EditorShell() {
     function handleGlobalKeyDown(e: KeyboardEvent) {
       const isMac = navigator.platform.startsWith("Mac");
       const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        if (!workspacePathRef.current) {
+          return;
+        }
+        setIsQuickOpenOpen(true);
+        setQuickOpenQuery("");
+        setQuickOpenSelectedIndex(0);
+        return;
+      }
       if (mod && e.shiftKey && e.key === "F") {
         e.preventDefault();
         setActiveTab("search");
@@ -405,6 +507,84 @@ function EditorShell() {
       window.removeEventListener("keydown", handleGlobalKeyDown);
     };
   }, []);
+
+  useEffect(() => {
+    if (isQuickOpenOpen) {
+      queueMicrotask(() => quickOpenInputRef.current?.focus());
+    }
+  }, [isQuickOpenOpen]);
+
+  const loadQuickOpenFiles = useCallback(async (rootWorkspacePath: string) => {
+    const requestId = quickOpenRequestIdRef.current + 1;
+    quickOpenRequestIdRef.current = requestId;
+    setQuickOpenLoading(true);
+    const nextFiles: string[] = [];
+    const queue: (string | undefined)[] = [undefined];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const response = await listWorkspaceEntries(rootWorkspacePath, current);
+      if (requestId !== quickOpenRequestIdRef.current) {
+        return;
+      }
+      if (!response.ok || !response.data) {
+        continue;
+      }
+      for (const entry of response.data as FsEntry[]) {
+        if (entry.isDir) {
+          if (!QUICK_OPEN_IGNORED_FOLDERS.has(entry.name)) {
+            queue.push(entry.path);
+          }
+        } else {
+          nextFiles.push(entry.path);
+        }
+      }
+    }
+
+    if (requestId !== quickOpenRequestIdRef.current) {
+      return;
+    }
+    nextFiles.sort((a, b) => a.localeCompare(b));
+    setQuickOpenFiles(nextFiles);
+    setQuickOpenLoading(false);
+    setQuickOpenSelectedIndex(0);
+  }, []);
+
+  useEffect(() => {
+    if (!isQuickOpenOpen || !workspacePath) {
+      return;
+    }
+    void loadQuickOpenFiles(workspacePath);
+  }, [isQuickOpenOpen, loadQuickOpenFiles, workspacePath]);
+
+  const quickOpenFilteredFiles = useMemo(() => {
+    const query = quickOpenQuery.trim().toLowerCase();
+    if (!query) {
+      return quickOpenFiles.slice(0, 200);
+    }
+    const score = (path: string) => {
+      const normalized = path.toLowerCase();
+      const name = normalized.split("/").pop() ?? normalized;
+      if (name === query) return 0;
+      if (name.startsWith(query)) return 1;
+      if (normalized.startsWith(query)) return 2;
+      const idx = normalized.indexOf(query);
+      return idx >= 0 ? 10 + idx : Number.MAX_SAFE_INTEGER;
+    };
+    return quickOpenFiles
+      .map((path) => ({ path, score: score(path) }))
+      .filter((item) => item.score !== Number.MAX_SAFE_INTEGER)
+      .sort((a, b) => a.score - b.score || a.path.localeCompare(b.path))
+      .slice(0, 200)
+      .map((item) => item.path);
+  }, [quickOpenFiles, quickOpenQuery]);
+
+  useEffect(() => {
+    setQuickOpenSelectedIndex((current) => {
+      if (quickOpenFilteredFiles.length === 0) return 0;
+      return Math.min(current, quickOpenFilteredFiles.length - 1);
+    });
+  }, [quickOpenFilteredFiles]);
 
   const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
@@ -1434,8 +1614,6 @@ function EditorShell() {
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
     setCompletionAvailability((prev) => (prev === "degraded" ? "idle" : prev));
 
-    scheduleDiagnosticsRefresh(workspacePath, activeFilePath);
-
     if (autoSaveDebounceRef.current) {
       clearTimeout(autoSaveDebounceRef.current);
     }
@@ -1443,8 +1621,8 @@ function EditorShell() {
       if (workspacePathRef.current && activeFilePathRef.current) {
         void persistActiveFileContent(value);
       }
-    }, 5000);
-  }, [persistActiveFileContent, scheduleDiagnosticsRefresh]);
+    }, 2500);
+  }, [persistActiveFileContent, workspacePath, activeFilePath]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -1558,6 +1736,19 @@ function EditorShell() {
       }
 
       const startingPath = workspacePath;
+      const readFileWithRetry = async (workspaceRoot: string, path: string) => {
+        let lastResponse = await readWorkspaceFile(workspaceRoot, path);
+        const isLikelyNotFound = (message?: string | null) =>
+          typeof message === "string" && /not\s+found|cannot\s+find/i.test(message);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (lastResponse.ok || !isLikelyNotFound(lastResponse.error?.message)) {
+            return lastResponse;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 140));
+          lastResponse = await readWorkspaceFile(workspaceRoot, path);
+        }
+        return lastResponse;
+      };
       setIsReading(true);
       setFileError(null);
       setSelectedLine(null);
@@ -1568,7 +1759,7 @@ function EditorShell() {
       resetCompletionAvailability();
 
       try {
-        const response = await readWorkspaceFile(workspacePath, relativePath);
+        const response = await readFileWithRetry(workspacePath, relativePath);
 
         // If the workspace changed while we were reading, ignore the result
         if (workspacePathRef.current !== startingPath) {
@@ -1715,6 +1906,16 @@ function EditorShell() {
     }
   }, [branchSnapshot, refreshBranchSnapshot, reloadWorkspaceState]);
 
+  const handleQuickOpenSelect = useCallback(
+    (relativePath: string) => {
+      setIsQuickOpenOpen(false);
+      setQuickOpenQuery("");
+      setQuickOpenSelectedIndex(0);
+      void handleOpenFile(relativePath);
+    },
+    [handleOpenFile]
+  );
+
   const handleBranchSwitchConfirm = useCallback(
     (payload: { action: "commit" | "stash" | "discard"; commitMessage?: string }) => {
       if (!pendingTargetBranch || !workspacePathRef.current) return;
@@ -1780,11 +1981,11 @@ function EditorShell() {
           className="flex-1"
           size={workspaceLayout.splitSizes.left}
           defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.left}
-          minSize={180}
-          maxSize={420}
+          minSize={120}
+          maxSize={2000}
           onResize={handleLeftPaneResize}
           primary={
-            <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
+            <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
               {activeTab === "explorer" && (
                 <Explorer
                   workspacePath={workspacePath}
@@ -1799,7 +2000,8 @@ function EditorShell() {
                   results={workspaceSearchResults}
                   loading={searchLoading}
                   onSearch={handleWorkspaceSearch}
-                  onOpenResult={(file, line) => {
+                  onOpenResult={(file, line, query) => {
+                    setEditorHighlightQuery(query);
                     void handleOpenFile(file).then(() => {
                       requestJump(line);
                     });
@@ -1946,8 +2148,8 @@ function EditorShell() {
             size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
             resizeAnchor="end"
             defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom}
-            minSize={isBottomPanelOpen ? 240 : 0}
-            maxSize={520}
+            minSize={isBottomPanelOpen ? 120 : 0}
+            maxSize={2000}
             collapsed={!isBottomPanelOpen}
             onResize={handleTerminalPaneResize}
             primary={
@@ -1979,18 +2181,16 @@ function EditorShell() {
               <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
             <section
               data-testid="editor-workbench"
-              className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-[var(--crust)] shadow-lg"
+              className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-(--border-subtle) bg-(--crust)"
             >
-              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>
-                  <span className="text-[var(--overlay0)] opacity-50">/</span>
-                  <span className="text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1.5 md:px-4">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[12px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
                 </div>
                 
                 <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
                   <button
-                    className={`flex cursor-pointer items-center gap-2 rounded border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.4)] px-3 py-1.5 text-[11px] font-semibold text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] ${
+                    className={`flex size-7 cursor-pointer items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] transition-colors duration-100 ease-out hover:bg-[var(--bg-hover)] ${
                       isOpening ? "cursor-not-allowed opacity-60" : ""
                     }`}
                     onClick={handleOpenWorkspace}
@@ -2000,15 +2200,14 @@ function EditorShell() {
                     disabled={isOpening}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                    {isOpening ? "Opening..." : "Open"}
                   </button>
 
                   {activeFilePath && (
                     <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
                         runStatus === "running" || debugUiState === "starting"
-                          ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.35)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(127,176,142,0.35)] bg-[rgba(127,176,142,0.14)] text-[var(--green)] hover:bg-[rgba(127,176,142,0.22)]"
+                          ? "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
                       onClick={handleRunFileStandard}
                       type="button"
@@ -2017,17 +2216,16 @@ function EditorShell() {
                       disabled={runStatus === "running" || debugUiState === "starting"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                      {runStatus === "running" ? "Running..." : "Run"}
                     </button>
                   )}
                   {isGoFile(activeFilePath) && runMode !== "debug" && (
                     <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
                         runStatus === "running" ||
                         debugUiState === "starting" ||
                         runtimeAvailability === "unavailable"
-                          ? "border-[rgba(113,125,144,0.25)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(126,162,220,0.4)] text-[var(--blue)] hover:bg-[rgba(126,162,220,0.12)]"
+                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
                       onClick={handleRunFileWithRace}
                       type="button"
@@ -2040,15 +2238,14 @@ function EditorShell() {
                       }
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-                      {runStatus === "running" && runMode === "race" ? "Race..." : "Run Race"}
                     </button>
                   )}
                   {isGoFile(activeFilePath) && (
                     <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
                         isDebugSessionBusy || runStatus === "running"
-                          ? "border-[rgba(239,159,118,0.25)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(239,159,118,0.4)] text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
+                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
                       onClick={() => void handleStartDebug()}
                       type="button"
@@ -2057,13 +2254,6 @@ function EditorShell() {
                       disabled={isDebugSessionBusy || runStatus === "running"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                      {debugUiState === "starting"
-                        ? "Starting..."
-                        : debugUiState === "stopping"
-                        ? "Stopping..."
-                        : isDebugSessionRunning
-                        ? "Debugging..."
-                        : "Debug"}
                     </button>
                   )}
                 </div>
@@ -2071,7 +2261,7 @@ function EditorShell() {
 
               <div
                 data-testid="editor-content-region"
-                className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 sm:p-4 md:p-5"
+                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-(--crust) p-3 sm:p-4 md:p-5"
               >
                 {!workspacePath && (
                   <div className="flex flex-1 flex-col items-center justify-center">
@@ -2120,7 +2310,7 @@ function EditorShell() {
                     )}
                     <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--crust)]">
                       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                      <div className="flex items-center gap-2 border-b border-[rgba(113,125,144,0.2)] px-3 py-1.5">
+                      <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1">
                         <span className="min-w-0 truncate text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
                         {isReading && <span className="shrink-0 text-[10px] text-[var(--overlay0)]">Loading…</span>}
                         <span className="shrink-0 text-[rgba(113,125,144,0.4)]">/</span>
@@ -2145,9 +2335,7 @@ function EditorShell() {
                                 L{activeDocumentSymbol.line}
                               </span>
                             </button>
-                          ) : (
-                            <span className="text-[var(--overlay0)]">No active symbol</span>
-                          )}
+                          ) : null}
                         </div>
                       </div>
                       <div className="relative flex-1 min-h-0">
@@ -2208,10 +2396,12 @@ function EditorShell() {
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
+                            externalSearchQuery={editorHighlightQuery}
                             onDocumentSymbolsChange={(symbols) => {
                               setDocumentSymbols(symbols);
                               setIsSymbolsPending(false);
                             }}
+                            suppressFindWidget={activeTab === "search"}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -2224,12 +2414,14 @@ function EditorShell() {
                         )}
                       </div>
                       </div>
-                      <DocumentOutline
-                        activeItemFrom={activeDocumentSymbol?.from ?? null}
-                        items={documentSymbols}
-                        isPending={isSymbolsPending}
-                        onJumpToLine={(line) => requestJump(line)}
-                      />
+                      {(isSymbolsPending || documentSymbols.length > 0) ? (
+                        <DocumentOutline
+                          activeItemFrom={activeDocumentSymbol?.from ?? null}
+                          items={documentSymbols}
+                          isPending={isSymbolsPending}
+                          onJumpToLine={(line) => requestJump(line)}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 )}
@@ -2243,6 +2435,77 @@ function EditorShell() {
           }
         />
       </div>
+
+      {isQuickOpenOpen && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex justify-center pt-20">
+          <div className="pointer-events-auto w-full max-w-2xl px-4">
+            <div className="overflow-hidden rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] shadow-[var(--panel-shadow)]">
+              <input
+                ref={quickOpenInputRef}
+                type="text"
+                placeholder="Find file..."
+                value={quickOpenQuery}
+                onChange={(event) => {
+                  setQuickOpenQuery(event.target.value);
+                  setQuickOpenSelectedIndex(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setIsQuickOpenOpen(false);
+                    return;
+                  }
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setQuickOpenSelectedIndex((current) =>
+                      Math.min(current + 1, Math.max(0, quickOpenFilteredFiles.length - 1))
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setQuickOpenSelectedIndex((current) => Math.max(0, current - 1));
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const selected = quickOpenFilteredFiles[quickOpenSelectedIndex];
+                    if (selected) {
+                      handleQuickOpenSelect(selected);
+                    }
+                  }
+                }}
+                className="w-full border-b border-[var(--border-subtle)] bg-[var(--crust)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+                aria-label="Quick open file"
+              />
+              <div className="max-h-72 overflow-auto py-1">
+                {quickOpenLoading && (
+                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">Indexing files...</p>
+                )}
+                {!quickOpenLoading && quickOpenFilteredFiles.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">No files found.</p>
+                )}
+                {!quickOpenLoading &&
+                  quickOpenFilteredFiles.map((path, index) => (
+                    <button
+                      key={path}
+                      type="button"
+                      onClick={() => handleQuickOpenSelect(path)}
+                      className={`block w-full px-3 py-1.5 text-left text-xs ${
+                        index === quickOpenSelectedIndex
+                          ? "bg-[var(--selection-bg)] text-[var(--text)]"
+                          : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+                      }`}
+                      title={path}
+                    >
+                      {path}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <StatusBar
         workspacePath={workspacePath}

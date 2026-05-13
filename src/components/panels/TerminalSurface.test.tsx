@@ -86,10 +86,12 @@ describe("TerminalSurface — default terminal options", () => {
     expect(capturedOptions?.fontSize).toBe(13);
     expect(capturedOptions?.lineHeight).toBe(1.35);
     expect(capturedOptions?.letterSpacing).toBe(0);
-    expect(capturedOptions?.fontFamily).toBe('"Cascadia Mono", "Cascadia Code", "Fira Code", monospace');
+    expect(capturedOptions?.fontFamily).toBe(
+      '"JetBrainsMono Nerd Font", "Cascadia Code PL", "Cascadia Mono", "Cascadia Code", "Fira Code", monospace'
+    );
     expect(capturedOptions?.scrollback).toBe(10000);
-    expect((capturedOptions?.theme as Record<string, unknown>)?.background).toBe("#11111b");
-    expect((capturedOptions?.theme as Record<string, unknown>)?.selectionBackground).toBe("#45475a");
+    expect((capturedOptions?.theme as Record<string, unknown>)?.background).toBe("#2e3440");
+    expect((capturedOptions?.theme as Record<string, unknown>)?.selectionBackground).toBe("#3a4355");
   });
 });
 
