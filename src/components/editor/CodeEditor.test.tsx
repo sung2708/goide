@@ -1,16 +1,21 @@
 import { fireEvent, render, screen } from "@testing-library/react";
+import type { EditorView } from "@codemirror/view";
+import { useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const searchPanelOpenMock = vi.fn(() => false);
-const findNextMock = vi.fn(() => true);
 import CodeEditor from "./CodeEditor";
 import { PREDICTED_HINT_UNDERLINE_CLASS } from "./codemirrorTheme";
+import { semanticAnalysisField, setSemanticAnalysisEffect } from "./semanticFolding";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
+import type { SemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import type { SemanticAnalysisResult } from "../../features/semantics/types";
 
 const mockLine1 = document.createElement("div");
 mockLine1.className = "cm-line";
 const mockLine2 = document.createElement("div");
 mockLine2.className = "cm-line";
+
+let latestSemanticAnalysis: SemanticAnalysisResult | null = null;
 
 const mockView = {
   viewport: {
@@ -22,6 +27,13 @@ const mockView = {
   requestMeasure: vi.fn(),
   scrollDOM: {
     scrollBy: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    clientHeight: 120,
+    scrollHeight: 120,
+    scrollLeft: 0,
+    scrollTop: 0,
+    parentElement: null as any,
   },
   posAtCoords: vi.fn(({ y }: { x: number; y: number }) => {
     if (y < 40) {
@@ -33,11 +45,25 @@ const mockView = {
     return null;
   }),
   state: {
+    selection: {
+      main: {
+        from: 5,
+        to: 5,
+        head: 5,
+        anchor: 5,
+      },
+    },
     doc: {
       lines: 2,
       lineAt: (pos: number) => (pos < 20 ? { number: 1 } : { number: 2 }),
       line: (lineNumber: number) => ({ from: lineNumber === 1 ? 5 : 25 }),
     },
+    field: vi.fn((field: unknown, fallback?: unknown) => {
+      if (field === semanticAnalysisField) {
+        return latestSemanticAnalysis ?? fallback ?? null;
+      }
+      return fallback;
+    }),
   },
   domAtPos: (pos: number) => ({
     node: pos < 20 ? mockLine1 : mockLine2,
@@ -47,6 +73,34 @@ const mockView = {
       ? { left: 16, right: 28, top: 12, bottom: 24 }
       : { left: 16, right: 28, top: 44, bottom: 56 },
 };
+mockView.dispatch.mockImplementation((spec: {
+  selection?: { anchor: number; head?: number };
+  effects?:
+    | { is?: (effect: unknown) => boolean; value?: SemanticAnalysisResult | null }
+    | Array<{ is?: (effect: unknown) => boolean; value?: SemanticAnalysisResult | null }>;
+}) => {
+  const effects = Array.isArray(spec?.effects)
+    ? spec.effects
+    : spec?.effects
+      ? [spec.effects]
+      : [];
+  for (const effect of effects) {
+    if (effect.is?.(setSemanticAnalysisEffect)) {
+      latestSemanticAnalysis = effect.value ?? null;
+    }
+  }
+
+  if (spec?.selection) {
+    const from = Math.min(spec.selection.anchor, spec.selection.head ?? spec.selection.anchor);
+    const to = Math.max(spec.selection.anchor, spec.selection.head ?? spec.selection.anchor);
+    mockView.state.selection.main = {
+      from,
+      to,
+      anchor: spec.selection.anchor,
+      head: spec.selection.head ?? spec.selection.anchor,
+    };
+  }
+});
 
 const setDiagnosticsMock = vi.fn();
 const autocompletionMock = vi.fn();
@@ -62,6 +116,7 @@ const moveCompletionSelectionMock = vi.fn(
   (_forward: boolean, _by?: "option" | "page") => (_view: unknown) => false
 );
 let latestKeyBindings: Array<{ key?: string; run?: (view: unknown) => boolean }> = [];
+let latestCodeMirrorProps: Record<string, unknown> | null = null;
 type TestCompletionResult = {
   from: number;
   options: Array<{
@@ -129,15 +184,6 @@ vi.mock("@codemirror/autocomplete", () => ({
   acceptCompletion: (view: unknown) => acceptCompletionMock(view),
 }));
 
-vi.mock("@codemirror/search", async () => {
-  const actual = await vi.importActual<typeof import("@codemirror/search")>("@codemirror/search");
-  return {
-    ...actual,
-    searchPanelOpen: () => searchPanelOpenMock(),
-    findNext: () => findNextMock(),
-  };
-});
-
 vi.mock("@codemirror/view", async () => {
   const actual = await vi.importActual<typeof import("@codemirror/view")>("@codemirror/view");
   return {
@@ -153,8 +199,12 @@ vi.mock("@codemirror/view", async () => {
 });
 
 vi.mock("@uiw/react-codemirror", () => ({
-  default: ({ onCreateEditor }: { onCreateEditor?: (view: unknown) => void }) => {
-    onCreateEditor?.(mockView);
+  default: (props: Record<string, unknown>) => {
+    latestCodeMirrorProps = props;
+    const onCreateEditor = props.onCreateEditor as ((view: unknown) => void) | undefined;
+    useEffect(() => {
+      onCreateEditor?.(mockView);
+    }, [onCreateEditor]);
     return <div data-testid="mock-codemirror" className="cm-editor" />;
   },
 }));
@@ -162,8 +212,6 @@ vi.mock("@uiw/react-codemirror", () => ({
 describe("CodeEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    searchPanelOpenMock.mockReturnValue(false);
-    findNextMock.mockReturnValue(true);
     hasNextSnippetFieldMock.mockReturnValue(false);
     hasPrevSnippetFieldMock.mockReturnValue(false);
     nextSnippetFieldMock.mockReturnValue(true);
@@ -171,7 +219,23 @@ describe("CodeEditor", () => {
     acceptCompletionMock.mockReturnValue(false);
     mockView.requestMeasure.mockClear();
     mockView.scrollDOM.scrollBy.mockClear();
+    mockView.scrollDOM.addEventListener.mockClear();
+    mockView.scrollDOM.removeEventListener.mockClear();
+    mockView.scrollDOM.scrollHeight = 120;
+    mockView.scrollDOM.clientHeight = 120;
+    mockView.scrollDOM.scrollLeft = 0;
+    mockView.scrollDOM.scrollTop = 0;
+    mockView.scrollDOM.parentElement = null;
+    mockView.state.selection.main = {
+      from: 5,
+      to: 5,
+      anchor: 5,
+      head: 5,
+    };
+    latestSemanticAnalysis = null;
+    mockView.state.field.mockClear();
     latestKeyBindings = [];
+    latestCodeMirrorProps = null;
   });
 
   it("keeps the editor host clipped inside the available viewport", () => {
@@ -182,7 +246,19 @@ describe("CodeEditor", () => {
     expect(screen.getByTestId("mock-codemirror")).toBeInTheDocument();
   });
 
-  it("forwards mouse wheel scrolling to the CodeMirror scroll container", () => {
+  it("registers a non-passive wheel listener on the CodeMirror scroll container", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
+      (call: unknown[]) => call[0] === "wheel"
+    );
+
+    expect(wheelRegistration).toBeDefined();
+    expect(wheelRegistration?.[2]).toEqual({ passive: false });
+  });
+
+  it("forwards wheel scrolling from the editor host when scrollDOM is scrollable", () => {
+    mockView.scrollDOM.scrollHeight = 400;
     render(<CodeEditor value={"package main\n"} />);
 
     fireEvent.wheel(screen.getByTestId("mock-codemirror").parentElement as HTMLElement, {
@@ -195,6 +271,57 @@ describe("CodeEditor", () => {
       top: 36,
       behavior: "auto",
     });
+  });
+
+  it("forwards wheel scrolling to the first scrollable ancestor when scrollDOM itself cannot scroll", () => {
+    const scrollableAncestor = {
+      scrollBy: vi.fn(),
+      clientHeight: 120,
+      scrollHeight: 400,
+      scrollLeft: 0,
+      scrollTop: 0,
+      parentElement: null,
+      dispatchEvent: vi.fn(),
+    };
+    mockView.scrollDOM.parentElement = scrollableAncestor;
+    render(<CodeEditor value={"package main\n"} />);
+
+    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
+      (call: unknown[]) => call[0] === "wheel"
+    );
+    const handler = wheelRegistration?.[1] as ((event: {
+      ctrlKey: boolean;
+      deltaX: number;
+      deltaY: number;
+      deltaMode: number;
+      preventDefault: () => void;
+      target?: EventTarget | null;
+    }) => void) | undefined;
+
+    const preventDefault = vi.fn();
+    handler?.({
+      ctrlKey: false,
+      deltaX: 4,
+      deltaY: 36,
+      deltaMode: 0,
+      preventDefault,
+      target: mockView.scrollDOM as unknown as EventTarget,
+    });
+
+    expect(scrollableAncestor.scrollBy).toHaveBeenCalledWith({
+      left: 4,
+      top: 36,
+      behavior: "auto",
+    });
+    expect(mockView.scrollDOM.scrollBy).not.toHaveBeenCalled();
+    expect(preventDefault).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the editor root at full height without forcing minHeight", () => {
+    render(<CodeEditor value={"package main\n"} />);
+
+    expect(latestCodeMirrorProps?.height).toBe("100%");
+    expect(latestCodeMirrorProps?.minHeight).toBeUndefined();
   });
 
   it("uses Tab to move snippet placeholders before completion acceptance", () => {
@@ -257,7 +384,7 @@ describe("CodeEditor", () => {
         activateOnTyping: true,
         defaultKeymap: false,
         maxRenderedOptions: 80,
-        updateSyncTime: 80,
+        updateSyncTime: 35,
       })
     );
     expect(latestAutocompleteOverrides).toHaveLength(2);
@@ -278,18 +405,16 @@ describe("CodeEditor", () => {
     expect(acceptCompletionMock).toHaveBeenCalled();
   });
 
-  it("uses Enter to jump to the next match when the search panel is open", () => {
-    searchPanelOpenMock.mockReturnValue(true);
-    findNextMock.mockReturnValue(true);
+  it("suppresses the in-file find widget while workspace search is active", () => {
+    render(<CodeEditor value={"package main\n"} suppressFindWidget />);
 
-    render(<CodeEditor value={"package main\n"} />);
-    const enterBinding = latestKeyBindings.find((binding) => binding.key === "Enter");
-    expect(enterBinding?.run).toBeDefined();
+    const modFBinding = latestKeyBindings.find((binding) => binding.key === "Mod-f");
+    expect(modFBinding?.run).toBeDefined();
 
-    const handled = enterBinding?.run?.({ state: {} } as any);
+    const handled = modFBinding?.run?.({} as any);
+
     expect(handled).toBe(true);
-    expect(findNextMock).toHaveBeenCalled();
-    expect(acceptCompletionMock).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("find-widget")).not.toBeInTheDocument();
   });
 
   it("does not accept completion on Enter while editing package declaration context", () => {
@@ -468,6 +593,59 @@ describe("CodeEditor", () => {
     expect(selectionSpy).toHaveBeenCalledWith(2);
   });
 
+  it("toggles breakpoint when clicking in the gutter", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    const gutter = document.createElement("div");
+    gutter.className = "cm-gutter cm-breakpoint-gutter";
+    editorContainer.appendChild(gutter);
+
+    fireEvent.mouseDown(gutter, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).toHaveBeenCalledWith(2);
+  });
+
+  it("does not toggle breakpoint on non-gutter clicks", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).not.toHaveBeenCalled();
+  });
+
+  it("does not toggle breakpoint when clicking the fold gutter", () => {
+    const toggleBreakpointSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onToggleBreakpoint={toggleBreakpointSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    const gutter = document.createElement("div");
+    gutter.className = "cm-gutter cm-foldGutter";
+    editorContainer.appendChild(gutter);
+
+    fireEvent.mouseDown(gutter, { clientX: 8, clientY: 60, button: 0 });
+
+    expect(toggleBreakpointSpy).not.toHaveBeenCalled();
+  });
+
   it("emits modifier-click line on Ctrl+click (non-Mac) and does not emit selection", () => {
     const originalPlatform = navigator.platform;
     Object.defineProperty(navigator, "platform", {
@@ -641,6 +819,32 @@ describe("CodeEditor", () => {
     fireEvent.blur(editorContainer, { relatedTarget: document.body });
     expect(selectionSpy).toHaveBeenCalledWith(null);
     expect(anchorSpy).toHaveBeenLastCalledWith(null);
+  });
+
+  it("emits cursor offset for the current caret position", () => {
+    const cursorOffsetSpy = vi.fn();
+    const { container } = render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        onCursorOffsetChange={cursorOffsetSpy}
+      />
+    );
+
+    const editorContainer = container.firstElementChild as HTMLElement;
+    fireEvent.mouseDown(editorContainer, { clientX: 8, clientY: 60 });
+    expect(cursorOffsetSpy).toHaveBeenCalledWith(25);
+
+    mockView.state.selection.main = {
+      from: 5,
+      to: 5,
+      anchor: 5,
+      head: 5,
+    };
+    fireEvent.keyUp(editorContainer);
+    expect(cursorOffsetSpy).toHaveBeenLastCalledWith(5);
+
+    fireEvent.blur(editorContainer, { relatedTarget: document.body });
+    expect(cursorOffsetSpy).toHaveBeenLastCalledWith(null);
   });
 
   it("adds and removes predicted underline class for active hint line", () => {
@@ -894,7 +1098,7 @@ describe("CodeEditor", () => {
         },
       },
     });
-    const goplsResult = await latestAutocompleteOverride?.({
+    await latestAutocompleteOverride?.({
       pos: 15,
       explicit: false,
       matchBefore: () => ({ from: 13, to: 14, text: "f" }),
@@ -913,8 +1117,7 @@ describe("CodeEditor", () => {
         expect.objectContaining({ label: "for" }),
       ])
     );
-    expect(goplsResult).toBeNull();
-    expect(requestCompletions).not.toHaveBeenCalled();
+    expect(requestCompletions).toHaveBeenCalledTimes(1);
   });
 
   it("uses function-name snippets after func keyword without duplicating func", async () => {
@@ -1390,5 +1593,159 @@ describe("CodeEditor", () => {
         ]),
       })
     );
+  });
+
+  it("syncs semantic analysis with the active file and disposes on unmount", () => {
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn(() => () => {}),
+      dispose: vi.fn(),
+    };
+
+    const { rerender, unmount } = render(
+      <CodeEditor
+        value={"package main\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    expect(semanticClient.syncDocument).toHaveBeenCalledWith({
+      filePath: "main.go",
+      text: "package main\n",
+    });
+    expect(semanticClient.requestAnalysis).toHaveBeenCalledWith("main.go");
+
+    rerender(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    expect(semanticClient.syncDocument).toHaveBeenLastCalledWith({
+      filePath: "main.go",
+      text: "package main\nfunc main() {}\n",
+    });
+    expect(semanticClient.requestAnalysis).toHaveBeenLastCalledWith("main.go");
+
+    unmount();
+
+    expect(semanticClient.dispose).toHaveBeenCalledTimes(1);
+  });
+
+  it("publishes semantic document symbols with line numbers", () => {
+    let semanticListener: ((result: SemanticAnalysisResult) => void) | null = null;
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn((listener) => {
+        semanticListener = listener;
+        return () => {
+          semanticListener = null;
+        };
+      }),
+      dispose: vi.fn(),
+    };
+    const onDocumentSymbolsChange = vi.fn();
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+        onDocumentSymbolsChange={onDocumentSymbolsChange}
+      />
+    );
+
+    const listener = semanticListener as ((result: SemanticAnalysisResult) => void) | null;
+    if (listener !== null) {
+      listener({
+        filePath: "main.go",
+        version: 1,
+        symbols: [
+          {
+            name: "main",
+            kind: "function",
+            range: {
+              from: 25,
+              to: 38,
+            },
+          },
+        ],
+        folds: [],
+        selectionRanges: [
+          { from: 25, to: 38 },
+        ],
+      });
+    }
+
+    expect(onDocumentSymbolsChange).toHaveBeenCalledWith([
+      {
+        name: "main",
+        kind: "function",
+        line: 2,
+        from: 25,
+        to: 38,
+      },
+    ]);
+  });
+
+  it("expands and shrinks selection using semantic selection ranges", () => {
+    let semanticListener: ((result: SemanticAnalysisResult) => void) | null = null;
+    const semanticClient: SemanticAnalysisClient = {
+      syncDocument: vi.fn(),
+      requestAnalysis: vi.fn(),
+      subscribe: vi.fn((listener) => {
+        semanticListener = listener;
+        return () => {
+          semanticListener = null;
+        };
+      }),
+      dispose: vi.fn(),
+    };
+
+    render(
+      <CodeEditor
+        value={"package main\nfunc main() {}\n"}
+        filePath={"main.go"}
+        semanticAnalysisClient={semanticClient}
+      />
+    );
+
+    const listener = semanticListener as ((result: SemanticAnalysisResult) => void) | null;
+    if (listener !== null) {
+      listener({
+        filePath: "main.go",
+        version: 1,
+        symbols: [],
+        folds: [],
+        selectionRanges: [
+          { from: 25, to: 29 },
+          { from: 20, to: 38 },
+        ],
+      });
+    }
+
+    mockView.state.selection.main = {
+      from: 25,
+      to: 25,
+      anchor: 25,
+      head: 25,
+    };
+
+    const expandBinding = latestKeyBindings.find((binding) => binding.key === "Alt-Shift-ArrowRight");
+    const shrinkBinding = latestKeyBindings.find((binding) => binding.key === "Alt-Shift-ArrowLeft");
+
+    expect(expandBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 25, to: 29 });
+
+    expect(expandBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 20, to: 38 });
+
+    expect(shrinkBinding?.run?.(mockView as unknown as EditorView)).toBe(true);
+    expect(mockView.state.selection.main).toMatchObject({ from: 25, to: 29 });
   });
 });

@@ -37,6 +37,8 @@ const editorTheme = EditorView.theme(
       fontSize: "13px",
       lineHeight: "1.62",
       padding: "8px 0",
+      overflow: "auto",
+      overscrollBehavior: "contain",
     },
     ".cm-content": {
       padding: "0",
@@ -55,6 +57,28 @@ const editorTheme = EditorView.theme(
     [`.cm-line.${DEBUG_CURRENT_LINE_CLASS}`]: {
       backgroundColor: "var(--bg-active)",
       borderLeft: "2px solid var(--red)",
+    },
+    ".cm-line.goide-inline-diagnostic-line-error": {
+      backgroundColor: "rgba(243, 139, 168, 0.12)",
+    },
+    ".cm-line.goide-inline-diagnostic-line-warning": {
+      backgroundColor: "rgba(249, 226, 175, 0.1)",
+    },
+    ".goide-inline-diagnostic": {
+      marginLeft: "14px",
+      fontSize: "0.95em",
+      opacity: 0.95,
+      whiteSpace: "nowrap",
+      pointerEvents: "none",
+    },
+    ".goide-inline-diagnostic-error": {
+      color: "var(--red)",
+    },
+    ".goide-inline-diagnostic-warning": {
+      color: "var(--yellow)",
+    },
+    ".goide-inline-diagnostic-info": {
+      color: "var(--blue)",
     },
     ".cm-lintRange-error": {
       backgroundColor: "var(--signal-blocked-bg)",
@@ -144,10 +168,9 @@ const editorTheme = EditorView.theme(
       gap: "8px 10px",
       margin: "8px 12px 10px",
       padding: "8px 10px",
-      borderRadius: "16px",
-      backgroundColor: "rgba(65,69,89,0.42)",
-      boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
-      backdropFilter: "blur(10px)",
+      borderRadius: "6px",
+      border: "1px solid var(--border-subtle)",
+      backgroundColor: "rgba(59,66,82,0.72)",
     },
     ".cm-search label": {
       color: "var(--overlay1)",
@@ -165,9 +188,9 @@ const editorTheme = EditorView.theme(
       backgroundColor: "transparent",
     },
     ".cm-search input": {
-      border: "none",
-      borderRadius: "10px",
-      backgroundColor: "rgba(81,87,109,0.72)",
+      border: "1px solid var(--border-subtle)",
+      borderRadius: "6px",
+      backgroundColor: "rgba(46,52,64,0.9)",
       color: "var(--text)",
       fontFamily:
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
@@ -190,9 +213,9 @@ const editorTheme = EditorView.theme(
       backgroundColor: "rgba(81,87,109,0.9)",
     },
     ".cm-search button": {
-      border: "none",
-      borderRadius: "10px",
-      backgroundColor: "rgba(81,87,109,0.38)",
+      border: "1px solid var(--border-subtle)",
+      borderRadius: "6px",
+      backgroundColor: "rgba(67,76,94,0.38)",
       color: "var(--subtext1)",
       fontSize: "0",
       fontWeight: "700",
@@ -213,24 +236,24 @@ const editorTheme = EditorView.theme(
       color: "var(--subtext1)",
     },
     ".cm-search button[name='next']::after": {
-      content: "'↓'",
-      fontSize: "15px",
+      content: "'▾'",
+      fontSize: "13px",
     },
     ".cm-search button[name='prev']::after": {
-      content: "'↑'",
-      fontSize: "15px",
+      content: "'▴'",
+      fontSize: "13px",
     },
     ".cm-search button[name='select']::after": {
       content: "'All'",
       fontSize: "11px",
     },
     ".cm-search button[name='replace']::after": {
-      content: "'↵'",
-      fontSize: "14px",
+      content: "'⇄'",
+      fontSize: "12px",
     },
     ".cm-search button[name='replaceAll']::after": {
-      content: "'⇉'",
-      fontSize: "14px",
+      content: "'ALL'",
+      fontSize: "11px",
     },
     ".cm-search button[name='close']": {
       padding: "0",
@@ -240,7 +263,7 @@ const editorTheme = EditorView.theme(
     },
     ".cm-search button[name='close']::after": {
       content: "'✕'",
-      fontSize: "15px",
+      fontSize: "13px",
       color: "var(--overlay1)",
     },
     ".cm-search button[disabled]": {
@@ -274,11 +297,11 @@ const editorTheme = EditorView.theme(
       fontSize: "9px",
       fontWeight: "700",
     },
-    ".cm-search .cm-searchMatch": {
+    ".cm-searchMatch": {
       backgroundColor: "rgba(229,200,144,0.22)",
       borderBottom: "1px solid rgba(229,200,144,0.75)",
     },
-    ".cm-search .cm-searchMatch-selected": {
+    ".cm-searchMatch.cm-searchMatch-selected, .cm-searchMatch-selected": {
       backgroundColor: "rgba(140,170,238,0.26)",
       borderBottom: "1px solid rgba(140,170,238,0.8)",
     },
@@ -399,3 +422,7 @@ export const goideEditorExtensions = [
   syntaxHighlighting(syntaxStyle),
   editorTheme,
 ];
+
+
+
+

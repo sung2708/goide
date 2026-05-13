@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
 import {
   EditorState,
+  EditorSelection,
   Prec,
   RangeSet,
   RangeSetBuilder,
@@ -13,7 +14,20 @@ import {
   goideEditorExtensions,
   PREDICTED_HINT_UNDERLINE_CLASS,
 } from "./codemirrorTheme";
-import { EditorView, GutterMarker, gutter, keymap } from "@codemirror/view";
+import {
+  semanticAnalysisField,
+  semanticFoldingExtension,
+  setSemanticAnalysisEffect,
+} from "./semanticFolding";
+import {
+  Decoration,
+  EditorView,
+  GutterMarker,
+  WidgetType,
+  gutter,
+  keymap,
+  type DecorationSet,
+} from "@codemirror/view";
 import {
   defaultKeymap,
   history,
@@ -21,14 +35,6 @@ import {
   indentLess,
   indentWithTab,
 } from "@codemirror/commands";
-import {
-  closeSearchPanel,
-  findNext,
-  openSearchPanel,
-  search,
-  searchKeymap,
-  searchPanelOpen,
-} from "@codemirror/search";
 import { lintGutter, linter, setDiagnostics, type Diagnostic } from "@codemirror/lint";
 import {
   acceptCompletion,
@@ -48,16 +54,29 @@ import {
   type CompletionResult,
   type CompletionSource,
 } from "@codemirror/autocomplete";
+import {
+  closeSearchPanel,
+  SearchQuery,
+  search,
+  searchPanelOpen,
+  setSearchQuery,
+} from "@codemirror/search";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import type {
   CompletionItem,
   CompletionRange,
   EditorDiagnostic,
 } from "../../lib/ipc/types";
+import type { SemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import { createSemanticAnalysisClient } from "../../features/semantics/createSemanticAnalysisClient";
+import { createSemanticAnalysisWorker } from "../../features/semantics/createSemanticAnalysisWorker";
+import type { DocumentOutlineItem } from "./DocumentOutline";
+import FindWidget from "./FindWidget";
+import { useFindWidget } from "../../hooks/useFindWidget";
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const GO_IDENTIFIER_BEFORE_CURSOR = /[A-Za-z_][A-Za-z0-9_]*/;
-const GOPLS_AUTO_PREFIX_LENGTH = 2;
+const GOPLS_AUTO_PREFIX_LENGTH = 1;
 
 const snippetSection = { name: "Go snippets", rank: -1 };
 
@@ -111,47 +130,68 @@ const PACKAGE_SNIPPETS: Completion[] = [
 ];
 
 const GO_SNIPPETS: Completion[] = [
+  snippetCompletion('fmt.Println("${}")', {
+    label: "fmtp",
+    detail: "quick print line",
+    type: "function",
+    section: snippetSection,
+    boost: 70,
+  }),
+  snippetCompletion("if err != nil {\n\treturn ${}\n}", {
+    label: "ife",
+    detail: "error guard (fast)",
+    type: "keyword",
+    section: snippetSection,
+    boost: 68,
+  }),
+  snippetCompletion("go func() {\n\t${}\n}()", {
+    label: "gor",
+    detail: "goroutine (fast)",
+    type: "function",
+    section: snippetSection,
+    boost: 66,
+  }),
   snippetCompletion("func ${name}(${params}) {\n\t${}\n}", {
     label: "func",
     detail: "function declaration",
     type: "function",
     section: snippetSection,
-    boost: 30,
+    boost: 50,
   }),
   snippetCompletion("func main() {\n\t${}\n}", {
     label: "main",
     detail: "main function",
     type: "function",
     section: snippetSection,
-    boost: 30,
+    boost: 48,
   }),
   snippetCompletion("if ${condition} {\n\t${}\n}", {
     label: "if",
     detail: "if block",
     type: "keyword",
     section: snippetSection,
-    boost: 25,
+    boost: 46,
   }),
   snippetCompletion("if err != nil {\n\treturn ${}\n}", {
     label: "iferr",
     detail: "error guard",
     type: "keyword",
     section: snippetSection,
-    boost: 25,
+    boost: 60,
   }),
   snippetCompletion("for ${condition} {\n\t${}\n}", {
     label: "for",
     detail: "for loop",
     type: "keyword",
     section: snippetSection,
-    boost: 20,
+    boost: 44,
   }),
   snippetCompletion("for ${key}, ${value} := range ${collection} {\n\t${}\n}", {
     label: "forr",
     detail: "range loop",
     type: "keyword",
     section: snippetSection,
-    boost: 20,
+    boost: 42,
   }),
   snippetCompletion("switch ${value} {\ncase ${caseValue}:\n\t${}\ndefault:\n\t${}\n}", {
     label: "switch",
@@ -469,6 +509,63 @@ const breakpointField = StateField.define<RangeSet<BreakpointMarker>>({
   })
 });
 
+type InlineDiagnosticPayload = {
+  lineFrom: number;
+  rangeTo: number;
+  message: string;
+  severity: "error" | "warning" | "info";
+};
+
+const inlineDiagnosticEffect = StateEffect.define<InlineDiagnosticPayload | null>();
+
+class InlineDiagnosticWidget extends WidgetType {
+  constructor(
+    private readonly message: string,
+    private readonly severity: "error" | "warning" | "info"
+  ) {
+    super();
+  }
+
+  toDOM() {
+    const el = document.createElement("span");
+    el.className = `goide-inline-diagnostic goide-inline-diagnostic-${this.severity}`;
+    el.textContent = this.message;
+    return el;
+  }
+}
+
+const inlineDiagnosticField = StateField.define<DecorationSet>({
+  create() {
+    return Decoration.none;
+  },
+  update(deco, tr) {
+    deco = deco.map(tr.changes);
+    for (const effect of tr.effects) {
+      if (!effect.is(inlineDiagnosticEffect)) {
+        continue;
+      }
+      const payload = effect.value;
+      if (!payload) {
+        deco = Decoration.none;
+        continue;
+      }
+      const lineClass =
+        payload.severity === "error"
+          ? "goide-inline-diagnostic-line-error"
+          : "goide-inline-diagnostic-line-warning";
+      deco = Decoration.set([
+        Decoration.line({ class: lineClass }).range(payload.lineFrom),
+        Decoration.widget({
+          widget: new InlineDiagnosticWidget(payload.message, payload.severity),
+          side: 1,
+        }).range(payload.rangeTo),
+      ]);
+    }
+    return deco;
+  },
+  provide: (field) => EditorView.decorations.from(field),
+});
+
 type CodeEditorProps = {
   value: string;
   selectionContextKey?: string | null;
@@ -478,6 +575,7 @@ type CodeEditorProps = {
   jumpRequest?: JumpRequest | null;
   onHoverLineChange?: (line: number | null) => void;
   onSelectionLineChange?: (line: number | null) => void;
+  onCursorOffsetChange?: (offset: number | null) => void;
   onModifierClickLine?: (line: number) => boolean;
   onCounterpartAnchorChange?: (anchor: InteractionAnchor | null) => void;
   onInteractionAnchorChange?: (anchor: InteractionAnchor | null) => void;
@@ -487,10 +585,15 @@ type CodeEditorProps = {
   onRequestCompletions?: (
     request: EditorCompletionRequest
   ) => Promise<CompletionItem[]>;
+  filePath?: string | null;
+  semanticAnalysisClient?: SemanticAnalysisClient;
+  onDocumentSymbolsChange?: (symbols: DocumentOutlineItem[]) => void;
   editable?: boolean;
   diagnostics?: EditorDiagnostic[];
   breakpoints?: number[];
   onToggleBreakpoint?: (line: number) => void;
+  suppressFindWidget?: boolean;
+  externalSearchQuery?: string | null;
 };
 
 
@@ -504,6 +607,7 @@ function CodeEditor({
   counterpartLine = null,
   onHoverLineChange,
   onSelectionLineChange,
+  onCursorOffsetChange,
   onModifierClickLine,
   onCounterpartAnchorChange,
   onInteractionAnchorChange,
@@ -511,11 +615,26 @@ function CodeEditor({
   onSave,
   onChange,
   onRequestCompletions,
+  filePath = null,
+  semanticAnalysisClient,
+  onDocumentSymbolsChange,
   editable = true,
   diagnostics = [],
   breakpoints = [],
   onToggleBreakpoint,
+  suppressFindWidget = false,
+  externalSearchQuery = null,
 }: CodeEditorProps) {
+  const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const internalSemanticClient = useMemo(() => {
+    if (semanticAnalysisClient || typeof Worker === "undefined") {
+      return null;
+    }
+
+    return createSemanticAnalysisClient(createSemanticAnalysisWorker);
+  }, [semanticAnalysisClient]);
+  const activeSemanticClient = semanticAnalysisClient ?? internalSemanticClient;
+
   useEffect(() => {
     const view = viewRef.current;
     if (view) {
@@ -523,7 +642,7 @@ function CodeEditor({
         effects: breakpointEffect.of(breakpoints)
       });
     }
-  }, [breakpoints]);
+  }, [breakpoints, editorView]);
 
   const resolveCompletionRange = (
     view: EditorView,
@@ -817,25 +936,77 @@ function CodeEditor({
     });
   };
 
+  const expandSelection = (view: EditorView) => {
+    const result = view.state.field(semanticAnalysisField, false) ?? null;
+    const ranges = result?.selectionRanges ?? [];
+    if (ranges.length === 0) {
+      return false;
+    }
+
+    const current = view.state.selection.main;
+    // ranges is pre-sorted ascending by size; find() returns the smallest match
+    const nextRange = ranges.find(
+      (range) =>
+        range.from <= current.from &&
+        range.to >= current.to &&
+        (range.from < current.from || range.to > current.to)
+    );
+
+    if (!nextRange) {
+      return false;
+    }
+
+    view.dispatch({
+      selection: EditorSelection.range(nextRange.from, nextRange.to),
+    });
+    return true;
+  };
+
+  const shrinkSelection = (view: EditorView) => {
+    const result = view.state.field(semanticAnalysisField, false) ?? null;
+    const ranges = result?.selectionRanges ?? [];
+    if (ranges.length === 0) {
+      return false;
+    }
+
+    const current = view.state.selection.main;
+    // ranges is pre-sorted ascending by size; findLast() returns the largest match
+    const previousRange = ranges.findLast(
+      (range) =>
+        range.from >= current.from &&
+        range.to <= current.to &&
+        (range.from > current.from || range.to < current.to)
+    );
+
+    if (!previousRange) {
+      return false;
+    }
+
+    view.dispatch({
+      selection: EditorSelection.range(previousRange.from, previousRange.to),
+    });
+    return true;
+  };
+
   const extensions = useMemo(() => [
     ...goideEditorExtensions,
+    semanticFoldingExtension,
     breakpointField,
+    inlineDiagnosticField,
     EditorState.readOnly.of(!editable),
     EditorState.tabSize.of(4),
     EditorView.editable.of(editable),
     history(),
+    search(),
     lintGutter(),
     linter(() => []),
     closeBrackets(),
-    search({
-      top: true,
-    }),
     autocompletion({
       override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
       defaultKeymap: false,
       maxRenderedOptions: 80,
-      updateSyncTime: 80,
+      updateSyncTime: 35,
     }),
     Prec.highest(keymap.of([
       {
@@ -859,8 +1030,8 @@ function CodeEditor({
       {
         key: "Enter",
         run: (view) => {
-          if (searchPanelOpen(view.state)) {
-            return findNext(view);
+          if (hasNextSnippetField(view.state)) {
+            return nextSnippetField(view);
           }
           if (isPackageContextAtSelection(view)) {
             return false;
@@ -886,7 +1057,13 @@ function CodeEditor({
       },
       {
         key: "Escape",
-        run: (view) => closeCompletion(view) || closeSearchPanel(view),
+        run: (view) => {
+          if (findWidgetRef.current.isOpen) {
+            findWidgetRef.current.close();
+            return true;
+          }
+          return closeCompletion(view);
+        },
       },
       {
         key: "Ctrl-Space",
@@ -896,8 +1073,22 @@ function CodeEditor({
         },
       },
       {
+        key: "Alt-Shift-ArrowRight",
+        run: expandSelection,
+      },
+      {
+        key: "Alt-Shift-ArrowLeft",
+        run: shrinkSelection,
+      },
+      {
         key: "Mod-f",
-        run: openSearchPanel,
+        run: () => {
+          if (suppressFindWidget) {
+            return true;
+          }
+          findWidgetRef.current.open();
+          return true;
+        },
       },
       {
         key: "Mod-s",
@@ -906,12 +1097,23 @@ function CodeEditor({
           return true;
         },
       },
-      ...searchKeymap,
       ...closeBracketsKeymap,
       ...historyKeymap,
       ...defaultKeymap,
     ])),
     EditorView.updateListener.of((update) => {
+      if (suppressFindWidget && searchPanelOpen(update.state)) {
+        closeSearchPanel(update.view);
+      }
+
+      if (update.selectionSet) {
+        const head = update.state.selection.main.head;
+        const nextLine = update.state.doc.lineAt(head).number;
+        emitSelectionLine(nextLine);
+        emitInteractionAnchor(nextLine);
+        emitCursorOffset(head);
+      }
+
       if (update.geometryChanged || update.viewportChanged) {
         // Schedule anchor sync on the next microtask to avoid read-during-render layout thrashing
         queueMicrotask(() => {
@@ -959,16 +1161,55 @@ function CodeEditor({
     goplsCompletionSource,
     localSnippetSource,
     onCounterpartAnchorChange,
+    onCursorOffsetChange,
+    onDocumentSymbolsChange,
     onInteractionAnchorChange,
+    onSelectionLineChange,
     onSave,
+    suppressFindWidget,
   ]);
   const viewRef = useRef<EditorView | null>(null);
+  const findWidget = useFindWidget(viewRef);
+  const findWidgetRef = useRef(findWidget);
+  findWidgetRef.current = findWidget;
   const highlightedLineRef = useRef<number | null>(null);
   const executionLineRef = useRef<number | null>(null);
   const hoveredLineRef = useRef<number | null>(null);
   const selectedLineRef = useRef<number | null>(null);
+  const cursorOffsetRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
+
+  useEffect(() => {
+    if (suppressFindWidget && findWidgetRef.current.isOpen) {
+      findWidgetRef.current.dismiss();
+    }
+
+    if (suppressFindWidget && editorView && searchPanelOpen(editorView.state)) {
+      closeSearchPanel(editorView);
+    }
+  }, [editorView, suppressFindWidget]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    const query = externalSearchQuery?.trim() ?? "";
+    if (!view || !query) {
+      return;
+    }
+    try {
+      const searchObj = new SearchQuery({
+        search: query,
+        caseSensitive: false,
+        wholeWord: false,
+        regexp: false,
+      });
+      view.dispatch({ effects: setSearchQuery.of(searchObj) });
+    } catch {
+      // Ignore invalid externally provided search patterns.
+    }
+  }, [externalSearchQuery, editorView, value]);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const handledJumpRequestIdRef = useRef<number | null>(null);
+  const handledWheelEventsRef = useRef(new WeakSet<Event>());
 
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
@@ -1024,7 +1265,7 @@ function CodeEditor({
       );
       highlightedLineRef.current = hintLine;
     }
-  }, [hintLine, value]);
+  }, [hintLine, value, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1040,7 +1281,7 @@ function CodeEditor({
       getLineElement(view, executionLine)?.classList.add(DEBUG_CURRENT_LINE_CLASS);
       executionLineRef.current = executionLine;
     }
-  }, [executionLine, value]);
+  }, [executionLine, value, editorView]);
 
   useEffect(() => {
     // New file/content context should not inherit previous-line dedupe state.
@@ -1054,8 +1295,110 @@ function CodeEditor({
     }
 
     const cmDiagnostics = buildCodeMirrorDiagnostics(view);
-    view.dispatch(setDiagnostics(view.state, cmDiagnostics));
-  }, [diagnostics, value]);
+    const primaryDiagnostic = [...cmDiagnostics].sort((a, b) => {
+      const score = (severity: Diagnostic["severity"]) =>
+        severity === "error" ? 0 : severity === "warning" ? 1 : 2;
+      return score(a.severity) - score(b.severity) || a.from - b.from;
+    })[0];
+    const diagnosticsTransaction = setDiagnostics(view.state, cmDiagnostics);
+    const normalizedSeverity: InlineDiagnosticPayload["severity"] =
+      primaryDiagnostic?.severity === "warning"
+        ? "warning"
+        : primaryDiagnostic?.severity === "info" || primaryDiagnostic?.severity === "hint"
+          ? "info"
+          : "error";
+    const diagnosticsEffects = diagnosticsTransaction.effects;
+    const normalizedDiagnosticsEffects = Array.isArray(diagnosticsEffects)
+      ? diagnosticsEffects
+      : diagnosticsEffects
+        ? [diagnosticsEffects]
+        : [];
+
+    view.dispatch({
+      ...diagnosticsTransaction,
+      effects: [
+        ...normalizedDiagnosticsEffects,
+        inlineDiagnosticEffect.of(
+          primaryDiagnostic
+            ? {
+                lineFrom: view.state.doc.lineAt(primaryDiagnostic.from).from,
+                rangeTo: primaryDiagnostic.to,
+                message: primaryDiagnostic.message,
+                severity: normalizedSeverity,
+              }
+            : null
+        ),
+      ],
+    });
+  }, [diagnostics, value, editorView]);
+
+  useEffect(() => {
+    if (!activeSemanticClient || !filePath) {
+      return;
+    }
+
+    activeSemanticClient.syncDocument({
+      filePath,
+      text: value,
+    });
+    activeSemanticClient.requestAnalysis(filePath);
+  }, [activeSemanticClient, filePath, value]);
+
+  useEffect(() => {
+    if (!activeSemanticClient) {
+      return;
+    }
+
+    return () => {
+      activeSemanticClient.dispose();
+    };
+  }, [activeSemanticClient]);
+
+  useEffect(() => {
+    const view = viewRef.current;
+    if (!view) {
+      return;
+    }
+
+    if (!activeSemanticClient || !filePath) {
+      onDocumentSymbolsChange?.([]);
+      view.dispatch({
+        effects: setSemanticAnalysisEffect.of(null),
+      });
+      return;
+    }
+
+    const unsubscribe = activeSemanticClient.subscribe((result) => {
+      if (result.filePath !== filePath || result.version < 1) {
+        return;
+      }
+
+      onDocumentSymbolsChange?.(
+        result.symbols.map((symbol) => ({
+          name: symbol.name,
+          kind: symbol.kind,
+          line: view.state.doc.lineAt(symbol.range.from).number,
+          from: symbol.range.from,
+          to: symbol.range.to,
+        }))
+      );
+
+      const currentView = viewRef.current;
+      if (!currentView) {
+        return;
+      }
+
+      currentView.dispatch({
+        effects: setSemanticAnalysisEffect.of(result),
+      });
+    });
+
+    // Re-request in case the worker responded before this subscription was established
+    // (race condition: editorView mounts after the initial requestAnalysis fires)
+    activeSemanticClient.requestAnalysis(filePath);
+
+    return unsubscribe;
+  }, [activeSemanticClient, editorView, filePath, onDocumentSymbolsChange]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1069,7 +1412,63 @@ function CodeEditor({
       emitViewportRange(view);
     };
 
+    const scrollElement = view.scrollDOM as HTMLElement & {
+      scrollBy?: (options: ScrollToOptions) => void;
+    };
+    if (scrollElement.style) {
+      scrollElement.style.overscrollBehavior = "contain";
+    }
+
     requestMeasure();
+
+    const resolveWheelTarget = () => {
+      let current: HTMLElement | null = scrollElement;
+      while (current) {
+        if (current.scrollHeight > current.clientHeight) {
+          return current;
+        }
+        current = current.parentElement;
+      }
+      return scrollElement;
+    };
+
+    const handleWheel = (event: WheelEvent) => {
+      if (handledWheelEventsRef.current.has(event)) {
+        return;
+      }
+      if (event.ctrlKey || (event.deltaX === 0 && event.deltaY === 0)) {
+        return;
+      }
+      handledWheelEventsRef.current.add(event);
+
+      const normalizeDelta = (delta: number) => {
+        if (event.deltaMode === 1) {
+          return delta * 16;
+        }
+        if (event.deltaMode === 2) {
+          return delta * (container.clientHeight || scrollElement.clientHeight);
+        }
+        return delta;
+      };
+
+      const left = normalizeDelta(event.deltaX);
+      const top = normalizeDelta(event.deltaY);
+      const wheelTarget = resolveWheelTarget() as HTMLElement & {
+        scrollBy?: (options: ScrollToOptions) => void;
+      };
+
+      if (typeof wheelTarget.scrollBy === "function") {
+        wheelTarget.scrollBy({ left, top, behavior: "auto" });
+      } else {
+        wheelTarget.scrollLeft += left;
+        wheelTarget.scrollTop += top;
+      }
+      emitViewportRange(view);
+      event.preventDefault();
+    };
+
+    container.addEventListener("wheel", handleWheel, { passive: false });
+    scrollElement.addEventListener("wheel", handleWheel, { passive: false });
 
     const resizeObserver = new ResizeObserver(() => {
       requestMeasure();
@@ -1084,13 +1483,18 @@ function CodeEditor({
     });
 
     return () => {
+      container.removeEventListener("wheel", handleWheel);
+      scrollElement.removeEventListener("wheel", handleWheel);
       resizeObserver.disconnect();
     };
-  }, [value]);
+  }, [value, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
     if (!view || jumpRequest === null) {
+      return;
+    }
+    if (handledJumpRequestIdRef.current === jumpRequest.requestId) {
       return;
     }
 
@@ -1098,6 +1502,7 @@ function CodeEditor({
     if (line < 1 || line > view.state.doc.lines) {
       return;
     }
+    handledJumpRequestIdRef.current = jumpRequest.requestId;
 
     const from = view.state.doc.line(line).from;
     view.dispatch({
@@ -1108,7 +1513,7 @@ function CodeEditor({
     emitViewportRange(view);
     emitSelectionLine(line);
     emitInteractionAnchor(line);
-  }, [jumpRequest]);
+  }, [jumpRequest, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1133,7 +1538,7 @@ function CodeEditor({
       top: Math.max(8, Math.round(coords.top - rect.top)),
       left: Math.max(8, Math.round(coords.left - rect.left + 16)),
     });
-  }, [counterpartLine, value, onCounterpartAnchorChange]);
+  }, [counterpartLine, value, onCounterpartAnchorChange, editorView]);
 
   const emitSelectionLine = (line: number | null) => {
     if (!onSelectionLineChange) {
@@ -1146,6 +1551,19 @@ function CodeEditor({
 
     selectedLineRef.current = line;
     onSelectionLineChange(line);
+  };
+
+  const emitCursorOffset = (offset: number | null) => {
+    if (!onCursorOffsetChange) {
+      return;
+    }
+
+    if (cursorOffsetRef.current === offset) {
+      return;
+    }
+
+    cursorOffsetRef.current = offset;
+    onCursorOffsetChange(offset);
   };
 
   const emitInteractionAnchor = (line: number | null) => {
@@ -1177,25 +1595,7 @@ function CodeEditor({
   return (
     <div
       ref={containerRef}
-      className="h-full min-h-0 w-full"
-      onWheel={(event) => {
-        const view = viewRef.current;
-        if (!view || event.ctrlKey) {
-          return;
-        }
-
-        if (event.deltaX === 0 && event.deltaY === 0) {
-          return;
-        }
-
-        view.scrollDOM.scrollBy({
-          left: event.deltaX,
-          top: event.deltaY,
-          behavior: "auto",
-        });
-        emitViewportRange(view);
-        event.preventDefault();
-      }}
+      className="relative h-full min-h-0 w-full"
       onMouseMove={(event) => {
         const view = viewRef.current;
         if (!view) {
@@ -1231,6 +1631,7 @@ function CodeEditor({
         const nextFocused = event.relatedTarget as Node | null;
         if (!event.currentTarget.contains(nextFocused)) {
           emitSelectionLine(null);
+          emitCursorOffset(null);
           emitInteractionAnchor(null);
         }
       }}
@@ -1247,9 +1648,12 @@ function CodeEditor({
         const nextLine = pos === null ? null : view_.state.doc.lineAt(pos).number;
 
 
-        // Handle breakpoint toggle on gutter click
         const target = event.target as HTMLElement;
-        if (target.closest(".cm-gutter") || target.closest(".cm-lineNumbers")) {
+        if (target.closest(".cm-foldGutter")) {
+          return;
+        }
+
+        if (target.closest(".cm-breakpoint-gutter")) {
           if (nextLine !== null) {
             onToggleBreakpoint?.(nextLine);
             event.preventDefault();
@@ -1275,6 +1679,7 @@ function CodeEditor({
           }
         }
         emitSelectionLine(nextLine);
+        emitCursorOffset(pos);
         emitInteractionAnchor(nextLine);
       }}
       onKeyUp={() => {
@@ -1286,20 +1691,42 @@ function CodeEditor({
         const head = view.state.selection.main.head;
         const nextLine = view.state.doc.lineAt(head).number;
         emitSelectionLine(nextLine);
+        emitCursorOffset(head);
         emitInteractionAnchor(nextLine);
       }}
     >
+      {!suppressFindWidget && findWidget.isOpen && (
+        <FindWidget
+          query={findWidget.query}
+          replaceText={findWidget.replaceText}
+          matchCase={findWidget.matchCase}
+          wholeWord={findWidget.wholeWord}
+          useRegex={findWidget.useRegex}
+          matchInfo={findWidget.matchInfo}
+          queryInputRef={findWidget.queryInputRef}
+          onQueryChange={findWidget.setQuery}
+          onReplaceTextChange={findWidget.setReplaceText}
+          onToggleMatchCase={findWidget.toggleMatchCase}
+          onToggleWholeWord={findWidget.toggleWholeWord}
+          onToggleRegex={findWidget.toggleRegex}
+          onFindNext={findWidget.handleFindNext}
+          onFindPrev={findWidget.handleFindPrev}
+          onReplace={findWidget.handleReplace}
+          onReplaceAll={findWidget.handleReplaceAll}
+          onClose={findWidget.close}
+        />
+      )}
       <CodeMirror
         value={value}
-        className="h-full min-h-0"
+        className="h-full min-h-0 w-full"
         height="100%"
-        minHeight="100%"
         width="100%"
         theme="dark"
         basicSetup={false}
         extensions={extensions}
         onCreateEditor={(view) => {
           viewRef.current = view;
+          setEditorView(view);
           view.requestMeasure();
           emitViewportRange(view);
         }}

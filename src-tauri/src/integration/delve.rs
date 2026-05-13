@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Context, Result};
 use crate::integration::command::tokio_command;
+use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4};
@@ -23,10 +23,17 @@ const SUPPORTED_WAIT_REASONS: &[&str] = &[
     "io wait",
 ];
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum LaunchMode {
+    /// Debug a single file (legacy path; uses the file's parent directory as the package).
+    #[cfg_attr(not(test), allow(dead_code))]
     Debug,
+    /// Debug a test file.
     Test,
+    /// Debug a Go package given by a package pattern such as `./cmd/app`.
+    /// The `cwd` field is the absolute path to the workspace root so that the
+    /// relative pattern is resolved correctly.
+    Package { package: String, cwd: String },
 }
 
 fn serialize_dap_path(path: &Path) -> String {
@@ -154,6 +161,24 @@ impl DapClient {
         workspace_root: &Path,
         target_file: &Path,
     ) -> Result<()> {
+        // Package mode is self-contained: use the package pattern and cwd from the
+        // variant directly, ignoring the legacy workspace_root / target_file params.
+        if let LaunchMode::Package { package, cwd } = &mode {
+            let response = self
+                .request(
+                    "launch",
+                    json!({
+                        "mode": "debug",
+                        "program": package,
+                        "cwd": cwd,
+                        "stopOnEntry": false
+                    }),
+                )
+                .await?;
+            ensure_success("launch", &response)?;
+            return Ok(());
+        }
+
         let canonical_root = workspace_root.canonicalize().with_context(|| {
             format!(
                 "workspace root does not exist: {}",
@@ -173,17 +198,13 @@ impl DapClient {
         let mode_text = match mode {
             LaunchMode::Debug => "debug",
             LaunchMode::Test => "test",
+            // Package is handled above; this arm is unreachable.
+            LaunchMode::Package { .. } => unreachable!(),
         };
         let target_package_dir = canonical_target
             .parent()
             .ok_or_else(|| anyhow!("target file has no parent directory"))?;
-        let launch_program = match mode {
-            // Delve accepts either a package directory or any Go file within it.
-            // Using the selected file is more resilient for single-file workspaces
-            // that do not have a go.mod at the workspace root.
-            LaunchMode::Debug => canonical_target.clone(),
-            LaunchMode::Test => canonical_target.clone(),
-        };
+        let launch_program = canonical_target.clone();
 
         let response = self
             .request(
@@ -240,13 +261,17 @@ impl DapClient {
     }
 
     pub async fn pause_thread(&mut self, thread_id: i64) -> Result<()> {
-        let response = self.request("pause", json!({ "threadId": thread_id })).await?;
+        let response = self
+            .request("pause", json!({ "threadId": thread_id }))
+            .await?;
         ensure_success("pause", &response)?;
         Ok(())
     }
 
     pub async fn next(&mut self, thread_id: i64) -> Result<()> {
-        let response = self.request("next", json!({ "threadId": thread_id })).await?;
+        let response = self
+            .request("next", json!({ "threadId": thread_id }))
+            .await?;
         ensure_success("next", &response)?;
         Ok(())
     }
@@ -520,7 +545,7 @@ fn ensure_success(command: &str, response: &Value) -> Result<()> {
     Err(anyhow!("DAP command `{command}` failed: {combined}"))
 }
 
-async fn spawn_dlv_dap_with(
+pub(crate) async fn spawn_dlv_dap_with(
     command: &str,
     args: &[&str],
     workspace_root: &Path,

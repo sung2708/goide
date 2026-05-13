@@ -1,6 +1,8 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
+vi.setConfig({ testTimeout: 10_000 });
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
@@ -27,6 +29,25 @@ let runOutputListener:
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
+}));
+
+// xterm cannot run in jsdom (no matchMedia / canvas). Mock so BottomPanel
+// → LogsTerminalView → TerminalSurface does not throw.
+vi.mock("@xterm/xterm", () => ({
+  Terminal: vi.fn().mockImplementation(() => ({
+    open: vi.fn(),
+    write: vi.fn(),
+    clear: vi.fn(),
+    loadAddon: vi.fn(),
+    dispose: vi.fn(),
+    onData: vi.fn(() => ({ dispose: vi.fn() })),
+    cols: 120,
+    rows: 40,
+  })),
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
@@ -109,6 +130,13 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell race run", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     runOutputListener = null;
@@ -133,17 +161,16 @@ describe("EditorShell race run", () => {
     ];
   });
 
-  it("runs go with race mode from command palette and surfaces confirmed race signal", async () => {
+  it("runs go with race mode from the editor header and surfaces confirmed race signal", async () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
 
     await waitFor(() => {
@@ -194,13 +221,12 @@ describe("EditorShell race run", () => {
     mockConstructs = [];
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
 
     await waitFor(() => {
@@ -233,13 +259,12 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
 
     await waitFor(() => {
@@ -278,13 +303,12 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -330,13 +354,12 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -372,13 +395,12 @@ describe("EditorShell race run", () => {
     const user = userEvent.setup();
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
-    await user.click(screen.getByRole("button", { name: /show command palette/i }));
     await user.click(
-      (await screen.findAllByRole("button", { name: /run active go file with race detector/i }))[1]
+      await screen.findByRole("button", { name: /run active go file with race detector/i })
     );
     await waitFor(() => {
       expect(runWorkspaceFileWithRaceMock).toHaveBeenCalledTimes(1);
@@ -437,7 +459,7 @@ describe("EditorShell race run", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     expect(

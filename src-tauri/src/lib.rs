@@ -11,6 +11,7 @@ pub fn run() {
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
             ui_bridge::commands::write_workspace_file,
+            ui_bridge::commands::start_workspace_fs_watch,
             ui_bridge::commands::create_workspace_file,
             ui_bridge::commands::create_workspace_folder,
             ui_bridge::commands::delete_workspace_entry,
@@ -18,6 +19,7 @@ pub fn run() {
             ui_bridge::commands::move_workspace_entry,
             ui_bridge::commands::run_workspace_file,
             ui_bridge::commands::run_workspace_file_with_race,
+            ui_bridge::commands::stop_current_run,
             ui_bridge::commands::analyze_active_file_concurrency,
             ui_bridge::commands::get_active_file_diagnostics,
             ui_bridge::commands::get_active_file_completions,
@@ -37,7 +39,13 @@ pub fn run() {
             ui_bridge::commands::debugger_step_out,
             ui_bridge::commands::debugger_toggle_breakpoint,
             ui_bridge::commands::search_workspace_text,
-            ui_bridge::commands::get_workspace_git_snapshot
+            ui_bridge::commands::get_workspace_git_snapshot,
+            ui_bridge::commands::get_workspace_branches,
+            ui_bridge::commands::switch_workspace_branch,
+            ui_bridge::commands::ensure_shell_session,
+            ui_bridge::commands::write_shell_input,
+            ui_bridge::commands::resize_shell_session,
+            ui_bridge::commands::dispose_shell_session
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

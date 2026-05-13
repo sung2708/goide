@@ -1,101 +1,185 @@
-import {
-  fireEvent,
-  render,
-  screen,
-  waitFor,
-} from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 
+const openMock = vi.fn();
+const listWorkspaceEntriesMock = vi.fn();
+const readWorkspaceFileMock = vi.fn();
+
 vi.mock("@tauri-apps/plugin-dialog", () => ({
-  open: vi.fn().mockResolvedValue(null),
+  open: (...args: unknown[]) => openMock(...args),
+}));
+
+vi.mock("../../lib/ipc/client", async () => {
+  const actual = await vi.importActual("../../lib/ipc/client");
+  return {
+    ...actual,
+    listWorkspaceEntries: (...args: unknown[]) => listWorkspaceEntriesMock(...args),
+    readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
+  };
+});
+
+// xterm cannot run in jsdom (no matchMedia / canvas). Mock at the module level
+// so that LogsTerminalView (rendered inside BottomPanel) doesn't crash.
+vi.mock("@xterm/xterm", () => ({
+  Terminal: vi.fn().mockImplementation(() => ({
+    open: vi.fn(),
+    write: vi.fn(),
+    clear: vi.fn(),
+    loadAddon: vi.fn(),
+    dispose: vi.fn(),
+    onData: vi.fn(() => ({ dispose: vi.fn() })),
+    cols: 120,
+    rows: 40,
+  })),
+}));
+
+vi.mock("@xterm/addon-fit", () => ({
+  FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
 }));
 
 describe("EditorShell panels", () => {
-  it("keeps optional panels hidden by default and toggles them on demand", async () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    openMock.mockResolvedValue(null);
+    listWorkspaceEntriesMock.mockResolvedValue({ ok: true, data: [] });
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+  });
+
+  it("shows explorer panel by default and hides summary/runtime/git by default", () => {
+    render(<EditorShell />);
+
+    expect(screen.getByRole("button", { name: /explorer/i })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByPlaceholderText(/^search$/i)).toBeNull();
+    expect(screen.queryByTestId("summary-panel")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /source control/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+    expect(screen.getByRole("button", { name: /concurrency signals/i })).toHaveAttribute(
+      "aria-pressed",
+      "false"
+    );
+  });
+
+  it("keeps only the terminal panel toggle available in the shell chrome", async () => {
     const user = userEvent.setup();
 
     render(<EditorShell />);
 
+    expect(screen.queryByRole("button", { name: /summary/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /command palette/i })).toBeNull();
     expect(screen.queryByTestId("summary-panel")).toBeNull();
+
+    // BottomPanel is lazy-loaded on first use to reduce initial request fan-out.
+    // After the first open it stays mounted and hidden via the wrapper's
+    // `hidden` attribute to preserve the shell session lifecycle.
     expect(screen.queryByTestId("bottom-panel")).toBeNull();
 
-    const summaryBtn = screen.getByRole("button", { name: /summary/i });
-    const bottomBtn = screen.getByRole("button", { name: /terminal/i });
-
-    await user.click(summaryBtn);
-    expect(screen.getByTestId("summary-panel")).toBeInTheDocument();
-
+    const bottomBtn = screen.getByRole("button", { name: /show terminal panel/i });
     await user.click(bottomBtn);
-    expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
+    expect(await screen.findByTestId("bottom-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
 
-    await user.click(screen.getAllByRole("button", { name: /hide/i })[0]);
-    expect(screen.queryByTestId("summary-panel")).toBeNull();
-
-    await user.click(screen.getByRole("button", { name: /^hide$/i }));
-    expect(screen.queryByTestId("bottom-panel")).toBeNull();
+    await user.click(screen.getByRole("button", { name: /hide panel/i }));
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
   });
 
   it("shows default status indicators", () => {
     render(<EditorShell />);
 
     expect(screen.getByText(/Mode: Quick Insight/i)).toBeInTheDocument();
-    expect(screen.getByText(/Runtime: Runtime Off/i)).toBeInTheDocument();
+    expect(screen.getByText(/Health/i)).toBeInTheDocument();
   });
 
   it("surfaces missing toolchain state in the status bar instead of a top warning banner", async () => {
     render(<EditorShell />);
 
-    expect(await screen.findByText("Tools Setup")).toBeInTheDocument();
+    expect(await screen.findByText(/Health/i)).toBeInTheDocument();
     expect(screen.queryByText(/toolchain issues detected/i)).toBeNull();
   });
 
-  it("opens command palette from the status bar control", async () => {
+  it("does not render command palette controls", () => {
     render(<EditorShell />);
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
-
-    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
-
-    expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
   });
 
-  it("opens command palette from the status bar control even when a contenteditable surface is focused", async () => {
+  it("pressing Ctrl+Shift+F switches to search tab and focuses the search input", async () => {
     render(<EditorShell />);
-    const fauxEditor = document.createElement("div");
-    fauxEditor.contentEditable = "true";
-    document.body.appendChild(fauxEditor);
-    fauxEditor.focus();
+    expect(screen.queryByPlaceholderText(/^search$/i)).toBeNull();
 
-    fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
+    fireEvent.keyDown(document.body, { key: "F", shiftKey: true, ctrlKey: true });
+    const searchInput = await screen.findByPlaceholderText(/^search$/i);
 
-    expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
-
-    document.body.removeChild(fauxEditor);
+    expect(document.activeElement).toBe(searchInput);
   });
 
-  it("restores original focus when the palette is closed", async () => {
-    const rafSpy = vi
-      .spyOn(window, "requestAnimationFrame")
-      .mockImplementation((cb: FrameRequestCallback) => {
-        cb(0);
-        return 0;
-      });
+  it("keeps workspace search input focused after search state updates", async () => {
+    vi.useFakeTimers();
     try {
       render(<EditorShell />);
 
-      const summaryTrigger = screen.getByRole("button", { name: /summary/i });
-      summaryTrigger.focus();
+      fireEvent.keyDown(document.body, { key: "F", shiftKey: true, ctrlKey: true });
+      const searchInput = screen.getByPlaceholderText(/^search$/i);
+      searchInput.focus();
+      fireEvent.change(searchInput, { target: { value: "mutex" } });
 
-      fireEvent.click(screen.getByRole("button", { name: /show command palette/i }));
-      expect(await screen.findByTestId("command-palette")).toBeInTheDocument();
+      vi.advanceTimersByTime(250);
 
-      fireEvent.click(screen.getByRole("button", { name: /^close$/i }));
-
-      await waitFor(() => expect(summaryTrigger).toHaveFocus());
+      expect(document.activeElement).toBe(searchInput);
+      expect(screen.queryByTestId("find-widget")).not.toBeInTheDocument();
     } finally {
-      rafSpy.mockRestore();
+      vi.useRealTimers();
     }
+  });
+
+  it("opens and hides the terminal panel without using an overflow menu", async () => {
+    const user = userEvent.setup();
+
+    render(<EditorShell />);
+
+    expect(screen.queryByTestId("bottom-panel")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: /show terminal panel/i }));
+    expect(await screen.findByTestId("bottom-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).toBeNull();
+
+    expect(screen.queryByRole("button", { name: /more panel actions/i })).toBeNull();
+    await user.click(screen.getByRole("button", { name: /hide panel/i }));
+
+    expect(screen.getByTestId("bottom-panel").closest("[hidden]")).not.toBeNull();
+  });
+
+  it("opens quick file picker with Ctrl+P and opens selected file on Enter", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    listWorkspaceEntriesMock
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [
+          { name: "main.go", path: "main.go", isDir: false },
+          { name: "pkg", path: "pkg", isDir: true },
+        ],
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: [{ name: "helper.go", path: "pkg/helper.go", isDir: false }],
+      });
+
+    render(<EditorShell />);
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+
+    fireEvent.keyDown(document.body, { key: "p", ctrlKey: true });
+
+    const quickOpenInput = await screen.findByLabelText(/quick open file/i);
+    expect(quickOpenInput).toBeInTheDocument();
+
+    fireEvent.keyDown(quickOpenInput, { key: "ArrowDown" });
+    fireEvent.keyDown(quickOpenInput, { key: "Enter" });
+
+    expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "pkg/helper.go");
   });
 });

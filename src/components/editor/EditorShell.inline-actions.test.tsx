@@ -104,6 +104,13 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell inline actions", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     vi.useRealTimers();
     vi.clearAllMocks();
@@ -141,7 +148,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     const editor = await screen.findByTestId("mock-code-editor");
@@ -175,7 +182,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -209,7 +216,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -242,7 +249,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(screen.getByRole("button", { name: /jump/i }));
@@ -276,7 +283,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     expect(screen.getByTestId("jump-request-line")).toHaveTextContent("none");
 
@@ -285,38 +292,6 @@ describe("EditorShell inline actions", () => {
 
     await user.click(await screen.findByRole("button", { name: /modifier click line 1/i }));
     expect(screen.getByTestId("jump-request-line")).toHaveTextContent("2");
-  });
-
-  it("jumps to selected line when a summary panel item is clicked", async () => {
-    mockConstructs = [
-      {
-        kind: "channel",
-        line: 1,
-        column: 1,
-        symbol: "jobs",
-        scopeKey: "S1",
-        confidence: ConcurrencyConfidence.Predicted,
-      },
-    ];
-    mockCounterpartMappings = [];
-    const user = userEvent.setup();
-    mockFileToOpen = "main.go";
-    openMock.mockResolvedValue("C:/workspace");
-    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
-
-    render(<EditorShell />);
-
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
-    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /summary/i }));
-
-    await user.click(
-      await screen.findByRole("button", {
-        name: /line 1.*channel op.*predicted/i,
-      })
-    );
-
-    expect(screen.getByTestId("jump-request-line")).toHaveTextContent("1");
   });
 
   it("keeps Jump disabled when active hint is not the mapped channel construct", async () => {
@@ -353,7 +328,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -386,7 +361,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -417,7 +392,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -464,7 +439,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     const deepTraceButton = await screen.findByRole("button", { name: /deep trace/i });
@@ -505,7 +480,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -534,7 +509,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
 
@@ -577,7 +552,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -637,7 +612,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
@@ -692,7 +667,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
@@ -741,7 +716,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -802,7 +777,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -847,7 +822,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -894,7 +869,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -938,7 +913,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -982,7 +957,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
@@ -1031,7 +1006,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));
@@ -1086,7 +1061,7 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /select line 1/i }));
     await user.click(await screen.findByRole("button", { name: /deep trace/i }));

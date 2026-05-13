@@ -84,6 +84,13 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell diagnostics", () => {
+  const openWorkspaceAndShowExplorer = async (
+    user: ReturnType<typeof userEvent.setup>
+  ) => {
+    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await user.click(screen.getByRole("button", { name: /explorer/i }));
+  };
+
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
@@ -129,7 +136,7 @@ describe("EditorShell diagnostics", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /save file/i }));
 
@@ -171,7 +178,7 @@ describe("EditorShell diagnostics", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
 
     await waitFor(() =>
@@ -218,7 +225,7 @@ describe("EditorShell diagnostics", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await user.click(await screen.findByRole("button", { name: /save file/i }));
 
@@ -263,7 +270,7 @@ describe("EditorShell diagnostics", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
 
     await waitFor(() =>
@@ -293,7 +300,7 @@ describe("EditorShell diagnostics", () => {
 
     render(<EditorShell />);
 
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open main/i }));
 
     await waitFor(() =>
@@ -309,7 +316,7 @@ describe("EditorShell diagnostics", () => {
     ).toBeInTheDocument();
   });
 
-  it("autosaves after five seconds of typing inactivity", async () => {
+  it("autosaves after 2.5 seconds of typing inactivity", async () => {
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     writeWorkspaceFileMock.mockResolvedValue({ ok: true });
@@ -321,6 +328,7 @@ describe("EditorShell diagnostics", () => {
     render(<EditorShell />);
 
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /explorer/i }));
     fireEvent.click(await screen.findByRole("button", { name: /open main/i }));
     const typeInvalidButton = await screen.findByRole("button", { name: /type invalid content/i });
 
@@ -330,7 +338,7 @@ describe("EditorShell diagnostics", () => {
     expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(2500);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -342,7 +350,7 @@ describe("EditorShell diagnostics", () => {
     );
   }, 15000);
 
-  it("rechecks diagnostics until errors clear", async () => {
+  it("rechecks diagnostics after autosave until errors clear", async () => {
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     fetchWorkspaceDiagnosticsMock
@@ -378,6 +386,7 @@ describe("EditorShell diagnostics", () => {
     render(<EditorShell />);
 
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /explorer/i }));
     fireEvent.click(await screen.findByRole("button", { name: /open main/i }));
     const typeInvalidButton = await screen.findByRole("button", { name: /type invalid content/i });
 
@@ -385,7 +394,7 @@ describe("EditorShell diagnostics", () => {
     fireEvent.click(typeInvalidButton);
 
     await act(async () => {
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(2500);
       await Promise.resolve();
       await Promise.resolve();
     });

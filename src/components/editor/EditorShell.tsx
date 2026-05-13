@@ -1,6 +1,5 @@
 import { open } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
 import { useHoverHint } from "../../hooks/useHoverHint";
@@ -8,17 +7,13 @@ import {
   activateScopedDeepTrace,
   deactivateDeepTrace,
   getRuntimeAvailability,
-  getRuntimePanelSnapshot,
   getRuntimeSignals,
-  getRuntimeTopologySnapshot,
-  getToolchainStatus,
+  listWorkspaceEntries,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
   runWorkspaceFileWithRace,
-  fetchWorkspaceCompletions,
-  fetchWorkspaceDiagnostics,
-  getWorkspaceGitSnapshot,
+  switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
   debuggerPause,
@@ -27,47 +22,57 @@ import {
   debuggerStepOut,
   debuggerToggleBreakpoint,
   startDebugSession,
-  searchWorkspaceText,
+  stopCurrentRun,
 } from "../../lib/ipc/client";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type {
   ApiResponse,
-  CompletionItem,
+  BottomPanelTab,
   DeepTraceConstructKind,
-  EditorDiagnostic,
+  DebugFailure,
   RuntimeSignal,
-  RuntimePanelSnapshot,
-  RuntimeTopologySnapshot,
-  RunOutputPayload,
-  ToolchainStatus,
-  WorkspaceGitSnapshot,
-  WorkspaceSearchFile,
+  WorkspaceGitBranch,
   DebuggerState,
+  FsEntry,
 } from "../../lib/ipc/types";
-import CommandPalette from "../command-palette/CommandPalette";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
 import ThreadLine from "../overlays/ThreadLine";
 import TraceBubble from "../overlays/TraceBubble";
 import type { TraceBubbleConfidence } from "../overlays/TraceBubble";
 import type { LensConstructKind } from "../../features/concurrency/lensTypes";
-import BottomPanel from "../panels/BottomPanel";
-import SummaryPeek, {
-  type SummaryItem,
-  type SummaryMetric,
-} from "../panels/SummaryPeek";
 import Explorer, { type FileDecoration } from "../sidebar/Explorer";
 import ActivityBar, { type ActivityBarTab } from "../sidebar/ActivityBar";
 import StatusBar from "../statusbar/StatusBar";
-import CodeEditor, {
-  type EditorCompletionRequest,
-  type JumpRequest,
-} from "./CodeEditor";
+import CodeEditor, { type JumpRequest } from "./CodeEditor";
+import DocumentOutline, { type DocumentOutlineItem } from "./DocumentOutline";
 import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
-import RuntimeTopologyPanel from "../panels/RuntimeTopologyPanel";
+import BranchPicker from "../panels/BranchPicker";
+import BranchSwitchDialog from "../panels/BranchSwitchDialog";
+import ResizableSplit from "../layout/ResizableSplit";
+import { DEFAULT_WORKSPACE_LAYOUT, useWorkspaceLayout } from "../../features/layout/useWorkspaceLayout";
+import {
+  isGoFile,
+  mapGitStatus,
+  pathsReferToSameFile,
+  runtimeSignalMatchesScope,
+  selectActiveBlockedSignal,
+} from "./editorShellUtils";
+import { useWorkspaceFsSync } from "./useWorkspaceFsSync";
+import { useToolchainStatus } from "./useToolchainStatus";
+import { useWorkspaceGitState } from "./useWorkspaceGitState";
+import { useRuntimeTopology } from "./useRuntimeTopology";
+import { useDiagnosticsState } from "./useDiagnosticsState";
+import { useCompletionState } from "./useCompletionState";
+import { useWorkspaceSearchState } from "./useWorkspaceSearchState";
+import { useRunOutputState, type RunMode } from "./useRunOutputState";
 
-const DEBUG_UI_ENABLED = false;
+const DEBUG_UI_ENABLED = true;
+const QUICK_OPEN_IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "target", ".turbo", ".cache"]);
+const LazyBottomPanel = lazy(() => import("../panels/BottomPanel"));
+const LazyRuntimeTopologyPanel = lazy(() => import("../panels/RuntimeTopologyPanel"));
+const LazyDebugFailureDialog = lazy(() => import("../panels/DebugFailureDialog"));
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -88,32 +93,78 @@ const MAX_PENDING_RUNTIME_SIGNAL_REQUESTS = 2;
 const ACTIVE_DEBUG_POLL_INTERVAL_MS = 600;
 const DEBUG_POLL_BACKOFF_STEP_MS = 900;
 const DEBUG_POLL_MAX_INTERVAL_MS = 5000;
-type RunMode = "standard" | "race" | "debug";
-type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
-type CompletionIndicatorState = "available" | "degraded" | "idle";
-type RaceFinding = RuntimeSignal & {
-  source: "race-detector";
+type DebugUiState = "idle" | "starting" | "running" | "paused" | "stopping" | "failed";
+
+type GoOutlineMatch = {
+  name: string;
+  kind: DocumentOutlineItem["kind"];
+  startIndex: number;
 };
 
-type FileDiagnosticsSummary = {
-  hasErrors: boolean;
-  hasWarnings: boolean;
-};
+function getLineNumberAtOffset(source: string, offset: number): number {
+  let line = 1;
+  for (let index = 0; index < offset; index += 1) {
+    if (source[index] === "\n") {
+      line += 1;
+    }
+  }
+  return line;
+}
 
-function mapGitStatus(statusToken: string): "modified" | "untracked" | "staged" {
-  const token = statusToken.trim();
-  if (token.startsWith("??")) {
-    return "untracked";
+function findBlockEnd(source: string, startIndex: number): number {
+  let depth = 0;
+  for (let index = startIndex; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === "{") {
+      depth += 1;
+    } else if (char === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return index + 1;
+      }
+    }
   }
-  const indexStatus = token[0] ?? " ";
-  const worktreeStatus = token[1] ?? " ";
-  if (indexStatus !== " " && indexStatus !== "?") {
-    return "staged";
+  return source.length;
+}
+
+function buildFallbackDocumentSymbols(source: string): DocumentOutlineItem[] {
+  const matches: GoOutlineMatch[] = [];
+  const functionRegex = /^func\s+(?:\([^)]*\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(/gm;
+  const typeRegex = /^type\s+([A-Za-z_][A-Za-z0-9_]*)\s+(struct|interface)\b/gm;
+
+  for (const match of source.matchAll(functionRegex)) {
+    const name = match[1];
+    if (!name) continue;
+    matches.push({
+      name,
+      kind: match[0].startsWith("func (") ? "method" : "function",
+      startIndex: match.index ?? 0,
+    });
   }
-  if (worktreeStatus !== " " && worktreeStatus !== "?") {
-    return "modified";
+
+  for (const match of source.matchAll(typeRegex)) {
+    const name = match[1];
+    const typeKind = match[2];
+    if (!name || !typeKind) continue;
+    matches.push({
+      name,
+      kind: typeKind === "struct" ? "struct" : "interface",
+      startIndex: match.index ?? 0,
+    });
   }
-  return "modified";
+
+  return matches
+    .sort((a, b) => a.startIndex - b.startIndex)
+    .map((match) => {
+      const blockStart = source.indexOf("{", match.startIndex);
+      return {
+        name: match.name,
+        kind: match.kind,
+        line: getLineNumberAtOffset(source, match.startIndex),
+        from: match.startIndex,
+        to: blockStart === -1 ? match.startIndex + match.name.length : findBlockEnd(source, blockStart),
+      };
+    });
 }
 
 function isBlockedWaitReason(waitReason: string): boolean {
@@ -137,55 +188,6 @@ function nextPollingDelay(failureCount: number): number {
   );
 }
 
-function normalizeRelativePath(path: string): string {
-  return path.replace(/\\/g, "/").trim();
-}
-
-function pathsReferToSameFile(pathA: string, pathB: string): boolean {
-  const normalizedA = normalizeRelativePath(pathA).toLowerCase();
-  const normalizedB = normalizeRelativePath(pathB).toLowerCase();
-  if (normalizedA === normalizedB) {
-    return true;
-  }
-
-  const segmentsA = normalizedA.split("/").filter(Boolean);
-  const segmentsB = normalizedB.split("/").filter(Boolean);
-  const shorter = segmentsA.length <= segmentsB.length ? segmentsA : segmentsB;
-  const longer = segmentsA.length <= segmentsB.length ? segmentsB : segmentsA;
-
-  // Avoid basename-only matches (e.g. "main.go" vs "/repo/pkg/main.go").
-  if (shorter.length < 2) {
-    return false;
-  }
-
-  for (let index = 1; index <= shorter.length; index += 1) {
-    if (shorter[shorter.length - index] !== longer[longer.length - index]) {
-      return false;
-    }
-  }
-  return true;
-}
-
-function pathsReferToSameRunTarget(pathFromOutput: string, runTargetPath: string): boolean {
-  if (pathsReferToSameFile(pathFromOutput, runTargetPath)) {
-    return true;
-  }
-
-  // Race detector often reports absolute paths, while run targets may be a
-  // root-level relative path (e.g. "main.go"). Allow basename fallback only
-  // for that root-level run-target case.
-  const normalizedTarget = normalizeRelativePath(runTargetPath).toLowerCase();
-  const targetSegments = normalizedTarget.split("/").filter(Boolean);
-  if (targetSegments.length !== 1) {
-    return false;
-  }
-
-  const normalizedOutput = normalizeRelativePath(pathFromOutput).toLowerCase();
-  const outputSegments = normalizedOutput.split("/").filter(Boolean);
-  const outputBasename = outputSegments[outputSegments.length - 1] ?? "";
-  return outputBasename === targetSegments[0];
-}
-
 type CounterpartResolution = {
   line: number | null;
   column: number | null;
@@ -204,28 +206,6 @@ function toTraceBubbleConfidence(
     default:
       return "predicted";
   }
-}
-
-function runtimeSignalMatchesScope(
-  signal: RuntimeSignal,
-  scope: {
-    scopeKey: string | null;
-    filePath: string;
-    line: number;
-    column: number;
-  }
-): boolean {
-  // Scope key is treated as a preferred discriminator, but line/column/path remain
-  // the authoritative identity in case key formatting drifts across layers.
-  const matchLine = signal.scopeLine ?? signal.line;
-  const matchColumn = signal.scopeColumn ?? signal.column;
-
-  return (
-    normalizeRelativePath(signal.scopeRelativePath ?? signal.relativePath) ===
-      normalizeRelativePath(scope.filePath) &&
-    matchLine === scope.line &&
-    matchColumn === scope.column
-  );
 }
 
 function isHintInDeepTraceScope(
@@ -248,77 +228,6 @@ function isHintInDeepTraceScope(
     hint.column === scope.column &&
     hint.symbol === scope.symbol
   );
-}
-
-function confidenceRank(confidence?: ConcurrencyConfidence | null): number {
-  switch ((confidence ?? "").toLowerCase()) {
-    case "confirmed":
-      return 3;
-    case "likely":
-      return 2;
-    case "predicted":
-      return 1;
-    default:
-      return 0;
-  }
-}
-
-function isUsableRuntimeCounterpart(
-  signal: RuntimeSignal,
-  activeFilePath: string
-): boolean {
-  const line = signal.counterpartLine ?? null;
-  const hasValidLine = Number.isInteger(line) && line !== null && line >= 1;
-  if (!hasValidLine) {
-    return false;
-  }
-  const counterpartPath = signal.counterpartRelativePath ?? null;
-  return (
-    counterpartPath === null || pathsReferToSameFile(counterpartPath, activeFilePath)
-  );
-}
-
-function selectActiveBlockedSignal(
-  blockedCandidates: RuntimeSignal[],
-  activeFilePath: string
-): RuntimeSignal | null {
-  if (blockedCandidates.length === 0) {
-    return null;
-  }
-
-  const sorted = [...blockedCandidates].sort((left, right) => {
-    const leftUsable = isUsableRuntimeCounterpart(left, activeFilePath) ? 1 : 0;
-    const rightUsable = isUsableRuntimeCounterpart(right, activeFilePath) ? 1 : 0;
-    if (leftUsable !== rightUsable) {
-      return rightUsable - leftUsable;
-    }
-
-    const leftConfidence = confidenceRank(left.counterpartConfidence ?? left.confidence);
-    const rightConfidence = confidenceRank(right.counterpartConfidence ?? right.confidence);
-    if (leftConfidence !== rightConfidence) {
-      return rightConfidence - leftConfidence;
-    }
-
-    const leftHasCounterpartLine =
-      Number.isInteger(left.counterpartLine) && (left.counterpartLine ?? 0) >= 1 ? 1 : 0;
-    const rightHasCounterpartLine =
-      Number.isInteger(right.counterpartLine) && (right.counterpartLine ?? 0) >= 1 ? 1 : 0;
-    if (leftHasCounterpartLine !== rightHasCounterpartLine) {
-      return rightHasCounterpartLine - leftHasCounterpartLine;
-    }
-
-    const leftHasCorrelationId = left.correlationId ? 1 : 0;
-    const rightHasCorrelationId = right.correlationId ? 1 : 0;
-    if (leftHasCorrelationId !== rightHasCorrelationId) {
-      return rightHasCorrelationId - leftHasCorrelationId;
-    }
-
-    if (left.threadId !== right.threadId) {
-      return left.threadId - right.threadId;
-    }
-    return left.waitReason.localeCompare(right.waitReason);
-  });
-  return sorted[0] ?? null;
 }
 
 async function getRuntimeSignalsWithTimeout(
@@ -349,44 +258,6 @@ async function getRuntimeSignalsWithTimeout(
   });
 }
 
-function isGoFile(path: string | null): path is string {
-  return typeof path === "string" && path.toLowerCase().endsWith(".go");
-}
-
-function extractGoFileLineReferences(text: string): Array<{
-  path: string;
-  line: number;
-}> {
-  const matches = text.matchAll(/((?:[A-Za-z]:)?[^:\r\n]+?\.go):(\d+)/g);
-  const refs: Array<{ path: string; line: number }> = [];
-  for (const match of matches) {
-    const filePath = match[1] ?? "";
-    const line = Number(match[2]);
-    if (!filePath || !Number.isInteger(line) || line < 1) {
-      continue;
-    }
-    refs.push({ path: filePath, line });
-  }
-  return refs;
-}
-
-function toRaceFindings(relativePath: string, lines: number[]): RaceFinding[] {
-  return lines.map((line, index) => ({
-    threadId: index + 1,
-    status: "data race",
-    waitReason: "data race",
-    confidence: ConcurrencyConfidence.Confirmed,
-    scopeKey: `race:${relativePath}:${line}`,
-    scopeRelativePath: relativePath,
-    scopeLine: line,
-    scopeColumn: 1,
-    relativePath,
-    line,
-    column: 1,
-    source: "race-detector",
-  }));
-}
-
 function EditorShell() {
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const [workspacePath, setWorkspacePath] = useState<string | null>(null);
@@ -395,8 +266,9 @@ function EditorShell() {
   const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
-  const [isSummaryOpen, setIsSummaryOpen] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [hasLoadedBottomPanel, setHasLoadedBottomPanel] = useState(false);
+  const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab>("logs");
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
     "quick-insight"
   );
@@ -404,45 +276,91 @@ function EditorShell() {
   const [runtimeAvailability, setRuntimeAvailability] = useState<
     "available" | "unavailable" | "degraded"
   >("unavailable");
-  const [toolchainStatus, setToolchainStatus] = useState<ToolchainStatus | null>(null);
-  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+  const toolchainStatus = useToolchainStatus();
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
-  const [runOutput, setRunOutput] = useState<RunOutputPayload[]>([]);
   const [runMode, setRunMode] = useState<RunMode>("standard");
-  const [raceSignals, setRaceSignals] = useState<RaceFinding[]>([]);
-  const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
-  const [diagnosticsByFile, setDiagnosticsByFile] = useState<
-    Record<string, FileDiagnosticsSummary>
-  >({});
-  const [diagnosticsAvailability, setDiagnosticsAvailability] =
-    useState<DiagnosticsIndicatorState>("idle");
-  const [gitSnapshot, setGitSnapshot] = useState<WorkspaceGitSnapshot | null>(null);
-  const [gitError, setGitError] = useState<string | null>(null);
+  const {
+    runOutput,
+    setRunOutput,
+    raceSignals,
+    setRaceSignals,
+    activeRunIdRef,
+    activeRunModeRef,
+    activeRunTargetFilePathRef,
+    raceRunCaptureRef,
+    clearPendingRunOutputBuffer,
+  } = useRunOutputState({ setRunStatus });
+  const {
+    gitSnapshot,
+    gitError,
+    branchSnapshot,
+    setBranchSnapshot,
+    refreshBranchSnapshot,
+    reloadGitState,
+  } = useWorkspaceGitState(workspacePath);
+  const [isBranchPickerOpen, setIsBranchPickerOpen] = useState(false);
+  const [branchQuery, setBranchQuery] = useState("");
+  const [pendingTargetBranch, setPendingTargetBranch] = useState<WorkspaceGitBranch | null>(null);
+  const [isBranchDialogOpen, setIsBranchDialogOpen] = useState(false);
+  const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
+  const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (isBottomPanelOpen) {
+      setHasLoadedBottomPanel(true);
+    }
+  }, [isBottomPanelOpen]);
+
+  const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
+  const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
-  const [runtimePanelSnapshot, setRuntimePanelSnapshot] =
-    useState<RuntimePanelSnapshot | null>(null);
-  const [runtimeTopologySnapshot, setRuntimeTopologySnapshot] =
-    useState<RuntimeTopologySnapshot | null>(null);
-  const [runtimeTopologyLoading, setRuntimeTopologyLoading] = useState(false);
-  const [runtimeTopologyError, setRuntimeTopologyError] = useState<string | null>(null);
-  const [completionAvailability, setCompletionAvailability] =
-    useState<CompletionIndicatorState>("idle");
+  const {
+    runtimePanelSnapshot,
+    setRuntimePanelSnapshot,
+    runtimeTopologySnapshot,
+    setRuntimeTopologySnapshot,
+    runtimeTopologyLoading,
+    runtimeTopologyError,
+    setRuntimeTopologyError,
+  } = useRuntimeTopology({
+    runMode,
+    runStatus,
+    nextPollingDelay,
+  });
   const [isDirty, setIsDirty] = useState(false);
   const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
+  const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
+  const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
+  const [quickOpenQuery, setQuickOpenQuery] = useState("");
+  const [quickOpenFiles, setQuickOpenFiles] = useState<string[]>([]);
+  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
+  const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
+  const quickOpenRequestIdRef = useRef(0);
+  const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
-  const [searchLoading, setSearchLoading] = useState(false);
-  const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
+  const {
+    searchLoading,
+    workspaceSearchResults,
+    resetWorkspaceSearch,
+    handleWorkspaceSearch,
+    replaceMatch: handleReplaceMatch,
+    replaceAllMatches: handleReplaceAllMatches,
+  } = useWorkspaceSearchState(workspacePath);
   const [analysisRevision, setAnalysisRevision] = useState(0);
+  const [explorerRevision, setExplorerRevision] = useState(0);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
   const latestEditorContentRef = useRef<string | null>(null);
-  const [paletteReturnFocusEl, setPaletteReturnFocusEl] =
-    useState<HTMLElement | null>(null);
   const [visibleRange, setVisibleRange] = useState<VisibleLineRange | null>(null);
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
+  const [editorHighlightQuery, setEditorHighlightQuery] = useState<string | null>(null);
+  const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
+  const [isSymbolsPending, setIsSymbolsPending] = useState(false);
+  const [cursorOffset, setCursorOffset] = useState<number | null>(null);
+  const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
     left: number;
@@ -452,32 +370,41 @@ function EditorShell() {
     left: number;
   } | null>(null);
   const jumpRequestIdRef = useRef(0);
-  const activeRunIdRef = useRef<string | null>(null);
-  const activeRunModeRef = useRef<RunMode>("standard");
-  const activeRunTargetFilePathRef = useRef<string | null>(null);
-  const raceRunCaptureRef = useRef<{
-    isRaceRun: boolean;
-    sawWarning: boolean;
-    matchedLines: Set<number>;
-  }>({
-    isRaceRun: false,
-    sawWarning: false,
-    matchedLines: new Set<number>(),
-  });
   const workspacePathRef = useRef(workspacePath);
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
-  const diagnosticsRequestIdRef = useRef(0);
-  const completionRequestIdRef = useRef(0);
+  const {
+    diagnostics,
+    diagnosticsByFile,
+    diagnosticsAvailability,
+    clearDiagnostics,
+    clearActiveDiagnostics,
+    invalidateDiagnosticsRequests,
+    resetDiagnosticsState,
+    refreshDiagnosticsForFile,
+  } = useDiagnosticsState({
+    workspacePathRef,
+    activeFilePathRef,
+  });
+  const {
+    completionAvailability,
+    setCompletionAvailability,
+    invalidateCompletionRequests,
+    resetCompletionAvailability,
+    handleRequestCompletions,
+  } = useCompletionState({
+    workspacePathRef,
+    activeFilePathRef,
+    activeFileContent,
+    latestEditorContentRef,
+  });
   const deepTraceRequestIdRef = useRef(0);
   const runtimeCheckRequestIdRef = useRef(0);
   const runtimeSignalRequestIdRef = useRef(0);
-  const searchRequestIdRef = useRef(0);
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
-  const diagnosticDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const diagnosticPollRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const debugStopInFlightRef = useRef(false);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
@@ -495,7 +422,36 @@ function EditorShell() {
 
   useEffect(() => {
     setJumpRequest(null);
+    setDocumentSymbols([]);
+    setCursorOffset(null);
+    setIsSymbolsPending(Boolean(activeFilePath?.toLowerCase().endsWith(".go")));
   }, [workspacePath, activeFilePath]);
+
+  useEffect(() => {
+    if (!activeFilePath?.toLowerCase().endsWith(".go") || activeFileContent === null) {
+      return;
+    }
+
+    const fallbackSymbols = buildFallbackDocumentSymbols(activeFileContent);
+    setDocumentSymbols(fallbackSymbols);
+    setIsSymbolsPending(false);
+  }, [activeFilePath, activeFileContent]);
+
+  const activeDocumentSymbol = useMemo(() => {
+    if (cursorOffset === null) {
+      return null;
+    }
+
+    return (
+      documentSymbols
+        .filter((symbol) => symbol.from <= cursorOffset && symbol.to >= cursorOffset)
+        .sort((a, b) => {
+          const aSize = a.to - a.from;
+          const bSize = b.to - b.from;
+          return aSize - bSize || a.from - b.from;
+        })[0] ?? null
+    );
+  }, [cursorOffset, documentSymbols]);
 
   useEffect(() => {
     const previousMode = previousModeRef.current;
@@ -513,39 +469,122 @@ function EditorShell() {
     };
   }, []);
 
-  useEffect(() => {
-    let canceled = false;
-    const runPreflight = async () => {
-      const response = await getToolchainStatus();
-      if (!canceled && response.ok && response.data) {
-        setToolchainStatus(response.data);
-      }
-    };
-
-    void runPreflight();
-
-    return () => {
-      canceled = true;
-    };
-  }, []);
-
   // Clear editor timers on unmount to prevent setState on unmounted component
   useEffect(() => {
     return () => {
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
       }
-      if (diagnosticDebounceRef.current !== null) {
-        clearTimeout(diagnosticDebounceRef.current);
-      }
-      if (diagnosticPollRef.current !== null) {
-        clearTimeout(diagnosticPollRef.current);
-      }
       if (autoSaveDebounceRef.current !== null) {
         clearTimeout(autoSaveDebounceRef.current);
       }
     };
   }, []);
+
+  // Global keyboard shortcut: Ctrl+Shift+F (or Cmd+Shift+F on Mac) opens search
+  useEffect(() => {
+    function handleGlobalKeyDown(e: KeyboardEvent) {
+      const isMac = navigator.platform.startsWith("Mac");
+      const mod = isMac ? e.metaKey : e.ctrlKey;
+      if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        if (!workspacePathRef.current) {
+          return;
+        }
+        setIsQuickOpenOpen(true);
+        setQuickOpenQuery("");
+        setQuickOpenSelectedIndex(0);
+        return;
+      }
+      if (mod && e.shiftKey && e.key === "F") {
+        e.preventDefault();
+        setActiveTab("search");
+        setSearchFocusTrigger((n) => n + 1);
+      }
+    }
+    window.addEventListener("keydown", handleGlobalKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleGlobalKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (isQuickOpenOpen) {
+      queueMicrotask(() => quickOpenInputRef.current?.focus());
+    }
+  }, [isQuickOpenOpen]);
+
+  const loadQuickOpenFiles = useCallback(async (rootWorkspacePath: string) => {
+    const requestId = quickOpenRequestIdRef.current + 1;
+    quickOpenRequestIdRef.current = requestId;
+    setQuickOpenLoading(true);
+    const nextFiles: string[] = [];
+    const queue: (string | undefined)[] = [undefined];
+
+    while (queue.length > 0) {
+      const current = queue.shift();
+      const response = await listWorkspaceEntries(rootWorkspacePath, current);
+      if (requestId !== quickOpenRequestIdRef.current) {
+        return;
+      }
+      if (!response.ok || !response.data) {
+        continue;
+      }
+      for (const entry of response.data as FsEntry[]) {
+        if (entry.isDir) {
+          if (!QUICK_OPEN_IGNORED_FOLDERS.has(entry.name)) {
+            queue.push(entry.path);
+          }
+        } else {
+          nextFiles.push(entry.path);
+        }
+      }
+    }
+
+    if (requestId !== quickOpenRequestIdRef.current) {
+      return;
+    }
+    nextFiles.sort((a, b) => a.localeCompare(b));
+    setQuickOpenFiles(nextFiles);
+    setQuickOpenLoading(false);
+    setQuickOpenSelectedIndex(0);
+  }, []);
+
+  useEffect(() => {
+    if (!isQuickOpenOpen || !workspacePath) {
+      return;
+    }
+    void loadQuickOpenFiles(workspacePath);
+  }, [isQuickOpenOpen, loadQuickOpenFiles, workspacePath]);
+
+  const quickOpenFilteredFiles = useMemo(() => {
+    const query = quickOpenQuery.trim().toLowerCase();
+    if (!query) {
+      return quickOpenFiles.slice(0, 200);
+    }
+    const score = (path: string) => {
+      const normalized = path.toLowerCase();
+      const name = normalized.split("/").pop() ?? normalized;
+      if (name === query) return 0;
+      if (name.startsWith(query)) return 1;
+      if (normalized.startsWith(query)) return 2;
+      const idx = normalized.indexOf(query);
+      return idx >= 0 ? 10 + idx : Number.MAX_SAFE_INTEGER;
+    };
+    return quickOpenFiles
+      .map((path) => ({ path, score: score(path) }))
+      .filter((item) => item.score !== Number.MAX_SAFE_INTEGER)
+      .sort((a, b) => a.score - b.score || a.path.localeCompare(b.path))
+      .slice(0, 200)
+      .map((item) => item.path);
+  }, [quickOpenFiles, quickOpenQuery]);
+
+  useEffect(() => {
+    setQuickOpenSelectedIndex((current) => {
+      if (quickOpenFilteredFiles.length === 0) return 0;
+      return Math.min(current, quickOpenFilteredFiles.length - 1);
+    });
+  }, [quickOpenFilteredFiles]);
 
   const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
@@ -705,6 +744,16 @@ function EditorShell() {
     resolveStaticCounterpart,
   ]);
 
+  const handleWorkspaceFsChanged = useCallback(() => {
+    setExplorerRevision((prev) => prev + 1);
+  }, []);
+
+  useWorkspaceFsSync({
+    workspacePath,
+    workspacePathRef,
+    onWorkspaceChanged: handleWorkspaceFsChanged,
+  });
+
   const fileDecorations = useMemo(() => {
     const decorations = new Map<string, FileDecoration>();
     if (gitSnapshot) {
@@ -726,204 +775,6 @@ function EditorShell() {
     }
     return decorations;
   }, [gitSnapshot, diagnosticsByFile]);
-
-  useEffect(() => {
-    if (!workspacePath) {
-      setGitSnapshot(null);
-      setGitError(null);
-      return;
-    }
-    let isCancelled = false;
-    const pollGit = async () => {
-      if (isCancelled) return;
-      try {
-        const res = await getWorkspaceGitSnapshot(workspacePath);
-        if (!isCancelled && res.ok && res.data) {
-          setGitSnapshot(res.data);
-          setGitError(null);
-        } else if (!isCancelled) {
-          setGitSnapshot(null);
-          setGitError(res.error?.message ?? "Git data unavailable");
-        }
-      } catch (err) {
-        if (!isCancelled) {
-          setGitSnapshot(null);
-          setGitError("Git data unavailable");
-        }
-      }
-      if (!isCancelled) {
-        setTimeout(pollGit, 5000);
-      }
-    };
-    void pollGit();
-    return () => {
-      isCancelled = true;
-    };
-  }, [workspacePath]);
-
-  useEffect(() => {
-    if (runMode !== "debug" || runStatus !== "running") {
-      setRuntimePanelSnapshot(null);
-      setRuntimeTopologySnapshot(null);
-      setRuntimeTopologyError(null);
-      setRuntimeTopologyLoading(false);
-      return;
-    }
-
-    let isCancelled = false;
-    let failureCount = 0;
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
-    const scheduleNextPoll = () => {
-      if (isCancelled) {
-        return;
-      }
-      timeoutId = setTimeout(() => {
-        void pollRuntimeTopology();
-      }, nextPollingDelay(failureCount));
-    };
-    const pollRuntimeTopology = async () => {
-      if (isCancelled) {
-        return;
-      }
-      setRuntimeTopologyLoading(true);
-      try {
-        const [panelResponse, topologyResponse] = await Promise.all([
-          getRuntimePanelSnapshot(),
-          getRuntimeTopologySnapshot(),
-        ]);
-        if (isCancelled) {
-          return;
-        }
-        if (panelResponse.ok && panelResponse.data) {
-          setRuntimePanelSnapshot(panelResponse.data);
-        }
-        if (topologyResponse.ok && topologyResponse.data) {
-          setRuntimeTopologySnapshot(topologyResponse.data);
-          setRuntimeTopologyError(null);
-          failureCount = 0;
-        } else {
-          failureCount += 1;
-          setRuntimeTopologyError(topologyResponse.error?.message ?? "Topology unavailable");
-        }
-      } catch (_error) {
-        if (!isCancelled) {
-          failureCount += 1;
-          setRuntimeTopologyError("Topology unavailable");
-        }
-      } finally {
-        if (!isCancelled) {
-          setRuntimeTopologyLoading(false);
-          scheduleNextPoll();
-        }
-      }
-    };
-
-    void pollRuntimeTopology();
-
-    return () => {
-      isCancelled = true;
-      if (timeoutId !== null) {
-        clearTimeout(timeoutId);
-      }
-    };
-  }, [runMode, runStatus]);
-
-
-  const refreshDiagnosticsForFile = useCallback(
-    async (diagnosticWorkspacePath: string, diagnosticFilePath: string) => {
-      if (!isGoFile(diagnosticFilePath)) {
-        setDiagnostics([]);
-        setDiagnosticsAvailability("idle");
-        setDiagnosticsByFile((prev) => {
-          if (!(diagnosticFilePath in prev)) {
-            return prev;
-          }
-          const next = { ...prev };
-          delete next[diagnosticFilePath];
-          return next;
-        });
-        return;
-      }
-      const requestId = diagnosticsRequestIdRef.current + 1;
-      diagnosticsRequestIdRef.current = requestId;
-
-      try {
-        const diagnosticsResponse = await fetchWorkspaceDiagnostics(
-          diagnosticWorkspacePath,
-          diagnosticFilePath
-        );
-
-        if (
-          requestId !== diagnosticsRequestIdRef.current ||
-          workspacePathRef.current !== diagnosticWorkspacePath ||
-          activeFilePathRef.current !== diagnosticFilePath
-        ) {
-          return;
-        }
-
-        if (diagnosticPollRef.current !== null) {
-          clearTimeout(diagnosticPollRef.current);
-          diagnosticPollRef.current = null;
-        }
-
-        if (diagnosticsResponse.ok && diagnosticsResponse.data) {
-          setDiagnostics(diagnosticsResponse.data.diagnostics);
-          setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
-          const hasErrors = diagnosticsResponse.data.diagnostics.some(
-            (item) => item.severity === "error"
-          );
-          const hasWarnings = diagnosticsResponse.data.diagnostics.some(
-            (item) => item.severity === "warning"
-          );
-          setDiagnosticsByFile((prev) => ({
-            ...prev,
-            [diagnosticFilePath]: { hasErrors, hasWarnings },
-          }));
-          if (hasErrors) {
-            diagnosticPollRef.current = setTimeout(() => {
-              if (
-                workspacePathRef.current === diagnosticWorkspacePath &&
-                activeFilePathRef.current === diagnosticFilePath
-              ) {
-                void refreshDiagnosticsForFile(diagnosticWorkspacePath, diagnosticFilePath);
-              }
-            }, 1200);
-          }
-        } else {
-          setDiagnostics([]);
-          // Generic diagnostics errors are not equivalent to missing tooling.
-          setDiagnosticsAvailability("idle");
-          setDiagnosticsByFile((prev) => {
-            if (!(diagnosticFilePath in prev)) {
-              return prev;
-            }
-            const next = { ...prev };
-            delete next[diagnosticFilePath];
-            return next;
-          });
-        }
-      } catch (_error) {
-        if (
-          requestId === diagnosticsRequestIdRef.current &&
-          workspacePathRef.current === diagnosticWorkspacePath &&
-          activeFilePathRef.current === diagnosticFilePath
-        ) {
-          setDiagnostics([]);
-          // Network/IPC/command failures should not imply missing gopls setup.
-          setDiagnosticsAvailability("idle");
-          setDiagnosticsByFile((prev) => {
-            if (!(diagnosticFilePath in prev)) {
-              return prev;
-            }
-            const next = { ...prev };
-            delete next[diagnosticFilePath];
-            return next;
-          });
-        }
-      }
-    },
-    []
-  );
 
   const hasCounterpart = useMemo(() => {
     const resolution = resolveCounterpartFromActiveHint();
@@ -980,57 +831,6 @@ function EditorShell() {
     ? "confirmed" as const
     : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
-  const summaryItems = useMemo<SummaryItem[]>(() => {
-    return detectedConstructs
-      .filter(
-        (construct) =>
-          Number.isFinite(construct.line) && Number.isInteger(construct.line) && construct.line >= 1
-      )
-      .sort((a, b) => {
-        if (a.line !== b.line) {
-          return a.line - b.line;
-        }
-        if (a.column !== b.column) {
-          return a.column - b.column;
-        }
-        return a.kind.localeCompare(b.kind);
-      })
-      .map((construct) => ({
-        line: construct.line,
-        label: KIND_LABELS[construct.kind] ?? construct.kind,
-        confidence: construct.confidence,
-        symbol: construct.symbol,
-      }));
-  }, [detectedConstructs]);
-
-  const summaryMetrics = useMemo<SummaryMetric[]>(() => {
-    if (!runtimePanelSnapshot) {
-      return [];
-    }
-
-    return [
-      {
-        label: "signals",
-        value: String(runtimePanelSnapshot.signalCount),
-        tone: runtimePanelSnapshot.signalCount > 0 ? "primary" : "secondary",
-      },
-      {
-        label: "blocked",
-        value: String(runtimePanelSnapshot.blockedCount),
-        tone: runtimePanelSnapshot.blockedCount > 0 ? "error" : "secondary",
-      },
-      {
-        label: "goroutines",
-        value: String(runtimePanelSnapshot.goroutineCount),
-        tone: runtimePanelSnapshot.goroutineCount > 0 ? "tertiary" : "secondary",
-      },
-      {
-        label: "runtime",
-        value: runtimePanelSnapshot.sessionActive ? "LIVE" : "IDLE",
-        tone: runtimePanelSnapshot.sessionActive ? "primary" : "secondary",
-      },
-    ];
-  }, [runtimePanelSnapshot]);
 
   const requestJump = useCallback((targetLine: number | null) => {
     if (targetLine === null) {
@@ -1057,6 +857,31 @@ function EditorShell() {
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
   }, [requestJump, resolveCounterpartFromActiveHint]);
+
+  const navigateDocumentSymbol = useCallback(
+    (direction: "next" | "previous") => {
+      if (documentSymbols.length === 0) {
+        return;
+      }
+
+      const activeIndex =
+        activeDocumentSymbol === null
+          ? -1
+          : documentSymbols.findIndex((symbol) => symbol.from === activeDocumentSymbol.from);
+
+      const targetIndex =
+        direction === "next"
+          ? activeIndex >= 0
+            ? (activeIndex + 1) % documentSymbols.length
+            : 0
+          : activeIndex >= 0
+            ? (activeIndex - 1 + documentSymbols.length) % documentSymbols.length
+            : documentSymbols.length - 1;
+
+      requestJump(documentSymbols[targetIndex]?.line ?? null);
+    },
+    [activeDocumentSymbol, documentSymbols, requestJump]
+  );
 
   const handleDeepTrace = useCallback(async () => {
     if (runtimeAvailability === "unavailable") {
@@ -1347,62 +1172,10 @@ function EditorShell() {
     [persistActiveFileContent]
   );
 
-  const handleRequestCompletions = useCallback(
-    async (request: EditorCompletionRequest): Promise<CompletionItem[]> => {
-      const currentWorkspace = workspacePathRef.current;
-      const currentPath = activeFilePathRef.current;
-      if (!currentWorkspace || !currentPath || !isGoFile(currentPath)) {
-        setCompletionAvailability("idle");
-        return [];
-      }
-
-      const requestId = completionRequestIdRef.current + 1;
-      completionRequestIdRef.current = requestId;
-
-      try {
-        const response = await fetchWorkspaceCompletions({
-          workspaceRoot: currentWorkspace,
-          relativePath: currentPath,
-          line: request.line,
-          column: request.column,
-          triggerCharacter: request.triggerCharacter ?? null,
-          fileContent:
-            request.fileContent ??
-            latestEditorContentRef.current ??
-            activeFileContent,
-        });
-
-        if (
-          requestId !== completionRequestIdRef.current ||
-          workspacePathRef.current !== currentWorkspace ||
-          activeFilePathRef.current !== currentPath
-        ) {
-          return [];
-        }
-
-        if (!response.ok || !response.data) {
-          setCompletionAvailability("degraded");
-          return [];
-        }
-        setCompletionAvailability("available");
-
-        return response.data;
-      } catch (_error) {
-        if (
-          requestId === completionRequestIdRef.current &&
-          workspacePathRef.current === currentWorkspace &&
-          activeFilePathRef.current === currentPath
-        ) {
-          setCompletionAvailability("degraded");
-          return [];
-        }
-        return [];
-      }
-    },
-    [activeFileContent]
-  );
-  
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
+    if (debugUiState === "starting") {
+      return;
+    }
     if (!workspacePath || !activeFilePath) return;
     const isRaceRun = modeToRun === "race";
     const runId =
@@ -1411,6 +1184,7 @@ function EditorShell() {
     activeRunIdRef.current = runId;
     activeRunModeRef.current = modeToRun;
     activeRunTargetFilePathRef.current = activeFilePath;
+    clearPendingRunOutputBuffer();
 
     const contentToRun = latestEditorContentRef.current ?? activeFileContent;
     if (isDirty && typeof contentToRun === "string") {
@@ -1428,6 +1202,7 @@ function EditorShell() {
         };
         setRaceSignals([]);
         setIsBottomPanelOpen(true);
+        setBottomPanelTab("logs");
         setRunOutput([
           {
             runId,
@@ -1443,6 +1218,7 @@ function EditorShell() {
     setRunStatus("running");
     setRunMode(modeToRun);
     setIsBottomPanelOpen(true);
+    setBottomPanelTab("logs");
     raceRunCaptureRef.current = {
       isRaceRun,
       sawWarning: false,
@@ -1477,48 +1253,93 @@ function EditorShell() {
         stream: "stderr"
       }]);
     }
-  }, [workspacePath, activeFilePath, activeFileContent, isDirty, persistActiveFileContent]);
+  }, [
+    workspacePath,
+    activeFilePath,
+    activeFileContent,
+    isDirty,
+    persistActiveFileContent,
+    debugUiState,
+  ]);
 
   const handleRunFileStandard = useCallback(() => {
     void handleRunFile("standard");
   }, [handleRunFile]);
 
-  const handleStartDebug = useCallback(() => {
-    if (!DEBUG_UI_ENABLED) return;
-    if (runStatus === "running") return;
-    if (!workspacePath || !activeFilePath) return;
+  const handleStartDebug = useCallback(async () => {
+    if (debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
+      return;
+    }
+    if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
+    setDebugUiState("starting");
+    setDebugFailure(null);
 
-    setRunStatus("running");
-    setRunMode("debug");
-    setIsBottomPanelOpen(true);
-    setRunOutput([]);
-    activeRunIdRef.current = "debug-" + Date.now();
+    let response: Awaited<ReturnType<typeof startDebugSession>>;
+    try {
+      response = await startDebugSession({
+        workspaceRoot: workspacePath,
+        relativePath: activeFilePath,
+      });
+    } catch (error) {
+      setDebugUiState("failed");
+      setDebugFailure({
+        code: "debug_session_start_failed",
+        title: "Unable to start debug session",
+        message: error instanceof Error ? error.message : "Unknown debug startup failure.",
+        details: null,
+      });
+      return;
+    }
 
-    void startDebugSession({
-      workspaceRoot: workspacePath,
-      relativePath: activeFilePath,
-    }).then((res) => {
-      if (!res.ok) {
-        setRunStatus("error");
-        setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session failed to start: ${res.error?.message}`, stream: "stderr" }]);
-      }
-    }).catch(err => {
-      setRunStatus("error");
-      setRunOutput([{ runId: activeRunIdRef.current!, line: `Runtime session error: ${err}`, stream: "stderr" }]);
-    });
-  }, [runStatus, workspacePath, activeFilePath]);
+    if (!response.ok) {
+      setDebugUiState("failed");
+      setDebugFailure({
+        code: response.error?.code ?? "debug_session_start_failed",
+        title: "Unable to start debug session",
+        message: response.error?.message ?? "Unknown debug startup failure.",
+        details: null,
+      });
+      return;
+    }
+
+    setDebugUiState("running");
+
+    if (DEBUG_UI_ENABLED) {
+      setRunStatus("running");
+      setRunMode("debug");
+      setIsBottomPanelOpen(true);
+      clearPendingRunOutputBuffer();
+      setRunOutput([]);
+      activeRunIdRef.current = "debug-" + Date.now();
+    }
+  }, [workspacePath, activeFilePath, runStatus, runMode]);
 
   const handleStopDebug = useCallback(async () => {
-    await deactivateDeepTrace();
-    setRunStatus("done");
-    setRunMode("standard");
-    setDebuggerState(null);
-    setRuntimePanelSnapshot(null);
-    setRuntimeTopologySnapshot(null);
-    setRuntimeTopologyError(null);
-    setActiveBlockedSignal(null);
-    setDeepTraceScope(null);
-  }, []);
+    if (debugStopInFlightRef.current) {
+      return;
+    }
+    debugStopInFlightRef.current = true;
+    setDebugUiState("stopping");
+    try {
+      const deactivateResponse = await deactivateDeepTrace();
+      if (!deactivateResponse.ok) {
+        throw new Error(deactivateResponse.error?.message ?? "Failed to stop debug session.");
+      }
+      setDebugUiState("idle");
+      setRunStatus("done");
+      setRunMode("standard");
+      setDebuggerState(null);
+      setRuntimePanelSnapshot(null);
+      setRuntimeTopologySnapshot(null);
+      setRuntimeTopologyError(null);
+      setActiveBlockedSignal(null);
+      setDeepTraceScope(null);
+    } catch (_error) {
+      setDebugUiState(debuggerState?.paused ? "paused" : "running");
+    } finally {
+      debugStopInFlightRef.current = false;
+    }
+  }, [debuggerState?.paused]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1587,6 +1408,26 @@ function EditorShell() {
   }, [debuggerState, runMode, runStatus]);
 
   useEffect(() => {
+    if (!DEBUG_UI_ENABLED) {
+      return;
+    }
+    if (debugUiState === "starting" || debugUiState === "failed" || debugUiState === "stopping") {
+      return;
+    }
+    if (runMode !== "debug" || runStatus !== "running") {
+      if (debugUiState !== "idle") {
+        setDebugUiState("idle");
+      }
+      return;
+    }
+
+    const nextState: DebugUiState = debuggerState?.paused ? "paused" : "running";
+    if (debugUiState !== nextState) {
+      setDebugUiState(nextState);
+    }
+  }, [debugUiState, debuggerState?.paused, runMode, runStatus]);
+
+  useEffect(() => {
     if (!workspacePath || !activeFilePath) {
       setBreakpoints([]);
       return;
@@ -1610,38 +1451,6 @@ function EditorShell() {
     };
   }, [activeFilePath, workspacePath]);
 
-  const handleWorkspaceSearch = useCallback(async (query: string) => {
-    const trimmedQuery = query.trim();
-    if (!workspacePath || !trimmedQuery) {
-      setWorkspaceSearchResults([]);
-      setSearchLoading(false);
-      return;
-    }
-    const requestId = searchRequestIdRef.current + 1;
-    searchRequestIdRef.current = requestId;
-    setSearchLoading(true);
-    try {
-      const resp = await searchWorkspaceText(workspacePath, trimmedQuery);
-      if (requestId !== searchRequestIdRef.current) {
-        return;
-      }
-      if (resp.ok && resp.data) {
-        setWorkspaceSearchResults(resp.data);
-      } else {
-        setWorkspaceSearchResults([]);
-      }
-    } catch (err) {
-      console.error("Search failed:", err);
-      if (requestId === searchRequestIdRef.current) {
-        setWorkspaceSearchResults([]);
-      }
-    } finally {
-      if (requestId === searchRequestIdRef.current) {
-        setSearchLoading(false);
-      }
-    }
-  }, [workspacePath]);
-
   const handleToggleBreakpoint = useCallback(async (line: number) => {
     if (!workspacePath || !activeFilePath) return;
     try {
@@ -1660,12 +1469,42 @@ function EditorShell() {
     } catch (err) {
       console.error("Failed to toggle breakpoint:", err);
     }
-  }, [workspacePath, activeFilePath]);
+  }, [workspacePath, activeFilePath, runStatus, runMode]);
+
+  const isDebugSessionRunning = debugUiState === "running" || debugUiState === "paused";
+  const isDebugPaused = debugUiState === "paused";
+  const isDebugSessionBusy =
+    isDebugSessionRunning || debugUiState === "starting" || debugUiState === "stopping";
+
+  const showDebugTab =
+    isDebugSessionRunning ||
+    Boolean(workspacePath && activeFilePath && activeFilePath.toLowerCase().endsWith(".go"));
+
+  const handleToggleDebugPause = useCallback(() => {
+    if (isDebugPaused) {
+      setDebugUiState("running");
+      void debuggerContinue();
+      return;
+    }
+    setDebugUiState("paused");
+    void debuggerPause();
+  }, [isDebugPaused]);
+
+  // Fall back to explorer when the debug tab becomes unavailable while active.
+  useEffect(() => {
+    if (activeTab === "debug" && !showDebugTab) {
+      setActiveTab("explorer");
+    }
+  }, [activeTab, showDebugTab]);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      const canStartDebug = DEBUG_UI_ENABLED && Boolean(workspacePath && isGoFile(activeFilePath));
-      const isDebugRunning = DEBUG_UI_ENABLED && runMode === "debug" && runStatus === "running";
+      const canStartDebug =
+        DEBUG_UI_ENABLED &&
+        !isDebugSessionBusy &&
+        !debugStopInFlightRef.current &&
+        runStatus !== "running" &&
+        Boolean(workspacePath && isGoFile(activeFilePath));
 
       if (e.key === "F9" && activeFilePath && selectedLine) {
         e.preventDefault();
@@ -1675,30 +1514,38 @@ function EditorShell() {
 
       if (e.key === "F5" && !e.shiftKey) {
         e.preventDefault();
-        if (!isDebugRunning) {
+        if (!isDebugSessionRunning) {
           if (canStartDebug) {
-            handleStartDebug();
+            void handleStartDebug();
           }
           return;
         }
-        if (debuggerState?.paused) {
-          void debuggerContinue();
-        } else {
-          void debuggerPause();
-        }
+        handleToggleDebugPause();
         return;
       }
 
       if (e.key === "F5" && e.shiftKey) {
         e.preventDefault();
-        if (isDebugRunning) {
+        if (isDebugSessionRunning) {
           void handleStopDebug();
         }
         return;
       }
 
+      if (e.key === "F8" && !e.shiftKey) {
+        e.preventDefault();
+        navigateDocumentSymbol("next");
+        return;
+      }
 
-      if (!isDebugRunning || !debuggerState?.paused) {
+      if (e.key === "F8" && e.shiftKey) {
+        e.preventDefault();
+        navigateDocumentSymbol("previous");
+        return;
+      }
+
+
+      if (!isDebugSessionRunning || !isDebugPaused) {
         return;
       }
 
@@ -1724,12 +1571,14 @@ function EditorShell() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [
     activeFilePath,
-    activeTab,
-    debuggerState,
     handleToggleBreakpoint,
+    handleToggleDebugPause,
     handleStartDebug,
     handleStopDebug,
-    runMode,
+    isDebugSessionBusy,
+    isDebugPaused,
+    isDebugSessionRunning,
+    navigateDocumentSymbol,
     runStatus,
     selectedLine,
     workspacePath,
@@ -1743,69 +1592,19 @@ function EditorShell() {
   }, [handleRunFile, runtimeAvailability]);
 
   const handleClearOutput = useCallback(() => {
+    clearPendingRunOutputBuffer();
     setRunOutput([]);
-  }, []);
+    setBottomPanelTab("logs");
+  }, [clearPendingRunOutputBuffer]);
 
-  useEffect(() => {
-    let unlisten: (() => void) | null = null;
-    let isUnmounted = false;
-
-    const setupListener = async () => {
-      const dispose = await listen<RunOutputPayload>("run-output", (event) => {
-        if (event.payload.runId !== activeRunIdRef.current) {
-          return;
-        }
-        const runTargetPath = activeRunTargetFilePathRef.current;
-        if (activeRunModeRef.current === "race" && runTargetPath) {
-          if (
-            event.payload.stream === "stderr" &&
-            event.payload.line.includes("WARNING: DATA RACE")
-          ) {
-            raceRunCaptureRef.current.sawWarning = true;
-          }
-
-          if (event.payload.stream === "stderr") {
-            const refs = extractGoFileLineReferences(event.payload.line);
-            for (const ref of refs) {
-              if (pathsReferToSameRunTarget(ref.path, runTargetPath)) {
-                raceRunCaptureRef.current.matchedLines.add(ref.line);
-              }
-            }
-          }
-
-          if (event.payload.stream === "exit") {
-            if (
-              raceRunCaptureRef.current.sawWarning &&
-              raceRunCaptureRef.current.matchedLines.size > 0
-            ) {
-              const lines = Array.from(raceRunCaptureRef.current.matchedLines).sort(
-                (left, right) => left - right
-              );
-              setRaceSignals(toRaceFindings(runTargetPath, lines));
-            } else {
-              setRaceSignals([]);
-            }
-          }
-        }
-
-        setRunOutput((prev) => [...prev, event.payload]);
-        if (event.payload.stream === "exit") {
-          setRunStatus(event.payload.exitCode === 0 ? "done" : "error");
-        }
-      });
-      if (isUnmounted) {
-        dispose();
-        return;
-      }
-      unlisten = dispose;
-    };
-
-    setupListener();
-    return () => {
-      isUnmounted = true;
-      if (unlisten) unlisten();
-    };
-  }, []);
+  const handleStopRun = useCallback(() => {
+    // Clear the active run ID immediately so trailing exit events from the
+    // stopped run cannot attach to the next run.
+    activeRunIdRef.current = null;
+    clearPendingRunOutputBuffer();
+    void stopCurrentRun();
+    setRunStatus((current) => (current === "running" ? "done" : current));
+  }, [clearPendingRunOutputBuffer]);
 
   const handleEditorChange = useCallback((value: string) => {
     latestEditorContentRef.current = value;
@@ -1815,19 +1614,6 @@ function EditorShell() {
     setSaveStatus((prev) => (prev === "error" || prev === "saved" ? "idle" : prev));
     setCompletionAvailability((prev) => (prev === "degraded" ? "idle" : prev));
 
-    if (diagnosticDebounceRef.current) {
-      clearTimeout(diagnosticDebounceRef.current);
-    }
-    if (diagnosticPollRef.current) {
-      clearTimeout(diagnosticPollRef.current);
-      diagnosticPollRef.current = null;
-    }
-    diagnosticDebounceRef.current = setTimeout(() => {
-      if (workspacePath && activeFilePath) {
-        void refreshDiagnosticsForFile(workspacePath, activeFilePath);
-      }
-    }, 1000);
-
     if (autoSaveDebounceRef.current) {
       clearTimeout(autoSaveDebounceRef.current);
     }
@@ -1835,8 +1621,8 @@ function EditorShell() {
       if (workspacePathRef.current && activeFilePathRef.current) {
         void persistActiveFileContent(value);
       }
-    }, 5000);
-  }, [refreshDiagnosticsForFile, persistActiveFileContent]);
+    }, 2500);
+  }, [persistActiveFileContent, workspacePath, activeFilePath]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -1883,20 +1669,23 @@ function EditorShell() {
     ]
   );
 
-  const openCommandPalette = useCallback(() => {
-    if (isCommandPaletteOpen) {
-      return;
-    }
-    setPaletteReturnFocusEl(document.activeElement as HTMLElement | null);
-    setIsCommandPaletteOpen(true);
-  }, [isCommandPaletteOpen]);
 
-  const closeCommandPalette = useCallback(() => {
-    setIsCommandPaletteOpen(false);
-    if (paletteReturnFocusEl instanceof HTMLElement) {
-      requestAnimationFrame(() => paletteReturnFocusEl.focus());
-    }
-  }, [paletteReturnFocusEl]);
+  const handleTerminalPaneResize = useCallback(
+    (size: number) => {
+      workspaceLayout.setTerminalSize(size);
+    },
+    [workspaceLayout]
+  );
+
+  const handleLeftPaneResize = useCallback(
+    (size: number) => {
+      workspaceLayout.setSplitSizes({
+        ...workspaceLayout.splitSizes,
+        left: size,
+      });
+    },
+    [workspaceLayout]
+  );
 
   const handleOpenWorkspace = useCallback(async () => {
     if (isOpening) {
@@ -1925,15 +1714,10 @@ function EditorShell() {
         setWorkspacePath(resolvedPath);
         setActiveFilePath(null);
         setActiveFileContent(null);
-        searchRequestIdRef.current += 1;
-        setWorkspaceSearchResults([]);
-        setSearchLoading(false);
-        diagnosticsRequestIdRef.current += 1;
-        completionRequestIdRef.current += 1;
-        setDiagnostics([]);
-        setDiagnosticsByFile({});
-        setDiagnosticsAvailability("idle");
-        setCompletionAvailability("idle");
+        resetWorkspaceSearch();
+        resetDiagnosticsState();
+        invalidateCompletionRequests();
+        resetCompletionAvailability();
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
@@ -1943,7 +1727,7 @@ function EditorShell() {
     } finally {
       setIsOpening(false);
     }
-  }, [isOpening]);
+  }, [isOpening, resetDiagnosticsState, resetWorkspaceSearch]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string) => {
@@ -1952,18 +1736,30 @@ function EditorShell() {
       }
 
       const startingPath = workspacePath;
+      const readFileWithRetry = async (workspaceRoot: string, path: string) => {
+        let lastResponse = await readWorkspaceFile(workspaceRoot, path);
+        const isLikelyNotFound = (message?: string | null) =>
+          typeof message === "string" && /not\s+found|cannot\s+find/i.test(message);
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          if (lastResponse.ok || !isLikelyNotFound(lastResponse.error?.message)) {
+            return lastResponse;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 140));
+          lastResponse = await readWorkspaceFile(workspaceRoot, path);
+        }
+        return lastResponse;
+      };
       setIsReading(true);
       setFileError(null);
       setSelectedLine(null);
       setInteractionAnchor(null);
-      diagnosticsRequestIdRef.current += 1;
-      completionRequestIdRef.current += 1;
-      setDiagnostics([]);
-      setDiagnosticsAvailability("idle");
-      setCompletionAvailability("idle");
+      invalidateDiagnosticsRequests();
+      invalidateCompletionRequests();
+      clearActiveDiagnostics();
+      resetCompletionAvailability();
 
       try {
-        const response = await readWorkspaceFile(workspacePath, relativePath);
+        const response = await readFileWithRetry(workspacePath, relativePath);
 
         // If the workspace changed while we were reading, ignore the result
         if (workspacePathRef.current !== startingPath) {
@@ -2024,9 +1820,8 @@ function EditorShell() {
         setIsDirty(false);
         setSaveStatus("idle");
         if (!isGoFile(relativePath)) {
-          setDiagnostics([]);
-          setDiagnosticsAvailability("idle");
-          setCompletionAvailability("idle");
+          clearActiveDiagnostics();
+          resetCompletionAvailability();
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
@@ -2040,7 +1835,111 @@ function EditorShell() {
         setIsReading(false);
       }
     },
-    [isReading, refreshDiagnosticsForFile, workspacePath]
+    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, refreshDiagnosticsForFile, workspacePath]
+  );
+
+  const reloadWorkspaceState = useCallback(async () => {
+    if (!workspacePathRef.current) return;
+
+    await reloadGitState(workspacePathRef.current);
+
+    clearDiagnostics();
+    setDebuggerState(null);
+    clearPendingRunOutputBuffer();
+    setRunOutput([]);
+    resetWorkspaceSearch();
+
+    // Explicitly refresh the Explorer tree so branch-switched file layout is reflected.
+    setExplorerRevision((prev) => prev + 1);
+
+    if (activeFilePathRef.current) {
+      await handleOpenFile(activeFilePathRef.current);
+    }
+  }, [clearDiagnostics, handleOpenFile, reloadGitState, resetWorkspaceSearch]);
+
+  const handleBranchSelect = useCallback(async (branch: WorkspaceGitBranch) => {
+    if (!workspacePathRef.current || !branchSnapshot) return;
+    if (branch.name === branchSnapshot.currentBranch) {
+      setIsBranchPickerOpen(false);
+      setBranchQuery("");
+      return;
+    }
+
+    const latestBranchSnapshot = await refreshBranchSnapshot(workspacePathRef.current);
+
+    setIsBranchPickerOpen(false);
+    setBranchQuery("");
+
+    if (!latestBranchSnapshot) {
+      setBranchSnapshot(null);
+      setBranchSwitchError("Branch data unavailable");
+      return;
+    }
+
+    setBranchSnapshot(latestBranchSnapshot);
+
+    if (branch.name === latestBranchSnapshot.currentBranch) {
+      return;
+    }
+    if (latestBranchSnapshot.hasUncommittedChanges) {
+      setPendingTargetBranch(branch);
+      setIsBranchDialogOpen(true);
+    } else {
+      setPendingTargetBranch(branch);
+      setBranchSwitchError(null);
+      setBranchSwitchLoading(true);
+      void switchWorkspaceBranch({
+        workspaceRoot: workspacePathRef.current,
+        targetBranch: branch.name,
+        remoteRef: branch.remoteRef ?? null,
+        preSwitchAction: "none",
+      }).then((res) => {
+        setBranchSwitchLoading(false);
+        if (res.ok && res.data) {
+          setBranchSnapshot(res.data);
+          setPendingTargetBranch(null);
+          void reloadWorkspaceState();
+        } else {
+          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
+        }
+      });
+    }
+  }, [branchSnapshot, refreshBranchSnapshot, reloadWorkspaceState]);
+
+  const handleQuickOpenSelect = useCallback(
+    (relativePath: string) => {
+      setIsQuickOpenOpen(false);
+      setQuickOpenQuery("");
+      setQuickOpenSelectedIndex(0);
+      void handleOpenFile(relativePath);
+    },
+    [handleOpenFile]
+  );
+
+  const handleBranchSwitchConfirm = useCallback(
+    (payload: { action: "commit" | "stash" | "discard"; commitMessage?: string }) => {
+      if (!pendingTargetBranch || !workspacePathRef.current) return;
+      setIsBranchDialogOpen(false);
+      setBranchSwitchError(null);
+      setBranchSwitchLoading(true);
+      void switchWorkspaceBranch({
+        workspaceRoot: workspacePathRef.current,
+        targetBranch: pendingTargetBranch.name,
+        remoteRef: pendingTargetBranch.remoteRef ?? null,
+        preSwitchAction: payload.action,
+        commitMessage: payload.commitMessage ?? null,
+      }).then((res) => {
+        setBranchSwitchLoading(false);
+        if (res.ok && res.data) {
+          setBranchSnapshot(res.data);
+          setPendingTargetBranch(null);
+          void reloadWorkspaceState();
+        } else {
+          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
+        }
+      });
+    },
+    [pendingTargetBranch, reloadWorkspaceState]
   );
 
   const editorTitle = useMemo(() => {
@@ -2053,63 +1952,103 @@ function EditorShell() {
     return `${baseName}${isDirty ? " *" : ""}`;
   }, [activeFilePath, isDirty]);
 
+  /**
+   * Stable session key for the workspace-owned interactive shell.
+   *
+   * WORKSPACE-OWNED SHELL IDENTITY:
+   * One shell session is kept alive for the entire workspace, independent of
+   * which file is currently active in the editor.  The key is fixed to
+   * `workspace-shell` (when a workspace is open), so switching files does not
+   * change the surfaceKey and therefore does not remount or reset the shell
+   * panel.  Backend disposal is triggered only at the workspace lifecycle
+   * level (when the workspace changes or is closed).
+   */
+  const surfaceKey = workspacePath ? "workspace-shell" : null;
+
   return (
     <div
       className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
-      <div className="flex min-w-0 flex-1 overflow-hidden">
-        <ActivityBar 
-          activeTab={activeTab} 
-          onTabChange={setActiveTab} 
-          signalCount={raceSignals.length} 
+      <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        <ActivityBar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          signalCount={raceSignals.length}
+          showDebugTab={showDebugTab}
         />
-        <aside className="flex w-[clamp(180px,22vw,320px)] min-w-[180px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-r border-[var(--border-muted)] bg-[var(--mantle)]">
-          {activeTab === "explorer" && (
-            <Explorer
-              workspacePath={workspacePath}
-              activeFilePath={activeFilePath}
-              onOpenFile={handleOpenFile}
-              fileDecorations={fileDecorations}
-            />
-          )}
-          {activeTab === "search" && (
-            <SearchPanel 
-              results={workspaceSearchResults}
-              loading={searchLoading}
-              onSearch={handleWorkspaceSearch}
-              onOpenResult={(file, line) => {
-                void handleOpenFile(file).then(() => {
-                  requestJump(line);
-                });
-              }}
-              autoFocus
-            />
-          )}
-          {activeTab === "git" && (
-            <GitPanel
-              loading={!gitSnapshot && Boolean(workspacePath)}
-              snapshot={gitSnapshot}
-              error={gitError}
-            />
-          )}
-          {activeTab === "concurrency" && (
-            <RuntimeTopologyPanel
-              loading={runtimeTopologyLoading}
-              runMode={runMode}
-              runStatus={runStatus}
-              debuggerState={debuggerState}
-              panelSnapshot={runtimePanelSnapshot}
-              topologySnapshot={runtimeTopologySnapshot}
-              error={runtimeTopologyError}
-            />
-          )}
-          {DEBUG_UI_ENABLED && (
-            <div className="flex flex-1 flex-col gap-4 p-4">
+        <ResizableSplit
+          orientation="horizontal"
+          className="flex-1"
+          size={workspaceLayout.splitSizes.left}
+          defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.left}
+          minSize={120}
+          maxSize={2000}
+          onResize={handleLeftPaneResize}
+          primary={
+            <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
+              {activeTab === "explorer" && (
+                <Explorer
+                  workspacePath={workspacePath}
+                  activeFilePath={activeFilePath}
+                  onOpenFile={handleOpenFile}
+                  fileDecorations={fileDecorations}
+                  explorerRevision={explorerRevision}
+                />
+              )}
+              {activeTab === "search" && (
+                <SearchPanel
+                  results={workspaceSearchResults}
+                  loading={searchLoading}
+                  onSearch={handleWorkspaceSearch}
+                  onOpenResult={(file, line, query) => {
+                    setEditorHighlightQuery(query);
+                    void handleOpenFile(file).then(() => {
+                      requestJump(line);
+                    });
+                  }}
+                  autoFocus
+                  focusTrigger={searchFocusTrigger}
+                  onReplaceMatch={(file, line, searchText, replacement) =>
+                    void handleReplaceMatch(file, line, searchText, replacement)
+                  }
+                  onReplaceAll={(searchText, replacement) =>
+                    void handleReplaceAllMatches(searchText, replacement)
+                  }
+                />
+              )}
+              {activeTab === "git" && (
+                <GitPanel
+                  loading={!gitSnapshot && Boolean(workspacePath)}
+                  snapshot={gitSnapshot}
+                  branchSnapshot={branchSnapshot}
+                  error={gitError}
+                  onOpenBranchPicker={() => setIsBranchPickerOpen(true)}
+                />
+              )}
+              {activeTab === "concurrency" && (
+                <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
+                  <LazyRuntimeTopologyPanel
+                    loading={runtimeTopologyLoading}
+                    runMode={runMode}
+                    runStatus={runStatus}
+                    isDebugSessionRunning={isDebugSessionRunning}
+                    isDebugPaused={isDebugPaused}
+                    debuggerState={debuggerState}
+                    panelSnapshot={runtimePanelSnapshot}
+                    topologySnapshot={runtimeTopologySnapshot}
+                    error={runtimeTopologyError}
+                  />
+                </Suspense>
+              )}
+              {DEBUG_UI_ENABLED && activeTab === "debug" && (
+                <div className="flex flex-1 flex-col gap-4 p-4">
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
                 <p className="text-[11px] text-[var(--subtext0)]">
-                  {runMode === "debug" && runStatus === "running"
-                    ? debuggerState?.paused
+                  {debugUiState === "stopping"
+                    ? "Stopping"
+                    : isDebugSessionRunning
+                    ? isDebugPaused
                       ? "Paused"
                       : "Running"
                     : "Idle"}
@@ -2122,32 +2061,32 @@ function EditorShell() {
                 )}
               </div>
 
-              {!(runMode === "debug" && runStatus === "running") && (
+              {!isDebugSessionBusy && (
                 <button
                   type="button"
                   aria-label="Start debug session"
                   className={`rounded-md border px-3 py-2 text-[11px] font-semibold ${
-                    runStatus === "running" && runMode !== "debug"
+                    runStatus === "running" || isDebugSessionBusy
                       ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
                       : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
                   }`}
                   onClick={handleStartDebug}
-                  disabled={runStatus === "running" && runMode !== "debug"}
+                  disabled={runStatus === "running" || isDebugSessionBusy}
                 >
                   Start Debug Session
                 </button>
               )}
 
-              {runMode === "debug" && runStatus === "running" && (
+              {isDebugSessionRunning && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      aria-label={debuggerState?.paused ? "Continue debugging" : "Pause debugging"}
+                      aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
-                      onClick={() => debuggerState?.paused ? void debuggerContinue() : void debuggerPause()}
+                      onClick={handleToggleDebugPause}
                     >
-                      {debuggerState?.paused ? "Continue" : "Pause"}
+                      {isDebugPaused ? "Continue" : "Pause"}
                     </button>
                     <button
                       type="button"
@@ -2159,7 +2098,7 @@ function EditorShell() {
                     </button>
                   </div>
 
-                  {debuggerState?.paused && (
+                  {isDebugPaused && (
                     <div className="grid grid-cols-3 gap-2">
                       <button
                         type="button"
@@ -2191,29 +2130,67 @@ function EditorShell() {
               )}
 
               <div className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--subtext0)]">
-                {runMode === "debug" && runStatus === "running"
-                  ? debuggerState?.paused
+                {isDebugSessionRunning
+                  ? isDebugPaused
                     ? "Step controls are active while the program is paused."
                     : "Pause or hit a breakpoint to inspect state."
                   : "Open a Go file, place breakpoints, then start a debug session."}
               </div>
-            </div>
-          )}
-        </aside>
-
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex min-h-0 flex-1 overflow-hidden">
-            <section className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--crust)] shadow-lg">
-              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-[rgba(113,125,144,0.2)] bg-[var(--base)] px-3 py-2 md:px-4">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] font-semibold uppercase text-[var(--overlay1)] text-balance">Editor</span>
-                  <span className="text-[var(--overlay0)] opacity-50">/</span>
-                  <span className="text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
+                </div>
+              )}
+            </aside>
+          }
+          secondary={
+            <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+          <ResizableSplit
+            orientation="vertical"
+            className="h-full flex-1 flex-col-reverse"
+            size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
+            resizeAnchor="end"
+            defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom}
+            minSize={isBottomPanelOpen ? 120 : 0}
+            maxSize={2000}
+            collapsed={!isBottomPanelOpen}
+            onResize={handleTerminalPaneResize}
+            primary={
+              <div
+                hidden={!isBottomPanelOpen}
+                className="h-full min-h-0 min-w-0"
+              >
+                {hasLoadedBottomPanel ? (
+                  <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
+                    <LazyBottomPanel
+                      activeTab={bottomPanelTab}
+                      onActiveTabChange={setBottomPanelTab}
+                      logEntries={runOutput}
+                      surfaceKey={surfaceKey}
+                      workspacePath={workspacePath}
+                      onClose={() => setIsBottomPanelOpen(false)}
+                      isRunning={runStatus === "running"}
+                      onClear={handleClearOutput}
+                      onRun={handleRunFileStandard}
+                      onRunWithRace={handleRunFileWithRace}
+                      onStop={handleStopRun}
+                      canRunWithRace={runtimeAvailability !== "unavailable"}
+                    />
+                  </Suspense>
+                ) : null}
+              </div>
+            }
+            secondary={
+              <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
+            <section
+              data-testid="editor-workbench"
+              className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-(--border-subtle) bg-(--crust)"
+            >
+              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1.5 md:px-4">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[12px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
                 </div>
                 
                 <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
                   <button
-                    className={`flex cursor-pointer items-center gap-2 rounded border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.4)] px-3 py-1.5 text-[11px] font-semibold text-[var(--subtext1)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.12)] ${
+                    className={`flex size-7 cursor-pointer items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] transition-colors duration-100 ease-out hover:bg-[var(--bg-hover)] ${
                       isOpening ? "cursor-not-allowed opacity-60" : ""
                     }`}
                     onClick={handleOpenWorkspace}
@@ -2223,47 +2200,69 @@ function EditorShell() {
                     disabled={isOpening}
                   >
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                    {isOpening ? "Opening..." : "Open"}
                   </button>
 
                   {activeFilePath && (
                     <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
-                        runStatus === "running"
-                          ? "border-[rgba(113,125,144,0.25)] bg-[rgba(42,48,61,0.35)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(127,176,142,0.35)] bg-[rgba(127,176,142,0.14)] text-[var(--green)] hover:bg-[rgba(127,176,142,0.22)]"
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
+                        runStatus === "running" || debugUiState === "starting"
+                          ? "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
                       onClick={handleRunFileStandard}
                       type="button"
                       aria-label="Run active Go file"
                       title="Run the active Go file and show output in the terminal panel."
-                      disabled={runStatus === "running"}
+                      disabled={runStatus === "running" || debugUiState === "starting"}
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                      {runStatus === "running" ? "Running..." : "Run"}
                     </button>
                   )}
                   {isGoFile(activeFilePath) && runMode !== "debug" && (
                     <button
-                      className={`flex cursor-pointer items-center gap-2 rounded border px-3 py-1.5 text-[11px] font-semibold transition-colors duration-150 ease-out ${
-                        runStatus === "running" || runtimeAvailability === "unavailable"
-                          ? "border-[rgba(113,125,144,0.25)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[rgba(126,162,220,0.4)] text-[var(--blue)] hover:bg-[rgba(126,162,220,0.12)]"
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
+                        runStatus === "running" ||
+                        debugUiState === "starting" ||
+                        runtimeAvailability === "unavailable"
+                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
                       onClick={handleRunFileWithRace}
                       type="button"
                       aria-label="Run active Go file with race detector"
                       title="Run the active Go file with the Go race detector and surface confirmed race findings."
-                      disabled={runStatus === "running" || runtimeAvailability === "unavailable"}
+                      disabled={
+                        runStatus === "running" ||
+                        debugUiState === "starting" ||
+                        runtimeAvailability === "unavailable"
+                      }
                     >
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-                      {runStatus === "running" && runMode === "race" ? "Race..." : "Run Race"}
+                    </button>
+                  )}
+                  {isGoFile(activeFilePath) && (
+                    <button
+                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
+                        isDebugSessionBusy || runStatus === "running"
+                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
+                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+                      }`}
+                      onClick={() => void handleStartDebug()}
+                      type="button"
+                      aria-label="Debug active Go file"
+                      title="Start a debug session for the active Go file."
+                      disabled={isDebugSessionBusy || runStatus === "running"}
+                    >
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
                     </button>
                   )}
                 </div>
               </header>
 
-              <div className="flex min-h-0 flex-1 flex-col p-3 sm:p-4 md:p-5">
+              <div
+                data-testid="editor-content-region"
+                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-(--crust) p-3 sm:p-4 md:p-5"
+              >
                 {!workspacePath && (
                   <div className="flex flex-1 flex-col items-center justify-center">
                     <div className="max-w-md text-center">
@@ -2300,19 +2299,44 @@ function EditorShell() {
                   </div>
                 )}
                 {workspacePath && activeFilePath && (
-                  <div className="flex min-h-0 flex-1 flex-col gap-3">
-                    <div className="flex items-center justify-between text-xs text-[var(--overlay2)]">
-                      <span>Active File</span>
-                      {isReading && <span>Loading.</span>}
-                    </div>
+                  <div
+                    data-testid="editor-active-file-region"
+                    className="flex min-h-0 flex-1 overflow-hidden"
+                  >
                     {fileError && (
-                      <div className="rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
+                      <div className="absolute left-0 right-0 top-0 z-10 mx-3 mt-2 rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
                         {fileError}
                       </div>
                     )}
-                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded border border-[rgba(113,125,144,0.25)] bg-[var(--crust)]">
-                      <div className="border-b border-[rgba(113,125,144,0.2)] px-3 py-2 text-xs text-[var(--subtext1)]">
-                        {activeFilePath}
+                    <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--crust)]">
+                      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+                      <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1">
+                        <span className="min-w-0 truncate text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
+                        {isReading && <span className="shrink-0 text-[10px] text-[var(--overlay0)]">Loading…</span>}
+                        <span className="shrink-0 text-[rgba(113,125,144,0.4)]">/</span>
+                        <div
+                          className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--overlay1)]"
+                          data-testid="editor-scope-breadcrumb"
+                        >
+                          {activeDocumentSymbol ? (
+                            <button
+                              type="button"
+                              className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                              onClick={() => requestJump(activeDocumentSymbol.line)}
+                              title={`Jump to ${activeDocumentSymbol.name} on line ${activeDocumentSymbol.line}.`}
+                            >
+                              <span className="rounded bg-[var(--surface0)] px-1 py-0.5 text-[9px] uppercase tracking-[0.04em]">
+                                {activeDocumentSymbol.kind}
+                              </span>
+                              <span className="truncate text-[var(--subtext1)]">
+                                {activeDocumentSymbol.name}
+                              </span>
+                              <span className="text-[rgba(113,125,144,0.5)]">
+                                L{activeDocumentSymbol.line}
+                              </span>
+                            </button>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={effectiveHint} />
@@ -2353,6 +2377,7 @@ function EditorShell() {
                         {activeFileContent !== null ? (
                           <CodeEditor
                             value={activeFileContent}
+                            filePath={activeFilePath}
                             executionLine={debuggerState?.activeLine ?? null}
                             breakpoints={breakpoints}
                             onToggleBreakpoint={handleToggleBreakpoint}
@@ -2363,6 +2388,7 @@ function EditorShell() {
                             jumpRequest={jumpRequest}
                             onHoverLineChange={setHoveredLine}
                             onSelectionLineChange={setSelectedLine}
+                            onCursorOffsetChange={setCursorOffset}
                             onModifierClickLine={handleModifierClickLine}
                             onInteractionAnchorChange={setInteractionAnchor}
                             onCounterpartAnchorChange={setCounterpartAnchor}
@@ -2370,6 +2396,12 @@ function EditorShell() {
                             onSave={handleSaveFile}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
+                            externalSearchQuery={editorHighlightQuery}
+                            onDocumentSymbolsChange={(symbols) => {
+                              setDocumentSymbols(symbols);
+                              setIsSymbolsPending(false);
+                            }}
+                            suppressFindWidget={activeTab === "search"}
                           />
                         ) : (
                           <div className="px-4 py-3">
@@ -2381,42 +2413,107 @@ function EditorShell() {
                           </div>
                         )}
                       </div>
+                      </div>
+                      {(isSymbolsPending || documentSymbols.length > 0) ? (
+                        <DocumentOutline
+                          activeItemFrom={activeDocumentSymbol?.from ?? null}
+                          items={documentSymbols}
+                          isPending={isSymbolsPending}
+                          onJumpToLine={(line) => requestJump(line)}
+                        />
+                      ) : null}
                     </div>
                   </div>
                 )}
               </div>
             </section>
 
-            {isSummaryOpen && (
-              <SummaryPeek
-                items={summaryItems}
-                metrics={summaryMetrics}
-                topologyInteractions={runtimeTopologySnapshot?.interactions ?? []}
-                topologyActive={runtimeTopologySnapshot?.sessionActive ?? false}
-                hasDebugSession={runMode === "debug" && runStatus === "running"}
-                onJumpToLine={(line) => requestJump(line)}
-                onClose={() => setIsSummaryOpen(false)}
-              />
-            )}
-          </div>
-
-          {isBottomPanelOpen && (
-            <BottomPanel 
-              onClose={() => setIsBottomPanelOpen(false)} 
-              output={runOutput}
-              isRunning={runStatus === "running"}
-              onClear={handleClearOutput}
-              onRun={handleRunFileStandard}
-              onRunWithRace={handleRunFileWithRace}
-              canRunWithRace={runtimeAvailability !== "unavailable"}
-            />
-          )}
-        </div>
+              </div>
+            }
+          />
+            </div>
+          }
+        />
       </div>
+
+      {isQuickOpenOpen && (
+        <div className="pointer-events-none absolute inset-0 z-50 flex justify-center pt-20">
+          <div className="pointer-events-auto w-full max-w-2xl px-4">
+            <div className="overflow-hidden rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] shadow-[var(--panel-shadow)]">
+              <input
+                ref={quickOpenInputRef}
+                type="text"
+                placeholder="Find file..."
+                value={quickOpenQuery}
+                onChange={(event) => {
+                  setQuickOpenQuery(event.target.value);
+                  setQuickOpenSelectedIndex(0);
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault();
+                    setIsQuickOpenOpen(false);
+                    return;
+                  }
+                  if (event.key === "ArrowDown") {
+                    event.preventDefault();
+                    setQuickOpenSelectedIndex((current) =>
+                      Math.min(current + 1, Math.max(0, quickOpenFilteredFiles.length - 1))
+                    );
+                    return;
+                  }
+                  if (event.key === "ArrowUp") {
+                    event.preventDefault();
+                    setQuickOpenSelectedIndex((current) => Math.max(0, current - 1));
+                    return;
+                  }
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    const selected = quickOpenFilteredFiles[quickOpenSelectedIndex];
+                    if (selected) {
+                      handleQuickOpenSelect(selected);
+                    }
+                  }
+                }}
+                className="w-full border-b border-[var(--border-subtle)] bg-[var(--crust)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+                aria-label="Quick open file"
+              />
+              <div className="max-h-72 overflow-auto py-1">
+                {quickOpenLoading && (
+                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">Indexing files...</p>
+                )}
+                {!quickOpenLoading && quickOpenFilteredFiles.length === 0 && (
+                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">No files found.</p>
+                )}
+                {!quickOpenLoading &&
+                  quickOpenFilteredFiles.map((path, index) => (
+                    <button
+                      key={path}
+                      type="button"
+                      onClick={() => handleQuickOpenSelect(path)}
+                      className={`block w-full px-3 py-1.5 text-left text-xs ${
+                        index === quickOpenSelectedIndex
+                          ? "bg-[var(--selection-bg)] text-[var(--text)]"
+                          : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+                      }`}
+                      title={path}
+                    >
+                      {path}
+                    </button>
+                  ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       <StatusBar
         workspacePath={workspacePath}
         activeFilePath={activeFilePath}
+        activeSymbol={activeDocumentSymbol}
+        onJumpToActiveSymbol={
+          activeDocumentSymbol ? () => requestJump(activeDocumentSymbol.line) : undefined
+        }
         mode={mode}
         runtimeAvailability={runtimeAvailability}
         diagnosticsAvailability={diagnosticsAvailability}
@@ -2424,29 +2521,74 @@ function EditorShell() {
         toolchainStatus={toolchainStatus}
         saveStatus={saveStatus}
         runStatus={runStatus}
-        isSummaryOpen={isSummaryOpen}
+        branchName={branchSnapshot?.currentBranch ?? null}
+        onToggleBranchPicker={() => setIsBranchPickerOpen((prev) => !prev)}
         isBottomPanelOpen={isBottomPanelOpen}
-        isCommandPaletteOpen={isCommandPaletteOpen}
-        onToggleCommandPalette={() =>
-          isCommandPaletteOpen ? closeCommandPalette() : openCommandPalette()
-        }
-        onToggleSummary={() => setIsSummaryOpen((prev) => !prev)}
         onToggleBottomPanel={() => setIsBottomPanelOpen((prev) => !prev)}
       />
 
-      {isCommandPaletteOpen && (
-        <CommandPalette
-          onClose={closeCommandPalette}
-          canRun={Boolean(workspacePath && isGoFile(activeFilePath))}
-          canRunWithRace={
-            Boolean(workspacePath && isGoFile(activeFilePath)) &&
-            runtimeAvailability !== "unavailable"
-          }
-          isRunning={runStatus === "running"}
-          onRun={handleRunFileStandard}
-          onRunWithRace={handleRunFileWithRace}
-        />
+
+      {isBranchPickerOpen && branchSnapshot && (
+        <div className="absolute bottom-10 left-[240px] z-50 w-72">
+          <BranchPicker
+            open={isBranchPickerOpen}
+            currentBranch={branchSnapshot.currentBranch}
+            branches={branchSnapshot.branches}
+            query={branchQuery}
+            onQueryChange={setBranchQuery}
+            onSelectBranch={handleBranchSelect}
+            onClose={() => {
+              setIsBranchPickerOpen(false);
+              setBranchQuery("");
+            }}
+          />
+        </div>
       )}
+
+      {isBranchDialogOpen && pendingTargetBranch && branchSnapshot && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="w-96">
+            <BranchSwitchDialog
+              open={isBranchDialogOpen}
+              targetBranch={pendingTargetBranch.name}
+              changedFiles={branchSnapshot.changedFilesSummary}
+              onConfirm={handleBranchSwitchConfirm}
+              onCancel={() => {
+                setIsBranchDialogOpen(false);
+                setPendingTargetBranch(null);
+                setBranchSwitchError(null);
+              }}
+            />
+          </div>
+        </div>
+      )}
+
+      {branchSwitchLoading && (
+        <div className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--border-muted)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--subtext1)]">
+          Switching branch…
+        </div>
+      )}
+
+      {branchSwitchError && (
+        <div className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--red)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--red)]">
+          {branchSwitchError}
+        </div>
+      )}
+
+      {debugFailure !== null ? (
+        <Suspense fallback={null}>
+          <LazyDebugFailureDialog
+            open
+            title={debugFailure.title}
+            message={debugFailure.message}
+            details={debugFailure.details ?? null}
+            onClose={() => {
+              setDebugFailure(null);
+              setDebugUiState("idle");
+            }}
+          />
+        </Suspense>
+      ) : null}
     </div>
   );
 }
