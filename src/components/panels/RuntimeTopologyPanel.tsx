@@ -9,6 +9,8 @@ type RuntimeTopologyPanelProps = {
   loading?: boolean;
   runMode: "standard" | "race" | "debug";
   runStatus: "idle" | "running" | "done" | "error";
+  isDebugSessionRunning?: boolean;
+  isDebugPaused?: boolean;
   debuggerState: DebuggerState | null;
   panelSnapshot: RuntimePanelSnapshot | null;
   topologySnapshot: RuntimeTopologySnapshot | null;
@@ -41,12 +43,15 @@ function RuntimeTopologyPanel({
   loading = false,
   runMode,
   runStatus,
+  isDebugSessionRunning,
+  isDebugPaused,
   debuggerState,
   panelSnapshot,
   topologySnapshot,
   error = null,
 }: RuntimeTopologyPanelProps) {
-  const sessionActive = runMode === "debug" && runStatus === "running";
+  const sessionActive = isDebugSessionRunning ?? (runMode === "debug" && runStatus === "running");
+  const sessionPaused = isDebugPaused ?? Boolean(debuggerState?.paused);
   const interactions = topologySnapshot?.interactions ?? [];
 
   return (
@@ -57,7 +62,7 @@ function RuntimeTopologyPanel({
         </p>
         <p className="mt-1 text-[12px] text-[var(--subtext0)]">
           {sessionActive
-            ? debuggerState?.paused
+            ? sessionPaused
               ? "Runtime inspection paused"
               : "Runtime inspection running"
             : "No active runtime session"}

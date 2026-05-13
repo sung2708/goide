@@ -2,103 +2,80 @@ import { cn } from "../../lib/utils/cn";
 import React from "react";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
-  faMagnifyingGlass,
+  faBug,
   faCodeBranch,
+  faFolder,
+  faMagnifyingGlass,
   faShareNodes,
 } from "@fortawesome/free-solid-svg-icons";
-import { 
-  faFolder 
-} from "@fortawesome/free-regular-svg-icons";
+import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 
-// Map the icons to the names the user requested
-const byPrefixAndName = {
-  fas: {
-    'magnifying-glass': faMagnifyingGlass,
-    'code-branch': faCodeBranch,
-    'share-nodes': faShareNodes,
-  },
-  far: {
-    'folder': faFolder,
-  },
-};
-
-export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency";
+export type ActivityBarTab = "explorer" | "search" | "git" | "concurrency" | "debug";
 
 interface ActivityBarProps {
   activeTab: ActivityBarTab;
   onTabChange: (tab: ActivityBarTab) => void;
   signalCount?: number;
+  showDebugTab?: boolean;
 }
 
-const ActivityBar: React.FC<ActivityBarProps> = ({ activeTab, onTabChange, signalCount = 0 }) => {
-  return (
-    <div className="flex w-12 flex-col items-center border-r border-[var(--border-muted)] bg-[var(--crust)] py-4 gap-4">
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.far['folder']} />} 
-        active={activeTab === "explorer"} 
-        onClick={() => onTabChange("explorer")} 
-        title="Explorer"
-      />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['magnifying-glass']} />} 
-        active={activeTab === "search"} 
-        onClick={() => onTabChange("search")} 
-        title="Search"
-      />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['code-branch']} />} 
-        active={activeTab === "git"} 
-        onClick={() => onTabChange("git")} 
-        title="Git"
-      />
-      <ActivityItem 
-        icon={<FontAwesomeIcon icon={byPrefixAndName.fas['share-nodes']} />} 
-        active={activeTab === "concurrency"} 
-        onClick={() => onTabChange("concurrency")} 
-        title="Concurrency Signals"
-        badge={signalCount > 0 ? signalCount : undefined}
-      />
-      <div className="mt-auto" />
-    </div>
-  );
-};
+const MAIN_TABS: Array<{ tab: ActivityBarTab; icon: IconDefinition; label: string }> = [
+  { tab: "explorer", icon: faFolder, label: "Explorer" },
+  { tab: "search", icon: faMagnifyingGlass, label: "Search" },
+  { tab: "git", icon: faCodeBranch, label: "Source Control" },
+  { tab: "concurrency", icon: faShareNodes, label: "Concurrency Signals" },
+];
 
-interface ActivityItemProps {
-  icon: React.ReactNode;
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  badge?: number;
-}
+const DEBUG_TAB = { tab: "debug" as ActivityBarTab, icon: faBug, label: "Debug" };
 
-const ActivityItem: React.FC<ActivityItemProps> = ({ icon, active, onClick, title, badge }) => {
+const ActivityBar: React.FC<ActivityBarProps> = ({
+  activeTab,
+  onTabChange,
+  signalCount = 0,
+  showDebugTab = false,
+}) => {
+  const tabs = showDebugTab ? [...MAIN_TABS, DEBUG_TAB] : MAIN_TABS;
+
   return (
-    <div className="relative group">
-      <button
-        type="button"
-        onClick={onClick}
-        aria-label={title}
-        aria-pressed={active}
-        title={title}
-        className={cn(
-          "flex size-10 items-center justify-center rounded-lg transition-colors duration-200",
-          active
-            ? "bg-[rgba(140,170,238,0.1)] text-[var(--blue)]"
-            : "text-[var(--overlay1)] hover:bg-[rgba(255,255,255,0.05)] hover:text-[var(--subtext1)]"
-        )}
-      >
-        <div className="text-[18px] flex items-center justify-center">
-          {icon}
-        </div>
-      </button>
-      {active && (
-        <div className="absolute -left-0 top-2 h-6 w-1 rounded-r-full bg-[var(--blue)]" />
-      )}
-      {badge !== undefined && (
-        <div className="absolute -bottom-1 -right-1 flex min-w-[16px] items-center justify-center rounded-full bg-[var(--mauve)] px-1 py-0.5 text-[8px] font-bold text-[var(--crust)] shadow-sm">
-          {badge > 999 ? "999+" : badge}
-        </div>
-      )}
+    <div className="flex w-11 flex-col border-r border-(--border-subtle) bg-(--crust)">
+      <div className="flex h-9 items-center justify-center">
+        <span className="select-none text-[10px] font-bold uppercase tracking-widest text-(--blue)">
+          go
+        </span>
+      </div>
+
+      <div className="flex flex-1 flex-col gap-0.5 py-2">
+        {tabs.map(({ tab, icon, label }) => {
+          const isActive = activeTab === tab;
+          return (
+            <div key={tab} className="relative">
+              {isActive && (
+                <div className="absolute inset-y-0 left-0 w-0.5 rounded-r-sm bg-(--blue)" />
+              )}
+              <button
+                type="button"
+                onClick={() => onTabChange(tab)}
+                aria-label={label}
+                aria-pressed={isActive}
+                title={label}
+                className={cn(
+                  "relative flex w-full items-center justify-center py-2.5 outline-none transition-colors duration-100 focus-visible:bg-(--bg-active)",
+                  isActive
+                    ? "bg-(--bg-active) text-(--blue)"
+                    : "text-(--overlay1) hover:bg-(--bg-hover) hover:text-(--subtext1)"
+                )}
+              >
+                <FontAwesomeIcon icon={icon} className="text-[16px]" />
+                {tab === "concurrency" && signalCount > 0 && (
+                  <span className="absolute right-1.5 top-1.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-(--mauve) px-0.5 text-[8px] font-bold leading-none text-(--crust)">
+                    {signalCount > 99 ? "99+" : signalCount}
+                  </span>
+                )}
+              </button>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
