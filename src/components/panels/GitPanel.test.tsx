@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import GitPanel from "./GitPanel";
@@ -61,9 +61,7 @@ describe("GitPanel", () => {
     );
 
     expect(screen.getByText("Feature complete")).toBeInTheDocument();
-    const featureRow = screen.getByText("Feature complete").closest("div");
-    expect(featureRow).not.toBeNull();
-    expect(within(featureRow as HTMLElement).getByText("develop")).toBeInTheDocument();
+    expect(screen.getByText("develop", { selector: "span" })).toBeInTheDocument();
     expect(screen.getByText("v1.1.0")).toBeInTheDocument();
   });
 
@@ -96,6 +94,7 @@ describe("GitPanel", () => {
     await waitFor(() => {
       expect(onLoadCommitDetail).toHaveBeenCalledWith("hash-a");
     });
+    expect(onLoadCommitDetail).toHaveBeenCalledTimes(1);
   });
 
   it("keeps the empty graph state when no history is available", () => {
