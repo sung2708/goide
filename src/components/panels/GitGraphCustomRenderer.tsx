@@ -1,10 +1,5 @@
 import type { GitGraphModel, GitGraphNode, GitGraphRef } from "./gitGraphModel";
-
-type GraphModelVirtualRow = {
-  index: number;
-  start: number;
-  size: number;
-};
+import type { GraphModelVirtualRow } from "./GitGraphView";
 
 type GitGraphCustomRendererProps = {
   model: GitGraphModel;
@@ -25,11 +20,17 @@ export default function GitGraphCustomRenderer({
   onCommitHover,
   onCommitLeave,
 }: GitGraphCustomRendererProps) {
-  const visibleIndexes = new Set(virtualRows.map((row) => row.index));
-  const visibleNodes = virtualRows.map((row) => ({ row, node: model.nodes[row.index] })).filter((entry) => entry.node);
+  const fallbackRows = model.nodes.map((node) => ({
+    index: node.row,
+    start: node.row * fallbackRowHeight,
+    size: fallbackRowHeight,
+  }));
+  const rowsToRender = virtualRows.length > 0 ? virtualRows : fallbackRows;
+  const visibleIndexes = new Set(rowsToRender.map((row) => row.index));
+  const visibleNodes = rowsToRender.map((row) => ({ row, node: model.nodes[row.index] })).filter((entry) => entry.node);
   const graphWidth = Math.max(44, model.lanes.length * laneGap + laneLeftPadding + 18);
   const visibleEdges = model.edges.filter((edge) => visibleIndexes.has(edge.fromRow) || visibleIndexes.has(edge.toRow));
-  const rowByIndex = new Map(virtualRows.map((row) => [row.index, row]));
+  const rowByIndex = new Map(rowsToRender.map((row) => [row.index, row]));
 
   const centerY = (rowIndex: number): number => {
     const row = rowByIndex.get(rowIndex);
