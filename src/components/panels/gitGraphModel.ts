@@ -7,7 +7,7 @@ export type GitGraphRef = {
   name: string;
 };
 
-export type GitGraphNode = WorkspaceGitGraphCommit & {
+export type GitGraphNode = Omit<WorkspaceGitGraphCommit, "refs"> & {
   row: number;
   lane: number;
   refs: GitGraphRef[];

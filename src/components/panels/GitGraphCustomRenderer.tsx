@@ -1,4 +1,4 @@
-import type { GraphNode, GraphRef, GitGraphModel } from "./gitGraphModel";
+import type { GitGraphModel, GitGraphNode, GitGraphRef } from "./gitGraphModel";
 
 type GraphModelVirtualRow = {
   index: number;
@@ -10,8 +10,8 @@ type GitGraphCustomRendererProps = {
   model: GitGraphModel;
   virtualRows: GraphModelVirtualRow[];
   totalHeight: number;
-  onCommitHover: (node: GraphNode) => void;
-  onCommitLeave: (node: GraphNode) => void;
+  onCommitHover: (node: GitGraphNode) => void;
+  onCommitLeave: (node: GitGraphNode) => void;
 };
 
 const laneGap = 16;
@@ -61,7 +61,7 @@ export default function GitGraphCustomRenderer({
               data-testid="git-graph-edge"
               d={d}
               fill="none"
-              stroke={edge.color}
+              stroke={model.lanes.find((lane) => lane.index === edge.toLane)?.color ?? "var(--blue)"}
               strokeWidth={edge.kind === "merge" ? 1.7 : 1.35}
               opacity={edge.kind === "merge" ? 0.9 : 0.68}
               strokeLinecap="round"
@@ -102,7 +102,7 @@ function laneX(lane: number): number {
   return laneLeftPadding + lane * laneGap;
 }
 
-function RefBadge({ refInfo }: { refInfo: GraphRef }) {
+function RefBadge({ refInfo }: { refInfo: GitGraphRef }) {
   const className = refInfo.kind === "tag"
     ? "bg-[rgba(163,190,140,0.14)] text-(--green)"
     : refInfo.kind === "remote"
