@@ -17,8 +17,8 @@ type GitGraphViewProps = {
   virtualRows: GraphModelVirtualRow[];
   totalHeight: number;
   renderer?: GitGraphRendererKind;
-  onCommitHover: (node: GitGraphNode) => void;
-  onCommitLeave: (node: GitGraphNode) => void;
+  onCommitHover?: (node: GitGraphNode) => void;
+  onCommitLeave?: (node: GitGraphNode) => void;
 };
 
 export default function GitGraphView({
@@ -26,8 +26,8 @@ export default function GitGraphView({
   virtualRows,
   totalHeight,
   renderer = "custom",
-  onCommitHover,
-  onCommitLeave,
+  onCommitHover = () => undefined,
+  onCommitLeave = () => undefined,
 }: GitGraphViewProps) {
   const model = useMemo(() => buildGitGraphModel(commits), [commits]);
 
