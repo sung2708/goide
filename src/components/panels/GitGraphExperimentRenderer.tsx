@@ -18,7 +18,7 @@ export default function GitGraphExperimentRenderer({
             .reverse()
             .forEach((node) => {
               history.commit({
-                hash: node.shortHash,
+                hash: node.hash,
                 subject: node.subject,
               });
             });
