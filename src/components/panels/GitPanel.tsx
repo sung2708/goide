@@ -6,6 +6,8 @@ import type {
   WorkspaceGitGraphCommit,
   WorkspaceGitSnapshot,
 } from "../../lib/ipc/types";
+import GitGraphView from "./GitGraphView";
+import type { GitGraphNode } from "./gitGraphModel";
 
 type GitPanelProps = {
   loading?: boolean;
@@ -33,46 +35,6 @@ function classifyStatus(status: string): GitFileSection {
   return "changes";
 }
 
-function parseRefs(rawRefs: string): string[] {
-  const trimmed = rawRefs.trim();
-  if (!trimmed.startsWith("(") || !trimmed.endsWith(")")) return [];
-  return trimmed.slice(1, -1).split(",").map((part) => part.trim()).filter(Boolean);
-}
-
-function splitRefs(refs: string[]) {
-  const tags = refs.filter((ref) => ref.startsWith("tag: "));
-  const remotes = refs.filter(
-    (ref) => ref.startsWith("origin/") || ref.startsWith("upstream/") || ref.startsWith("remotes/")
-  );
-  const branches = refs.filter((ref) => !tags.includes(ref) && !remotes.includes(ref) && ref !== "HEAD");
-  return { tags, remotes, branches };
-}
-
-function GraphLane({ prefix }: { prefix: string }) {
-  const chars = Array.from(prefix);
-  const commitLane = Math.max(0, chars.findIndex((char) => char === "*"));
-  const laneGap = 10;
-  const height = 26;
-  const width = Math.max(1, chars.length) * laneGap + 4;
-  return (
-    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} className="shrink-0">
-      {chars.map((char, index) => {
-        const x = 2 + index * laneGap;
-        if (char === "|" || char === "*") {
-          return <line key={`v-${index}`} x1={x} y1={3} x2={x} y2={23} stroke="var(--overlay0)" strokeWidth="1" />;
-        }
-        if (char === "/") {
-          return <line key={`f-${index}`} x1={x + laneGap} y1={3} x2={x} y2={23} stroke="var(--overlay0)" strokeWidth="1" />;
-        }
-        if (char === "\\") {
-          return <line key={`b-${index}`} x1={x} y1={3} x2={x + laneGap} y2={23} stroke="var(--overlay0)" strokeWidth="1" />;
-        }
-        return null;
-      })}
-      <circle cx={2 + commitLane * laneGap} cy={13} r={3.2} fill="var(--blue)" />
-    </svg>
-  );
-}
 
 export default function GitPanel({
   loading = false,
@@ -91,7 +53,7 @@ export default function GitPanel({
   const [commitMessage, setCommitMessage] = useState("");
   const [pendingFiles, setPendingFiles] = useState<Record<string, boolean>>({});
   const [activeCommitHash, setActiveCommitHash] = useState<string | null>(null);
-  const [activeGraphCommit, setActiveGraphCommit] = useState<WorkspaceGitGraphCommit | null>(null);
+  const [activeGraphCommit, setActiveGraphCommit] = useState<GitGraphNode | null>(null);
   const [detailCache, setDetailCache] = useState<Record<string, WorkspaceGitCommitDetail>>({});
   const [activeHistoryTab, setActiveHistoryTab] = useState<"commits" | "graph">("graph");
   const hoverTimerRef = useRef<number | null>(null);
@@ -150,6 +112,17 @@ export default function GitPanel({
         setDetailCache((prev) => ({ ...prev, [hash]: detail }));
       });
     }, 110);
+  };
+
+  const handleGraphCommitHover = (commit: GitGraphNode) => {
+    setActiveCommitHash(commit.hash);
+    setActiveGraphCommit(commit);
+    requestCommitDetail(commit.hash);
+  };
+
+  const handleGraphCommitLeave = (commit: GitGraphNode) => {
+    setActiveCommitHash((current) => (current === commit.hash ? null : current));
+    setActiveGraphCommit((current) => (current?.hash === commit.hash ? null : current));
   };
 
   const copyText = async (value: string) => {
@@ -308,41 +281,13 @@ export default function GitPanel({
                   <p className="px-2 py-2 text-[12px] text-(--overlay0)">No commit history.</p>
                 ) : (
                   <div ref={graphParentRef} className="max-h-56 overflow-auto">
-                    <div style={{ height: `${graphVirtualizer.getTotalSize()}px`, position: "relative" }}>
-                      {graphItems.map((item) => {
-                        const commit = graph[item.index];
-                        const refs = splitRefs(parseRefs(commit.refs));
-                        return (
-                          <div
-                            key={commit.hash}
-                            className="absolute left-0 top-0 flex h-[30px] w-full items-center gap-1 px-2 hover:bg-(--bg-hover)"
-                            style={{ transform: `translateY(${item.start}px)` }}
-                            onMouseEnter={() => {
-                              setActiveCommitHash(commit.hash);
-                              setActiveGraphCommit(commit);
-                              requestCommitDetail(commit.hash);
-                            }}
-                            onMouseLeave={() => {
-                              setActiveCommitHash((current) => (current === commit.hash ? null : current));
-                              setActiveGraphCommit((current) => (current?.hash === commit.hash ? null : current));
-                            }}
-                          >
-                            <GraphLane prefix={commit.graphPrefix} />
-                            <span className="min-w-0 flex-1 truncate text-[11px] text-(--subtext0)">{commit.subject}</span>
-                            {refs.branches.slice(0, 1).map((ref) => (
-                              <span key={`${commit.hash}-${ref}`} className="rounded bg-[rgba(136,192,208,0.12)] px-1 py-0.5 text-[9px] text-(--overlay1)">
-                                {ref}
-                              </span>
-                            ))}
-                            {refs.tags.slice(0, 1).map((ref) => (
-                              <span key={`${commit.hash}-${ref}`} className="rounded bg-[rgba(163,190,140,0.14)] px-1 py-0.5 text-[9px] text-(--overlay1)">
-                                {ref.replace("tag: ", "")}
-                              </span>
-                            ))}
-                          </div>
-                        );
-                      })}
-                    </div>
+                    <GitGraphView
+                      commits={graph}
+                      virtualRows={graphItems}
+                      totalHeight={graphVirtualizer.getTotalSize()}
+                      onCommitHover={handleGraphCommitHover}
+                      onCommitLeave={handleGraphCommitLeave}
+                    />
                   </div>
                 )}
               </div>
@@ -385,16 +330,11 @@ export default function GitPanel({
               Parents: {activeDetail.parents.slice(0, 3).join(", ")}
             </p>
           )}
-          {activeGraphCommit && (() => {
-            const refs = splitRefs(parseRefs(activeGraphCommit.refs));
-            const compactRefs = [...refs.branches, ...refs.remotes, ...refs.tags.map((tag) => tag.replace("tag: ", ""))];
-            if (compactRefs.length === 0) return null;
-            return (
-              <p className="mt-1 truncate text-[10px] text-(--overlay1)">
-                Refs: {compactRefs.slice(0, 4).join(", ")}
-              </p>
-            );
-          })()}
+          {activeGraphCommit && activeGraphCommit.refs.length > 0 && (
+            <p className="mt-1 truncate text-[10px] text-(--overlay1)">
+              Refs: {activeGraphCommit.refs.slice(0, 4).map((ref) => ref.name).join(", ")}
+            </p>
+          )}
           <p className="mt-1">{activeDetail.filesChanged} files, +{activeDetail.insertions} / -{activeDetail.deletions}</p>
           {activeDetail.body && <p className="mt-1 line-clamp-3 text-[10px] text-(--overlay1)">{activeDetail.body}</p>}
         </aside>
