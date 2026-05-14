@@ -19,12 +19,24 @@ function commit(overrides: Partial<WorkspaceGitGraphCommit>): WorkspaceGitGraphC
 }
 
 describe("parseGitRefs", () => {
-  it("splits local branches, remotes, tags, and skips HEAD", () => {
-    expect(parseGitRefs("(HEAD, develop, origin/develop, tag: v1.1.0, upstream/main)")).toEqual([
+  it("splits local branches, remotes, tags, and skips HEAD symbolic refs", () => {
+    expect(
+      parseGitRefs(
+        "(HEAD, HEAD -> main, develop, origin/develop, tag: v1.1.0, upstream/main, remotes/teamone/release)"
+      )
+    ).toEqual([
       { kind: "branch", name: "develop" },
       { kind: "remote", name: "origin/develop" },
       { kind: "tag", name: "v1.1.0" },
       { kind: "remote", name: "upstream/main" },
+      { kind: "remote", name: "remotes/teamone/release" },
+    ]);
+  });
+
+  it("keeps slash-named local branches and slash tags classified correctly", () => {
+    expect(parseGitRefs("(feature/login, tag: release/2026.05)")).toEqual([
+      { kind: "branch", name: "feature/login" },
+      { kind: "tag", name: "release/2026.05" },
     ]);
   });
 
@@ -84,5 +96,22 @@ describe("buildGitGraphModel", () => {
 
     expect(model.nodes).toHaveLength(1);
     expect(model.edges).toEqual([]);
+  });
+
+  it("preserves merge edge kind when first parent is outside the loaded history window", () => {
+    const model = buildGitGraphModel([
+      commit({
+        hash: "m",
+        shortHash: "m",
+        parents: ["missing-parent", "b"],
+        subject: "Merge with hidden first parent",
+      }),
+      commit({ hash: "b", shortHash: "b", parents: ["a"], subject: "Base" }),
+      commit({ hash: "a", shortHash: "a", parents: [], subject: "Initial" }),
+    ]);
+
+    expect(model.edges).toContainEqual(
+      expect.objectContaining({ fromHash: "m", toHash: "b", kind: "merge" })
+    );
   });
 });

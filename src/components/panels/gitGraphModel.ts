@@ -44,7 +44,7 @@ const LANE_COLORS = [
   "var(--teal)",
   "var(--orange)",
 ];
-const REMOTE_REF_PREFIXES = ["origin/", "upstream/"];
+const TAG_REF_PREFIX = "tag:";
 
 export function parseGitRefs(rawRefs: string): GitGraphRef[] {
   const trimmed = rawRefs.trim();
@@ -57,15 +57,33 @@ export function parseGitRefs(rawRefs: string): GitGraphRef[] {
     return [];
   }
 
-  return body
-    .split(",")
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0 && part !== "HEAD")
+  const rawParts = body.split(",").map((part) => part.trim());
+  const remoteNames = new Set(["origin", "upstream"]);
+  rawParts.forEach((part) => {
+    const match = /^([^/]+)\/HEAD\s*->/.exec(part);
+    if (match?.[1]) {
+      remoteNames.add(match[1]);
+    }
+  });
+
+  const parts = rawParts.filter(
+      (part) =>
+        part.length > 0 &&
+        part !== "HEAD" &&
+        !part.includes(" ->")
+    );
+
+  return parts
     .map((part): GitGraphRef => {
-      if (part.startsWith("tag:")) {
-        return { kind: "tag", name: part.slice("tag:".length).trim() };
+      if (part.startsWith(TAG_REF_PREFIX)) {
+        return { kind: "tag", name: part.slice(TAG_REF_PREFIX.length).trim() };
       }
-      if (REMOTE_REF_PREFIXES.some((prefix) => part.startsWith(prefix))) {
+      if (
+        part.startsWith("remotes/") ||
+        Array.from(remoteNames).some((remoteName) =>
+          part.startsWith(`${remoteName}/`)
+        )
+      ) {
         return { kind: "remote", name: part };
       }
       return { kind: "branch", name: part };
@@ -121,8 +139,7 @@ export function buildGitGraphModel(commits: WorkspaceGitGraphCommit[]): GitGraph
   });
 
   nodes.forEach((node) => {
-    const visibleParents = node.parents.filter((parentHash) => hashToNode.has(parentHash));
-    visibleParents.forEach((parentHash, index) => {
+    node.parents.forEach((parentHash, index) => {
       const parent = hashToNode.get(parentHash);
       if (!parent) {
         return;
