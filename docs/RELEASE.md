@@ -177,3 +177,7 @@ If a critical flaw or packaging corruption is discovered immediately after tag p
    - Resolve the issue on `main`.
    - Bump to a new patch or prerelease version (`0.x.y+1` or `0.x.y-alpha.N+1`).
    - Push the new tag to trigger a clean release pipeline.
+
+## Code Actions gate update (2026-10-03)
+
+Reviewed direct gopls edits and edit-only ApplyFix actions are implemented and tested, including actual native gopls queries. Full Code Actions support is incomplete: selection refactorings, interactive/other command workflows and resource operations still need dedicated ownership and review handling. The overall addendum and source-control acceptance gates remain open. Do not create or push a release tag from this checkpoint.

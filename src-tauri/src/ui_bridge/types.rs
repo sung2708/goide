@@ -1,3 +1,7 @@
+pub use crate::integration::code_actions::{
+    Action as LanguageCodeActionDto, PreviewRequest as LanguageCodeActionPreviewDto,
+    QueryRequest as LanguageCodeActionQueryDto,
+};
 pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
 pub use crate::integration::language::{
     Query as LanguageQueryDto, QueryResult as LanguageQueryResultDto,

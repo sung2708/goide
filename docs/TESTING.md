@@ -183,3 +183,9 @@ Sixty-six frontend tests passed across hover, CodeEditor and EditorShell languag
 ### Signature Help checkpoint (2026-10-03)
 
 Three native signature tests passed including a real installed-gopls query that identified the second argument from an unsaved buffer and left disk unchanged. Parser tests cover active-parameter overrides/defaults, absent parameters, ambiguous labels, UTF-16 astral ranges, invalid/reversed ranges and text budgets. Clippy with warnings denied passed. Seventy-two frontend language/editor/command tests passed; an additional focused test confirms explicit signature invocation, a null gopls response dismissing help and no continued queries outside that context. Real CodeMirror tests exercise debouncing, extension reconfiguration, aborted old requests and Escape. Hook tests exercise stable callback identity, current unsaved overlays, stale snapshots, cancellation and genuine tooling failures. Production build passed. These are focused feature checks, not release certification.
+
+## Reviewed Code Actions validation (2026-10-03)
+
+Frontend checks cover captured overlays/diagnostics, actual action selection, unsupported reasons, cancellation on close/unmount/context changes, honest native errors, editor-only atomic application, and the `Mod+.` command through EditorShell followed by baseline-preserving Save. Native checks cover bounded real action descriptions, stale/ambiguous selections, UTF-16 diagnostic ranges, duplicate workspace edits/resource-operation rejection, and the edit-only lazy-resolution allowlist.
+
+Explicit opt-in tests use installed Go/gopls to obtain Organize Imports and lazy Fill Struct actions, resolve/preview actual edits, and verify that the original disk files remain unchanged. Run `scripts/cargo_test_msvc.cmd integration::code_actions -- --include-ignored --test-threads=1` on Windows. These checks do not substitute for the unfinished release/platform acceptance matrix.

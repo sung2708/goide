@@ -322,3 +322,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - [x] Show automatic and explicit editor Signature Help, with loading/errors and appropriate dismissal.
 - [x] Preserve UTF-16 parameter highlights and reject obsolete results across document/view changes.
 - [ ] Complete reviewed general code actions, format/import save settings, module/toolchain workflows, structured tests and debugger inspection before the full addendum can be considered complete.
+
+## Code Actions implementation checkpoint (2026-10-03)
+
+- Delivered: keyboard/palette chooser populated by actual gopls actions, captured unsaved overlays and diagnostic context, cancellable requests, fresh server selection checks, reviewed direct edits and edit-only ApplyFix resolution.
+- Delivered: bounded cross-file capture followed by re-query against immutable overlays; atomic editor application preserves dirty state and original save baselines.
+- Remaining: selected-range refactorings, other edit-aware lazy commands, interactive actions, resource operations and command workflows. This checkpoint does not complete the feature addendum or authorize a release/tag.
