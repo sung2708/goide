@@ -209,3 +209,7 @@ Each meaningful milestone reports implemented/hardened work, tests, bugs found/f
 ### Run and Debug Process Ownership
 
 Go Run and Delve now use explicit owned-child identities and Windows child jobs. Completion of an old run cannot retire a replacement run. Run output is drained with bounded chunks and a visible 2 MiB per-stream truncation notice; Delve startup uses a bounded readiness channel. DAP headers and bodies reject oversized frames before allocation. Windows fixture tests cover parent exit, descendant cleanup, explicit stop and preservation of an unrelated process. Native app workflow checks and macOS/Linux lifecycle verification remain required; this milestone does not satisfy the full addendum or release gate.
+
+### Cached Quick Open and Retained Conflict Draft Safety
+
+Quick Open now reuses its workspace index until a filesystem revision changes, supports fuzzy filename matching and prioritizes recently opened files. Index traversal is bounded and partial failures are visible. The picker uses the shared modal dialog for keyboard focus. Explorer refuses moving/deleting paths containing retained conflict result drafts; edits arriving during conflict saves retain their buffer and advance their disk baseline for retry. Multi-document editing, Save All and the shared command registry are still pending P0 work.
