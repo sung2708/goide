@@ -56,6 +56,32 @@ pub async fn git_historical_diff(
 use crate::integration::git;
 
 #[tauri::command]
+pub async fn git_stash_list(workspace_root: String) -> ApiResponse<super::types::GitStashListDto> {
+    respond(
+        tauri::async_runtime::spawn_blocking(move || {
+            let root = git::repository_root(&workspace_root)?;
+            git::stash_list(&root)
+        })
+        .await,
+    )
+}
+
+#[tauri::command]
+pub async fn git_stash_preview(
+    workspace_root: String,
+    reference: String,
+    hash: String,
+) -> ApiResponse<GitFileDiffDto> {
+    respond(
+        tauri::async_runtime::spawn_blocking(move || {
+            let root = git::repository_root(&workspace_root)?;
+            git::stash_preview(&root, &reference, &hash)
+        })
+        .await,
+    )
+}
+
+#[tauri::command]
 pub async fn git_search_history(
     workspace_root: String,
     request: super::types::GitHistorySearchRequestDto,

@@ -581,7 +581,7 @@ pub use crate::integration::git::{
     CommitDetails as GitCommitDetailsDto, ConflictContent as GitConflictContentDto,
     FileDiff as GitFileDiffDto, HistoryPage as GitHistoryPageDto,
     HistorySearchRequest as GitHistorySearchRequestDto, Mutation as GitMutationDto,
-    RepositoryStatus as GitRepositoryStatusDto,
+    RepositoryStatus as GitRepositoryStatusDto, StashList as GitStashListDto,
 };
 pub use crate::integration::replacement::{
     ReplacementPlan as ReplacementPlanDto, ReplacementRequest as ReplacementRequestDto,

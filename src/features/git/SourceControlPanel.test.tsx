@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourceControlPanel from "./SourceControlPanel";
 import type { GitRepositoryStatus } from "../../lib/ipc/git";
-const { status, diff, mutate, history, cancel, search } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn(), search: vi.fn() }));
-vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel, searchGitHistory: search }));
+const { status, diff, mutate, history, cancel, search, stashes } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn(), search: vi.fn(), stashes: vi.fn() }));
+vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel, searchGitHistory: search, getGitStashList: stashes, getGitStashPreview: diff }));
 const data: GitRepositoryStatus = {
   root: "C:/repo", gitDir: "C:/repo/.git", gitVersion: "git version 2.50", branch: "main", head: "abc", upstream: "origin/main", ahead: 2, behind: 1, operation: null,
   remotes: ["origin"],
@@ -18,6 +18,7 @@ describe("Source Control vertical slice", () => {
   beforeEach(() => {
     vi.clearAllMocks(); status.mockResolvedValue({ ok: true, data }); mutate.mockResolvedValue({ ok: true });
     cancel.mockResolvedValue({ ok: true, data: true });
+    stashes.mockResolvedValue({ ok: true, data: { entries: [{ reference: "stash@{0}", hash: "a".repeat(40), date: "2026-10-03", message: "On main: saved" }], hasMore: false } });
     diff.mockResolvedValue({ ok: true, data: { path: "both.go", originalPath: null, patch: "@@ -1 +1 @@\n-old\n+new\n", binary: false, limited: false } });
     history.mockResolvedValue({ ok: true, data: { commits: [], tips: [], hasMore: false } });
     search.mockResolvedValue({ ok: true, data: { commits: [], tips: [], hasMore: false } });
@@ -33,6 +34,29 @@ describe("Source Control vertical slice", () => {
     expect(transaction.mock.calls[0][1]).toBe(false);
     await act(async () => { fireEvent.click(within(changed).getByRole("button", { name: "Stage both.go" })); });
     expect(transaction.mock.calls[1][1]).toBe(true);
+  });
+  it("honors repeated command view requests after local tab changes", async () => {
+    const view = render(<SourceControlPanel {...props} requestedView={{ view: "stashes", id: 1 }} />);
+    expect(await screen.findByRole("button", { name: "Drop stash@{0}" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Changes" }));
+    expect(await screen.findByRole("list", { name: "Staged changes" })).toBeInTheDocument();
+    view.rerender(<SourceControlPanel {...props} requestedView={{ view: "stashes", id: 2 }} />);
+    expect(await screen.findByRole("button", { name: "Drop stash@{0}" })).toBeInTheDocument();
+  });
+  it("routes stash file mutations through save/run guards and refreshes partially changed state on failure", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const changed = vi.fn(); mutate.mockResolvedValue({ ok: false, error: { message: "Apply conflict; stash retained" } });
+    render(<SourceControlPanel {...props} onChanged={changed} />);
+    await screen.findByRole("list", { name: "Changes" }); fireEvent.click(screen.getByRole("button", { name: "Stashes" }));
+    await screen.findByRole("button", { name: "Pop stash@{0}" });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Pop stash@{0}" })); });
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), true, true);
+    expect(changed).toHaveBeenCalledOnce(); expect(screen.getByRole("alert")).toHaveTextContent("stash retained");
+    expect(mutate).toHaveBeenCalledWith("C:/repo", expect.objectContaining({ kind: "stashPop", hash: "a".repeat(40) }));
+    transaction.mockClear(); mutate.mockResolvedValue({ ok: true });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Drop stash@{0}" })); });
+    expect(transaction).toHaveBeenCalledWith(expect.any(Function), false, false);
+    vi.restoreAllMocks();
   });
   it("commits only staged content, keeps the message on hook failure and allows retry", async () => {
     render(<SourceControlPanel {...props} />);

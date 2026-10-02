@@ -70,19 +70,22 @@ export function useSourceControl(root: string | null, revision: number, transact
     if (!root || mutationPending.current || !transaction) return false;
     mutationPending.current = true; cancellationRequested.current = false; setBusy(true); setOperationError(null);
     const session = epoch.current;
+    const changesFiles = ["pull", "discard", "deleteUntracked", "saveConflict", "stashPush", "stashApply", "stashPop"].includes(mutation.kind);
+    let started = false;
     let succeeded = false;
     try {
       await transaction(async () => {
         if (cancellationRequested.current) throw new Error("Git operation cancelled before execution. No Git mutation was started.");
+        started = true;
         const response = await mutateGit(root, mutation);
         if (!response.ok) throw new Error(response.error?.message ?? "Git operation failed.");
         succeeded = true;
-      }, ["stage", "pull", "discard", "deleteUntracked", "saveConflict"].includes(mutation.kind), ["pull", "discard", "deleteUntracked", "saveConflict"].includes(mutation.kind));
+      }, mutation.kind === "stage" || changesFiles, changesFiles);
       if (currentRoot.current !== root || epoch.current !== session) return false;
       if (succeeded) {
         diffGeneration.current++; setDiff(null);
         setOutput((lines) => [...lines.slice(-49), `${mutation.kind}: completed`]);
-        onChanged?.();
+        if (!changesFiles) onChanged?.();
       }
     } catch (err) {
       if (currentRoot.current === root && epoch.current === session) {
@@ -91,6 +94,7 @@ export function useSourceControl(root: string | null, revision: number, transact
       }
     } finally {
       mutationPending.current = false;
+      if (started && changesFiles && currentRoot.current === root && epoch.current === session) onChanged?.();
       if (currentRoot.current === root && epoch.current === session) { setBusy(false); await refresh(); }
     }
     return succeeded;
