@@ -9,6 +9,8 @@ import {
 } from "../../lib/ipc/client";
 import type { ShellOutputPayload } from "../../lib/ipc/types";
 import { createLatencyMetrics } from "../../features/perf/latencyMetrics";
+import { useShellTerminalOutput } from "../../features/terminal/useShellTerminalOutput";
+import { ShellWorkspaceOwnership } from "../../features/terminal/ShellWorkspaceOwnership";
 import TerminalSurface from "./TerminalSurface";
 import type { TerminalFocusOwner } from "./TerminalSurface";
 
@@ -56,6 +58,15 @@ function ShellTerminalView({
   const [shellError, setShellError] = useState<string | null>(null);
   const [isRetrying, setIsRetrying] = useState(false);
   const [isWorkspaceSwitching, setIsWorkspaceSwitching] = useState(false);
+  const [workspaceCleanupError, setWorkspaceCleanupError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
+  const currentRootRef = useRef(workspacePath); currentRootRef.current = workspacePath;
+  const ownershipRef = useRef<ShellWorkspaceOwnership | null>(null);
+  if (!ownershipRef.current) ownershipRef.current = new ShellWorkspaceOwnership(async id => {
+    const response = await disposeShellSession({ shellSessionId: id });
+    if (!response.ok) throw new Error(response.error?.message ?? "Terminal cleanup has not completed.");
+  });
+  const ownership = ownershipRef.current;
   /**
    * surfaceVersion increments each time the active session identity changes so
    * that TerminalSurface is forced to remount with a clean xterm instance.
@@ -64,7 +75,7 @@ function ShellTerminalView({
    */
   const [surfaceVersion, setSurfaceVersion] = useState(0);
 
-  const terminalRef = useRef<Terminal | null>(null);
+  const { terminalRef, pendingOutputBufferRef, scheduleTerminalFlush, enqueueTerminalWrite, clearPendingTerminalWrites } = useShellTerminalOutput();
   const shellSessionIdRef = useRef<string | null>(null);
   /**
    * Tracks the current cwdRelativePath without making it a session lifecycle
@@ -86,56 +97,12 @@ function ShellTerminalView({
    */
   const pendingReplayRef = useRef<string>("");
   const focusOwnerRef = useRef<TerminalFocusOwner>("editor");
-  const pendingOutputBufferRef = useRef<string[]>([]);
-  const pendingOutputFlushHandleRef = useRef<number | null>(null);
   const pendingInputTokensRef = useRef<string[]>([]);
   const inputTokenCounterRef = useRef(0);
   const latencyMetricsRef = useRef(createLatencyMetrics());
 
   // Keep ref in sync so event listener closures always see current value
   shellSessionIdRef.current = shellSessionId;
-
-  const flushTerminalWrites = useCallback(() => {
-    pendingOutputFlushHandleRef.current = null;
-    const terminal = terminalRef.current;
-    if (!terminal) {
-      return;
-    }
-    const chunks = pendingOutputBufferRef.current;
-    if (chunks.length === 0) {
-      return;
-    }
-    pendingOutputBufferRef.current = [];
-    terminal.write(chunks.join(""));
-  }, []);
-
-  const scheduleTerminalFlush = useCallback(() => {
-    if (pendingOutputFlushHandleRef.current !== null) {
-      return;
-    }
-    pendingOutputFlushHandleRef.current = window.requestAnimationFrame(() => {
-      flushTerminalWrites();
-    });
-  }, [flushTerminalWrites]);
-
-  const enqueueTerminalWrite = useCallback(
-    (chunk: string) => {
-      if (!chunk) {
-        return;
-      }
-      pendingOutputBufferRef.current.push(chunk);
-      scheduleTerminalFlush();
-    },
-    [scheduleTerminalFlush]
-  );
-
-  const clearPendingTerminalWrites = useCallback(() => {
-    if (pendingOutputFlushHandleRef.current !== null) {
-      window.cancelAnimationFrame(pendingOutputFlushHandleRef.current);
-      pendingOutputFlushHandleRef.current = null;
-    }
-    pendingOutputBufferRef.current = [];
-  }, []);
 
   const resetLatencyTracking = useCallback(() => {
     pendingInputTokensRef.current = [];
@@ -157,6 +124,7 @@ function ShellTerminalView({
     if (!id || !pendingCleanupRef.current.has(id)) return;
     const response = await disposeShellSession({ shellSessionId: id });
     if (!response.ok) throw new Error(response.error?.message ?? "Terminal cleanup has not completed.");
+    ownership.forget(id);
     pendingCleanupRef.current.delete(id);
     if (sessionMapRef.current.get(key) === id) sessionMapRef.current.delete(key);
   }, []);
@@ -167,52 +135,51 @@ function ShellTerminalView({
    */
   const activeWorkspaceRef = useRef<string | null>(null);
   const workspaceSwitchTokenRef = useRef(0);
+  const workspaceCleanupCountRef = useRef(0);
 
   // ---- Workspace-level disposal ----
-
-  useEffect(() => {
-    const prevWorkspace = activeWorkspaceRef.current;
-    const prevMap = sessionMapRef.current;
-
-    if (prevWorkspace !== null && prevWorkspace !== workspacePath) {
-      workspaceSwitchTokenRef.current += 1;
-      const switchToken = workspaceSwitchTokenRef.current;
-      setIsWorkspaceSwitching(true);
-      setShellSessionId(null);
-      setShellError(null);
-      pendingReplayRef.current = "";
-      clearPendingTerminalWrites();
-      resetLatencyTracking();
-      terminalRef.current = null;
-      // Force a fresh terminal host after workspace switch to avoid stale PTY bindings.
-      setSurfaceVersion((k) => k + 1);
-
-      // Workspace changed: dispose all sessions from the old workspace.
-      // Do this fire-and-forget; don't block the new session setup.
-      void (async () => {
-        await Promise.allSettled(
-          [...prevMap.values()].map((sessionId) =>
-            disposeShellSession({ shellSessionId: sessionId })
-          )
-        );
-        // Only clear the switching state if this is still the latest switch.
-        if (workspaceSwitchTokenRef.current === switchToken) {
-          setIsWorkspaceSwitching(false);
-        }
-      })();
-      // Reset the session map for the new workspace.
-      sessionMapRef.current = new Map();
-    } else if (prevWorkspace === null && workspacePath !== null) {
-      setIsWorkspaceSwitching(false);
+  const cleanupWorkspace = useCallback(async () => {
+    const switchToken = workspaceSwitchTokenRef.current;
+    workspaceCleanupCountRef.current++;
+    setIsWorkspaceSwitching(true); setWorkspaceCleanupError(null);
+    try {
+      await ownership.cleanupOutside(() => currentRootRef.current);
+      const currentIds = new Set(sessionMapRef.current.values());
+      for (const id of pendingCleanupRef.current) if (!currentIds.has(id)) pendingCleanupRef.current.delete(id);
     }
-
+    catch (error) {
+      if (mountedRef.current && switchToken === workspaceSwitchTokenRef.current) setWorkspaceCleanupError(error instanceof Error ? error.message : String(error));
+    } finally {
+      workspaceCleanupCountRef.current--;
+      if (mountedRef.current && switchToken === workspaceSwitchTokenRef.current) setIsWorkspaceSwitching(false);
+    }
+  }, [ownership]);
+  useEffect(() => {
+    const previous = activeWorkspaceRef.current;
     activeWorkspaceRef.current = workspacePath;
-  }, [workspacePath, clearPendingTerminalWrites, resetLatencyTracking]);
+    if (previous !== workspacePath) {
+      workspaceSwitchTokenRef.current++;
+      setShellSessionId(null); setShellError(null); pendingReplayRef.current = "";
+      clearPendingTerminalWrites(); resetLatencyTracking(); terminalRef.current = null;
+      setSurfaceVersion(value => value + 1);
+      sessionMapRef.current = new Map();
+      if (ownership.hasOutside(workspacePath) || workspaceCleanupCountRef.current > 0) void cleanupWorkspace();
+    }
+  }, [workspacePath, clearPendingTerminalWrites, resetLatencyTracking, ownership, cleanupWorkspace]);
+  useEffect(() => {
+    mountedRef.current = true; currentRootRef.current = workspacePath;
+    return () => {
+      mountedRef.current = false; currentRootRef.current = null; workspaceSwitchTokenRef.current++;
+      void ownership.cleanupOutside(() => currentRootRef.current).catch(error => console.error("Terminal cleanup on unmount failed; native ownership is retained:", error));
+    };
+    // Workspace changes are handled above; this cleanup belongs to actual unmount.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ownership]);
 
   // ---- Session lifecycle ----
 
   useEffect(() => {
-    if (!workspacePath || !surfaceKey || isWorkspaceSwitching) {
+    if (!workspacePath || !surfaceKey || isWorkspaceSwitching || ownership.hasOutside(workspacePath)) {
       setShellSessionId(null);
       setShellError(null);
       return;
@@ -240,13 +207,18 @@ function ShellTerminalView({
     const startSession = async () => {
       setShellError(null);
       const switchToken = workspaceSwitchTokenRef.current;
+      const sessionMap = sessionMapRef.current;
       try {
         await cleanupSurface(surfaceKey);
         if (cancelled || switchToken !== workspaceSwitchTokenRef.current) return;
-        const response = await ensureShellSession({
+        const response = await ownership.track(workspacePath, () => ensureShellSession({
           workspaceRoot: workspacePath,
-          surfaceKey: surfaceKey,
+          surfaceKey,
           cwdRelativePath: cwdRelativePathRef.current ?? undefined,
+        }), result => {
+          const id = result.ok ? result.data?.shellSessionId : undefined;
+          if (id) sessionMap.set(surfaceKey, id);
+          return id;
         });
 
         if (cancelled || switchToken !== workspaceSwitchTokenRef.current) {
@@ -292,7 +264,7 @@ function ShellTerminalView({
   // re-initialization when it changes (e.g. on file switches with a stable
   // workspace-owned surfaceKey).  The ref keeps it readable inside the effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking, cleanupSurface]);
+  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking, cleanupSurface, ownership]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -302,24 +274,22 @@ function ShellTerminalView({
 
     const setupExitListener = async () => {
       const dispose = await listen<{ shellSessionId: string; shellHealth?: "launch" | "degraded" | "exit" }>("shell-exit", (event) => {
-        if (event.payload.shellSessionId !== shellSessionIdRef.current) {
-          return;
-        }
-        // Successful cleanup removes the session; degraded cleanup retains ownership.
-        // Reflect the disconnect in the frontend so the user can retry.
-        setShellSessionId(null);
+        const id = event.payload.shellSessionId;
+        const isActive = id === shellSessionIdRef.current;
+        const isTracked = [...sessionMapRef.current.values()].includes(id);
+        if (!isActive && !isTracked) return;
         if (event.payload.shellHealth === "degraded") {
-          pendingCleanupRef.current.add(event.payload.shellSessionId);
-          setShellError("Terminal cleanup is pending or failed. Retry cleanup before reconnecting.");
+          pendingCleanupRef.current.add(id);
+          if (isActive) {
+            setShellSessionId(null);
+            setShellError("Terminal cleanup is pending or failed. Retry cleanup before reconnecting.");
+          }
           return;
         }
-        setShellError("Shell session ended unexpectedly.");
-        // Clean up our tracking map so retry creates a fresh session.
-        for (const [key, sid] of sessionMapRef.current) {
-          if (sid === event.payload.shellSessionId) {
-            sessionMapRef.current.delete(key);
-            break;
-          }
+        ownership.forget(id); pendingCleanupRef.current.delete(id);
+        for (const [key, session] of sessionMapRef.current) if (session === id) sessionMapRef.current.delete(key);
+        if (isActive) {
+          setShellSessionId(null); setShellError("Shell session ended unexpectedly.");
         }
       });
 
@@ -382,7 +352,7 @@ function ShellTerminalView({
   // ---- Retry handler ----
 
   const handleRetry = useCallback(async () => {
-    if (!workspacePath || !surfaceKey || isRetrying || isWorkspaceSwitching) {
+    if (!workspacePath || !surfaceKey || isRetrying || isWorkspaceSwitching || ownership.hasOutside(workspacePath)) {
       return;
     }
     setIsRetrying(true);
@@ -392,11 +362,11 @@ function ShellTerminalView({
     try {
       await cleanupSurface(surfaceKey);
       if (switchToken !== workspaceSwitchTokenRef.current) return;
-      const response = await ensureShellSession({
+      const response = await ownership.track(workspacePath, () => ensureShellSession({
         workspaceRoot: workspacePath,
-        surfaceKey: surfaceKey,
+        surfaceKey,
         cwdRelativePath: cwdRelativePathRef.current ?? undefined,
-      });
+      }), result => result.ok ? result.data?.shellSessionId : undefined);
       if (switchToken !== workspaceSwitchTokenRef.current) return;
       if (response.ok && response.data) {
         const newSessionId = response.data.shellSessionId;
@@ -410,7 +380,7 @@ function ShellTerminalView({
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking, cleanupSurface]);
+  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking, cleanupSurface, ownership]);
 
   // ---- Terminal callbacks ----
 
@@ -460,6 +430,9 @@ function ShellTerminalView({
 
   // ---- Empty state ----
 
+  if (workspaceCleanupError) {
+    return <div className="flex h-full flex-col items-center justify-center gap-3 p-4"><p role="alert">{workspaceCleanupError}</p><button disabled={isWorkspaceSwitching} onClick={() => void cleanupWorkspace()}>Retry terminal cleanup</button></div>;
+  }
   if (!workspacePath || !surfaceKey) {
     return (
       <div className="flex h-full items-center justify-center text-[13px] italic text-[var(--overlay0)]">
