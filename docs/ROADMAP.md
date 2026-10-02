@@ -335,3 +335,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: pending shell creation is retained until its response arrives, including workspace changes and actual unmount; stale successful setup is disposed rather than abandoned.
 - Delivered: serialized latest-root teardown handles returning to the original workspace during disposal; inactive successful exits clear stale session tracking.
 - Remaining: complete cross-platform process-tree acceptance, Windows spawn-to-job assignment gaps, Unix PTY descendant containment, and the other unfinished addendum/source-control gates. No release/tag is authorized.
+
+## Settings and save preparation checkpoint (2026-10-03)
+
+- Delivered: typed application settings with defaults, validation, versioned persistence, legacy theme migration, explicit corrupt-profile reset, searchable controls and immediate editor/terminal/theme updates.
+- Delivered: selectable Auto Save modes/delay and optional imports-then-format preparation through the canonical document save paths, retaining original disk baselines and newer edits.
+- Delivered: explicit save-preparation cancellation, source-context checks and unmount protection before disk writes.
+- Remaining: meaningful Debug/Git settings, native executable configuration/toolchain/module workflows, session restoration and the other unfinished Git/addendum gates. This checkpoint does not authorize a release or tag.

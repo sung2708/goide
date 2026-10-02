@@ -58,3 +58,11 @@ it("reports native cancellation failures with their captured workspace", async (
   });
   expect(report).toHaveBeenCalledWith(expect.stringContaining("C:/original: registry unavailable"));
 });
+
+it("does not cancel a newly captured request when an earlier render catches up", () => {
+  cancelMock.mockClear(); const next = { root: "repo", version: 2 };
+  const hook = renderHook(({ snapshot }) => useLanguageCancellation(snapshot), { initialProps: { snapshot: { root: "repo", version: 1 } } });
+  act(() => { hook.result.current.begin("repo", next); }); hook.rerender({ snapshot: next });
+  expect(cancelMock).not.toHaveBeenCalled();
+  hook.rerender({ snapshot: { root: "repo", version: 3 } }); expect(cancelMock).toHaveBeenCalledOnce();
+});

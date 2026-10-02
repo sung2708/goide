@@ -5,7 +5,7 @@
  * component must render a local inline error message rather than propagating
  * the exception to the React tree (which would unmount the entire subtree).
  */
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Use inline factory with vi.fn() so hoisting works correctly.
@@ -34,6 +34,7 @@ vi.mock("@xterm/addon-fit", () => ({
 import { Terminal as TerminalAny } from "@xterm/xterm";
 import { FitAddon as FitAddonAny } from "@xterm/addon-fit";
 import TerminalSurface from "./TerminalSurface";
+import { settingsStore } from "../../features/settings/SettingsStore";
 
 // Typed as vi mock functions (they are, due to vi.mock factory above).
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,6 +115,24 @@ describe("TerminalSurface — default terminal options", () => {
       document.documentElement.style.removeProperty("--crust");
       document.documentElement.style.removeProperty("--text");
       delete document.documentElement.dataset.theme;
+    }
+  });
+
+  it("applies terminal font preferences without replacing the live terminal", async () => {
+    const instance = makeTerminalInstance();
+    const fit = makeFitAddonInstance();
+    MockedTerminal.mockImplementation(() => instance);
+    MockedFitAddon.mockImplementation(() => fit);
+    const view = render(<TerminalSurface />);
+    try {
+      act(() => settingsStore.update("terminal.fontSize", 18));
+      await waitFor(() => expect(instance.options.fontSize).toBe(18));
+      await waitFor(() => expect(fit.fit).toHaveBeenCalled());
+      expect(instance.open).toHaveBeenCalledTimes(1);
+      expect(instance.dispose).not.toHaveBeenCalled();
+    } finally {
+      view.unmount();
+      settingsStore.reset();
     }
   });
 });

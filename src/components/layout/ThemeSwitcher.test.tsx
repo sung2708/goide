@@ -1,12 +1,14 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { SETTINGS_STORAGE_KEY, settingsStore } from "../../features/settings/SettingsStore";
 import ThemeSwitcher, { THEME_STORAGE_KEY } from "./ThemeSwitcher";
 
 describe("Color theme preference", () => {
-  beforeEach(() => localStorage.removeItem(THEME_STORAGE_KEY));
+  beforeEach(() => { localStorage.removeItem(THEME_STORAGE_KEY); localStorage.removeItem(SETTINGS_STORAGE_KEY); settingsStore.refresh(); });
   afterEach(() => {
     vi.restoreAllMocks();
     localStorage.removeItem(THEME_STORAGE_KEY);
+    localStorage.removeItem(SETTINGS_STORAGE_KEY); settingsStore.refresh();
     delete document.documentElement.dataset.theme;
   });
 

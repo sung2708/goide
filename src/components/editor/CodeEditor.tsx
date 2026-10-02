@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useSettings } from "../../features/settings/useSettings";
 import CodeMirror from "@uiw/react-codemirror";
 import { preserveExternalSelection, synchronizeControlledDocument } from "../../features/documents/preserveSelection";
 import {
@@ -642,6 +643,7 @@ function CodeEditor({
   suppressFindWidget = false,
   externalSearchQuery = null,
 }: CodeEditorProps) {
+  const { values: settings } = useSettings();
   const [editorView, setEditorView] = useState<EditorView | null>(null);
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -1019,7 +1021,9 @@ function CodeEditor({
     breakpointField,
     inlineDiagnosticField,
     EditorState.readOnly.of(!editable),
-    EditorState.tabSize.of(4),
+    EditorState.tabSize.of(settings["editor.tabSize"]),
+    EditorView.theme({ "&": { fontSize: `${settings["editor.fontSize"]}px` } }),
+    ...(settings["editor.wordWrap"] ? [EditorView.lineWrapping] : []),
     EditorView.editable.of(editable),
     history(),
     search(),
@@ -1182,6 +1186,7 @@ function CodeEditor({
       }
     })
   ], [
+    settings,
     counterpartLine,
     editable,
     goplsCompletionSource,
