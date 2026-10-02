@@ -71,7 +71,7 @@ let shellOutputListener:
   | ((event: { payload: { shellSessionId: string; data: string } }) => void)
   | null = null;
 let shellExitListener:
-  | ((event: { payload: { shellSessionId: string } }) => void)
+  | ((event: { payload: { shellSessionId: string; shellHealth?: "degraded" | "exit" } }) => void)
   | null = null;
 
 const listenMock = vi.fn(
@@ -501,6 +501,23 @@ describe("ShellTerminalView", () => {
   });
 
   // ---- shell-exit event (PTY died unexpectedly) ----
+
+  it("retries failed cleanup before reconnecting and keeps cleanup failures visible", async () => {
+    const user = userEvent.setup();
+    render(<ShellTerminalView workspacePath="/workspace" surfaceKey="terminal" />);
+    await waitFor(() => expect(shellExitListener).not.toBeNull());
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(1));
+    act(() => { shellExitListener?.({ payload: { shellSessionId: "session-abc", shellHealth: "degraded" } }); });
+    expect(await screen.findByText(/cleanup is pending or failed/i)).toBeInTheDocument();
+    disposeShellSessionMock.mockResolvedValueOnce({ ok: false, error: { message: "reader is still stopping" } });
+    await user.click(screen.getByRole("button", { name: /retry shell session/i }));
+    expect(await screen.findByText("reader is still stopping")).toBeInTheDocument();
+    expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+    expect(disposeShellSessionMock).toHaveBeenLastCalledWith({ shellSessionId: "session-abc" });
+    await user.click(screen.getByRole("button", { name: /retry shell session/i }));
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("terminal-surface")).toBeInTheDocument();
+  });
 
   it("shows disconnected error state when shell-exit event fires for active session", async () => {
     render(

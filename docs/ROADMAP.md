@@ -296,3 +296,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - [x] Bound the whole native language operation, interrupt queued lock acquisition and pending protocol waits, and preserve a reusable gopls session after cancellation.
 - [ ] Extend native cancellation to automatic completion and remaining legacy language/tool paths.
 - [ ] Finish automatic hover/signature help, save preferences and the remaining source-control/addendum requirements before release. No release tag is authorized by this checkpoint.
+
+### Terminal ownership checkpoint (2026-10-03)
+
+- [x] Register Windows terminal shells in individual Job Objects and stop registered descendants on explicit disposal and owner drop.
+- [x] Observe natural root exit independently of terminal EOF and run it through serialized cleanup.
+- [x] Close PTY resources and join readers; preserve cleanup ownership and block replacement after timeouts.
+- [ ] Verify/finalize Unix session descendants and the Windows spawn-to-registration interval before marking the entire process-ownership release gate complete.

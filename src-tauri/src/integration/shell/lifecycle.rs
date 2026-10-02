@@ -2,6 +2,9 @@ use super::ShellSessionStore;
 use anyhow::{anyhow, Context, Result};
 use std::time::Duration;
 
+#[cfg(all(test, windows))]
+mod pty_tests;
+
 /// Remove a session only after its root has been stopped and reaped.
 pub async fn dispose_shell_session_inner(store: ShellSessionStore, id: &str) -> Result<()> {
     dispose_with_timeout(store, id, Duration::from_secs(10)).await
@@ -80,6 +83,40 @@ mod tests {
         fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
             None
         }
+    }
+
+    #[tokio::test]
+    async fn reader_join_timeout_keeps_cleanup_owned_until_the_reader_finishes() {
+        let store = ShellSessionStore::default();
+        let created = ensure_shell_session_for_test(&store, "repo", "surface", None)
+            .await
+            .unwrap();
+        let (release, receiver) = mpsc::channel();
+        {
+            let mut state = store.lock().await;
+            let session = state.sessions.get_mut(&created.shell_session_id).unwrap();
+            session.reader_task.take().unwrap().join().unwrap();
+            session.reader_task = Some(std::thread::spawn(move || {
+                receiver.recv().unwrap();
+            }));
+        }
+        let result = dispose_with_timeout(
+            store.clone(),
+            &created.shell_session_id,
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("session remains owned"));
+        assert!(store.try_lock().is_err());
+        release.send(()).unwrap();
+        let state = tokio::time::timeout(Duration::from_secs(2), store.lock())
+            .await
+            .unwrap();
+        assert!(state.sessions.is_empty());
+        assert!(state.surface_to_shell.is_empty());
     }
 
     #[tokio::test]
