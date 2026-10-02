@@ -12,6 +12,7 @@ import { useSaveDecision } from "../../features/documents/useSaveDecision";
 import { buildProblems, diagnosticProblems, type Problem } from "../../features/problems/model";
 import { useLanguageQueries } from "../../features/language/useLanguageQueries";
 import LanguageResults from "../../features/language/LanguageResults";
+import { useEditorHover } from "../../features/language/useEditorHover";
 import { useLanguageEditReview } from "../../features/language/useLanguageEditReview";
 import LanguageEditReview from "../../features/language/LanguageEditReview";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
@@ -384,6 +385,7 @@ function EditorShell() {
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
   const language = useLanguageQueries(documentSnapshot, cursorOffset, setFileError);
+  const requestEditorHover = useEditorHover(documentSnapshot, setFileError);
   const languageEdits = useLanguageEditReview(documents, documentSnapshot, () => {
     if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
     setProblemRun(null);
@@ -2528,6 +2530,7 @@ function EditorShell() {
                             onSave={(content) => { latestEditorContentRef.current = content; void executeCommand("file.save"); }}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
+                            onRequestHover={requestEditorHover}
                             externalSearchQuery={editorHighlightQuery}
                             onDocumentSymbolsChange={(symbols) => {
                               setDocumentSymbols(symbols);

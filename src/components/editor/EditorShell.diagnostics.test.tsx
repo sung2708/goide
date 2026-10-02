@@ -75,6 +75,7 @@ vi.mock("./CodeEditor", () => ({
     onSave,
     onChange,
     onCursorOffsetChange,
+    onRequestHover,
     jumpRequest,
     value,
   }: {
@@ -82,11 +83,13 @@ vi.mock("./CodeEditor", () => ({
     onSave?: (content: string) => void;
     onChange?: (content: string) => void;
     onCursorOffsetChange?: (offset: number) => void;
+    onRequestHover?: (request: { offset: number; content: string; signal: AbortSignal }) => Promise<unknown>;
     jumpRequest?: { line: number; column?: number } | null;
     value: string;
   }) => (
     <div data-testid="mock-code-editor">
       <button onClick={() => onCursorOffsetChange?.(8)}>Place Cursor</button>
+      <button onClick={() => void onRequestHover?.({ offset: 8, content: value, signal: new AbortController().signal })}>Hover Symbol</button>
       <output data-testid="jump-position">{jumpRequest ? `${jumpRequest.line}:${jumpRequest.column}` : "none"}</output>
       <output data-testid="editor-value">{value}</output>
       <button type="button" onClick={() => onSave?.("package main\nfunc main() {}\n")}>
@@ -161,6 +164,21 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() => expect(screen.getByTestId("jump-position")).toHaveTextContent("2:7"));
     expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go");
     expect(screen.getByRole("tab", { name: /helper.go/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("queries editor hover directly without opening a modal or modifying the document", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    queryWorkspaceLanguageMock.mockResolvedValue({ ok: true, data: { text: "package main", locations: [], outsideWorkspace: 0 } });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(screen.getByRole("button", { name: "Hover Symbol" }));
+    expect(queryWorkspaceLanguageMock).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.any(String), kind: "hover", relativePath: "main.go", line: 1, column: 9 }));
+    expect(screen.queryByRole("dialog", { name: "Symbol Information" })).toBeNull();
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
   });
 
   it("reviews Format Document before editing and saves the applied result against its old disk baseline", async () => {
