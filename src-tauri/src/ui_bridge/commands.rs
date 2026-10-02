@@ -64,7 +64,7 @@ struct RuntimeSignalStore {
 }
 
 struct DapSessionHandle {
-    child: tokio::process::Child,
+    child: crate::integration::process_job::OwnedChild,
     stop_tx: oneshot::Sender<()>,
     control_tx: mpsc::UnboundedSender<DebuggerControlCommand>,
     sampler_task: tokio::task::JoinHandle<()>,
@@ -116,9 +116,7 @@ async fn stop_dap_session(session: DapSessionHandle) -> Result<(), String> {
     let mut sampler_task = sampler_task;
 
     let _ = stop_tx.send(());
-    let stopped = crate::integration::process::kill_process_group(&mut child)
-        .await
-        .map_err(|e| e.to_string());
+    let stopped = child.stop().await;
     let timeout_result = tokio::time::timeout(Duration::from_secs(1), &mut sampler_task).await;
     if timeout_result.is_err() {
         // The sampler task did not complete within the timeout, abort it.
@@ -330,27 +328,13 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
     ApiResponse::ok(())
 }
 
-#[cfg(windows)]
-async fn kill_process_group(child: &mut tokio::process::Child) -> Result<(), String> {
-    crate::integration::process::kill_process_group(child)
-        .await
-        .map_err(|e| e.to_string())
-}
-
-#[cfg(not(windows))]
-async fn kill_process_group(child: &mut tokio::process::Child) -> Result<(), String> {
-    crate::integration::process::kill_process_group(child)
-        .await
-        .map_err(|e| e.to_string())
-}
-
 #[tauri::command]
 pub async fn stop_current_run() -> ApiResponse<()> {
     let handle = get_process_handle();
     let mut guard = handle.lock().await;
 
     if let Some(child) = guard.as_mut() {
-        if let Err(error) = kill_process_group(child).await {
+        if let Err(error) = child.stop().await {
             return ApiResponse::err("run_stop_failed", &error);
         }
     }
