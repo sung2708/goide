@@ -139,6 +139,67 @@ fn history_search_uses_literal_messages_authors_verified_hashes_and_pinned_scope
 }
 
 #[test]
+fn file_history_follows_renames_and_deleted_literal_paths_without_glob_collisions() {
+    let repo = Repo::new();
+    repo.write("old [ab].go", b"package main\n");
+    repo.write("old a.go", b"unrelated\n");
+    repo.stage(&["old [ab].go", "old a.go"]);
+    repo.commit("Original files");
+    let first = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.git(&["mv", "--", "old [ab].go", "space Ω [ab].go"]);
+    repo.commit("Rename exact file");
+    let renamed = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.write("old a.go", b"collision changed\n");
+    repo.stage(&["old a.go"]);
+    repo.commit("Unrelated glob collision");
+    let search = |text: &str| {
+        search_history(
+            &repo.0,
+            HistorySearchRequest {
+                field: HistorySearchField::File,
+                text: text.into(),
+                offset: 0,
+                tips: vec![],
+            },
+        )
+    };
+    let results = search("space Ω [ab].go").unwrap();
+    assert_eq!(
+        results
+            .commits
+            .iter()
+            .map(|commit| &commit.hash)
+            .collect::<Vec<_>>(),
+        vec![&renamed, &first]
+    );
+    repo.git(&["rm", "--", "space Ω [ab].go"]);
+    repo.commit("Delete exact file");
+    let deleted = search("space Ω [ab].go").unwrap();
+    assert_eq!(deleted.commits.len(), 3);
+    assert_eq!(deleted.commits[0].subject, "Delete exact file");
+    let older = search_history(
+        &repo.0,
+        HistorySearchRequest {
+            field: HistorySearchField::File,
+            text: "space Ω [ab].go".into(),
+            offset: 1,
+            tips: deleted.tips,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        older
+            .commits
+            .iter()
+            .map(|commit| &commit.hash)
+            .collect::<Vec<_>>(),
+        vec![&renamed, &first]
+    );
+    assert!(search("../outside.go").is_err());
+    assert!(search(".").is_err());
+}
+
+#[test]
 fn real_repo_initial_stage_unstage_and_commit_only_index() {
     let repo = Repo::new();
     let initial = repository_status(&repo.0).unwrap();
