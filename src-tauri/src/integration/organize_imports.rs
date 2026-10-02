@@ -13,6 +13,7 @@ use std::path::Path;
 pub fn organize(request: FormatRequest) -> Result<EditPlan> {
     let path = request.relative_path.clone();
     let query = language::Query {
+        request_id: request.request_id,
         workspace_root: request.workspace_root,
         relative_path: request.relative_path,
         line: 1,
@@ -233,6 +234,7 @@ mod tests {
         std::fs::write(root.join("main.go"), disk).unwrap();
         let before = "package main\nimport \"os\"\nfunc main() { fmt.Println(\"hello\") }\n";
         let result = organize(FormatRequest {
+            request_id: None,
             workspace_root: root.to_string_lossy().to_string(),
             relative_path: "main.go".into(),
             buffers: vec![language::Buffer {

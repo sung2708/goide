@@ -6,7 +6,8 @@ import LanguageEditReview from "./LanguageEditReview";
 const formatMock = vi.hoisted(() => vi.fn());
 const importsMock = vi.hoisted(() => vi.fn());
 const renameMock = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock, organizeWorkspaceImports: importsMock, previewWorkspaceRename: renameMock }));
+const cancelMock = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, data: true }));
+vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock, organizeWorkspaceImports: importsMock, previewWorkspaceRename: renameMock, cancelLanguageRequest: cancelMock }));
 
 it("requires review before editing and retains the original save baseline", async () => {
   const session = new DocumentSession(); session.reset("repo"); const doc = session.open("main.go", "disk"); session.edit(doc.id, "unsaved");
@@ -24,6 +25,7 @@ it("Cancel and late results after edits do not change buffers", async () => {
   const hook = renderHook(({ snapshot }) => useLanguageEditReview(session, snapshot, vi.fn()), { initialProps: { snapshot: session.snapshot() } });
   let pending!: Promise<void>; act(() => { pending = hook.result.current.format(); });
   act(() => hook.result.current.close());
+  expect(cancelMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: "repo", requestId: expect.any(String) }));
   await act(async () => { resolve({ ok: true, data: { files: [{ path: "main.go", before: "disk", after: "obsolete", readOnly: false }] } }); await pending; });
   expect(hook.result.current.state).toBeNull(); expect(session.active?.text).toBe("disk");
   act(() => { pending = hook.result.current.format(); });

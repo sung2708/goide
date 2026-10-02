@@ -1,6 +1,24 @@
 use super::types::{ApiResponse, LanguageQueryDto, LanguageQueryResultDto};
 
 #[tauri::command]
+pub async fn cancel_language_request(
+    request: super::types::LanguageCancelRequestDto,
+) -> ApiResponse<bool> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::integration::gopls::normalize_platform_pathbuf(
+            std::path::Path::new(&request.workspace_root).canonicalize()?,
+        );
+        crate::integration::language_requests::cancel(&root, &request.request_id)
+    })
+    .await
+    {
+        Ok(Ok(cancelled)) => ApiResponse::ok(cancelled),
+        Ok(Err(error)) => ApiResponse::err("language_cancel_failed", &format!("{error:#}")),
+        Err(error) => ApiResponse::err("language_cancel_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn preview_workspace_rename(
     request: super::types::LanguageRenameRequestDto,
 ) -> ApiResponse<super::types::LanguageRenamePlanDto> {

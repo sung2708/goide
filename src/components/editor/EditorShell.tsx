@@ -383,7 +383,7 @@ function EditorShell() {
   const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
-  const language = useLanguageQueries(documentSnapshot, cursorOffset);
+  const language = useLanguageQueries(documentSnapshot, cursorOffset, setFileError);
   const languageEdits = useLanguageEditReview(documents, documentSnapshot, () => {
     if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
     setProblemRun(null);
@@ -392,7 +392,7 @@ function EditorShell() {
     resetCompletionAvailability();
     setSaveStatus("idle");
     setAnalysisRevision(revision => revision + 1);
-  }, cursorOffset);
+  }, cursorOffset, setFileError);
   const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;

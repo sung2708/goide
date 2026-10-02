@@ -7,6 +7,7 @@ pub mod git;
 pub mod gopls;
 pub mod language;
 pub mod language_edits;
+pub mod language_requests;
 pub mod lifecycle;
 pub mod lsp_manager;
 pub mod organize_imports;
