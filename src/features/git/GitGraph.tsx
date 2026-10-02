@@ -4,6 +4,7 @@ import { layoutGraph } from "./graphLayout";
 import { rendererModel } from "./graphRendererModel";
 import GitGraphCustomRenderer from "../../components/panels/GitGraphCustomRenderer";
 import CommitDetailsView from "./CommitDetailsView";
+import GitHistorySearch from "./GitHistorySearch";
 
 const ROW = 36;
 
@@ -16,6 +17,7 @@ export default function GitGraph({ root }: { root: string }) {
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<GitHistoryCommit | null>(null);
   const [scroll, setScroll] = useState(0);
+  const [searching, setSearching] = useState(false);
   const generation = useRef(0);
   const pending = useRef(false);
   const rows = useMemo(() => layoutGraph(commits), [commits]);
@@ -39,7 +41,8 @@ export default function GitGraph({ root }: { root: string }) {
   const first = Math.max(0, Math.floor(scroll / ROW) - 3);
   const visible = rows.slice(first, first + 24);
   return <section aria-label="Git Graph" className="flex min-h-0 flex-1 flex-col">
-    <header className="flex items-center justify-between border-b border-(--border-muted) px-3 py-2 text-xs"><span>Git Graph · {commits.length} loaded</span><button aria-label="Refresh Git Graph" disabled={loading} onClick={() => void load(true)}>↻</button></header>
+    <header className="flex items-center justify-between border-b border-(--border-muted) px-3 py-2 text-xs"><span>Git Graph · {commits.length} loaded</span><button aria-pressed={searching} onClick={() => setSearching(value => !value)}>Search commits</button><button aria-label="Refresh Git Graph" disabled={loading} onClick={() => { setSearching(false); void load(true); }}>↻</button></header>
+    {searching && <GitHistorySearch key={root} root={root} tips={tips} onSelect={setSelected} onClose={() => setSearching(false)} />}
     {error && <p role="alert" className="p-3 text-xs text-(--red)">{error}</p>}
     {!loading && !error && !commits.length && <p className="p-3 text-xs">No commits yet.</p>}
     <div className="min-h-0 flex-1 overflow-auto" style={{ maxHeight: 600 }} onScroll={(event) => setScroll(event.currentTarget.scrollTop)}>
