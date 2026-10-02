@@ -534,6 +534,11 @@ pub async fn get_active_file_completions(
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = crate::integration::gopls::normalize_platform_pathbuf(
+            std::path::Path::new(&request.workspace_root).canonicalize()?,
+        );
+        let _scope =
+            crate::integration::language_requests::begin(&root, request.request_id.as_deref())?;
         gopls::get_file_completions(
             &request.workspace_root,
             &request.relative_path,

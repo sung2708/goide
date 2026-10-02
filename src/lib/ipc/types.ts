@@ -54,6 +54,7 @@ export type AnalyzeConcurrencyRequest = {
 };
 
 export type CompletionRequest = {
+  requestId?: string;
   workspaceRoot: string;
   relativePath: string;
   line: number;
