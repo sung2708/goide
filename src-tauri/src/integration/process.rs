@@ -1,14 +1,41 @@
 use crate::integration::command::tokio_command;
+use crate::integration::process_job::OwnedChild;
 use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::Mutex;
 
 /// A running go process handle, shared across async tasks.
-pub type ProcessHandle = Arc<Mutex<Option<Child>>>;
+pub type ProcessHandle = Arc<Mutex<Option<OwnedChild>>>;
+pub(crate) async fn wait_for_owned_exit(
+    handle: &ProcessHandle,
+    owner: uuid::Uuid,
+) -> Result<Option<i32>, String> {
+    loop {
+        let mut guard = handle.lock().await;
+        let Some(child) = guard.as_mut() else {
+            return Ok(None);
+        };
+        if child.identity() != owner {
+            return Ok(None);
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                drop(guard.take());
+                return Ok(status.code());
+            }
+            Ok(None) => {}
+            Err(error) => {
+                drop(guard.take());
+                return Err(format!("Unable to inspect owned process: {error}"));
+            }
+        }
+        drop(guard);
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunMode {
@@ -145,7 +172,7 @@ pub async fn run_go_file<R: tauri::Runtime>(
     {
         let mut guard = process_handle.lock().await;
         if let Some(child) = guard.as_mut() {
-            kill_process_group(child).await?;
+            child.stop().await.map_err(|error| anyhow!(error))?;
         }
         *guard = None;
     }
@@ -158,7 +185,7 @@ pub async fn run_go_file<R: tauri::Runtime>(
     let mut command = tokio_command("go");
     #[cfg(unix)]
     command.process_group(0);
-    let mut child = command
+    let child = command
         .args(&args)
         .current_dir(&workspace_root)
         .env("TERM", "xterm-256color")
@@ -169,10 +196,13 @@ pub async fn run_go_file<R: tauri::Runtime>(
         .kill_on_drop(true)
         .spawn()
         .with_context(|| "failed to spawn `go run` — is `go` in PATH?")?;
+    let mut child = OwnedChild::new(child)
+        .await
+        .map_err(|error| anyhow!(error))?;
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;
-    let run_child_pid = child.id();
+    let run_owner_id = child.identity();
 
     // Store the child in the shared handle
     {
@@ -191,8 +221,7 @@ pub async fn run_go_file<R: tauri::Runtime>(
 
     // Stream stdout
     let stdout_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
+        if let Err(error) = crate::integration::output::stream_lines(stdout, |line| {
             let _ = app_stdout.emit(
                 "run-output",
                 RunOutputPayload {
@@ -202,13 +231,20 @@ pub async fn run_go_file<R: tauri::Runtime>(
                     exit_code: None,
                 },
             );
+        })
+        .await
+        {
+            emit_run_failure(
+                &app_stdout,
+                &run_id_stdout,
+                &format!("Unable to drain process stdout: {error}"),
+            );
         }
     });
 
     // Stream stderr
     let stderr_task = tokio::spawn(async move {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = reader.next_line().await {
+        if let Err(error) = crate::integration::output::stream_lines(stderr, |line| {
             let _ = app_stderr.emit(
                 "run-output",
                 RunOutputPayload {
@@ -218,29 +254,27 @@ pub async fn run_go_file<R: tauri::Runtime>(
                     exit_code: None,
                 },
             );
+        })
+        .await
+        {
+            emit_run_failure(
+                &app_stderr,
+                &run_id_stderr,
+                &format!("Unable to drain process stderr: {error}"),
+            );
         }
     });
 
-    // Wait for both streams to finish, then wait for process exit
-    let _ = tokio::join!(stdout_task, stderr_task);
-
-    let exit_code = {
-        let mut guard = handle_exit.lock().await;
-        if let Some(child) = guard.as_mut() {
-            if child.id() != run_child_pid {
-                None
-            } else if let Some(mut owned_child) = guard.take() {
-                match owned_child.wait().await {
-                    Ok(status) => status.code(),
-                    Err(_) => None,
-                }
-            } else {
-                None
-            }
-        } else {
+    // Observe the parent independently of its pipes. A descendant may retain
+    // stdout after the parent exits; dropping the owner closes that subtree.
+    let exit_code = match wait_for_owned_exit(&handle_exit, run_owner_id).await {
+        Ok(code) => code,
+        Err(error) => {
+            emit_run_failure(&app_exit, &run_id_exit, &error);
             None
         }
     };
+    let _ = tokio::join!(stdout_task, stderr_task);
 
     let _ = app_exit.emit(
         "run-output",
