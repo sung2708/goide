@@ -27,6 +27,8 @@ pub struct Buffer {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Query {
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub workspace_root: String,
     pub relative_path: String,
     pub line: usize,
@@ -114,10 +116,13 @@ pub fn with_documents<T>(
         ));
     }
     let root = normalize_platform_pathbuf(Path::new(&request.workspace_root).canonicalize()?);
+    let _request = super::language_requests::begin(&root, request.request_id.as_deref())?;
+    super::language_requests::check()?;
     let target = scoped_file(&root, &request.relative_path)?;
     let mut buffers = Vec::new();
     let mut paths = HashSet::new();
     for buffer in &request.buffers {
+        super::language_requests::check()?;
         let file = scoped_file(&root, &buffer.path)?;
         if buffer.content.contains('\0') || !paths.insert(file.clone()) {
             return Err(anyhow!("Invalid or duplicate language query buffer."));
@@ -153,9 +158,18 @@ pub fn with_documents<T>(
         return Err(anyhow!("Language query column is outside the document."));
     }
     let handle = lsp_manager::get_lsp_session();
-    let mut guard = handle
-        .lock()
-        .map_err(|_| anyhow!("Language server lock poisoned"))?;
+    let mut guard = loop {
+        super::language_requests::check()?;
+        match handle.try_lock() {
+            Ok(guard) => break guard,
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(anyhow!("Language server lock poisoned"))
+            }
+        }
+    };
     if guard
         .as_ref()
         .is_some_and(|session| session.workspace_root != root)
@@ -167,8 +181,15 @@ pub fn with_documents<T>(
     }
     let session = guard.as_mut().unwrap();
     let result = synchronize_documents(session, &buffers)
-        .and_then(|()| action(&root, session, &target, content));
-    if result.is_err() {
+        .and_then(|()| action(&root, session, &target, content))
+        .and_then(|data| {
+            super::language_requests::check()?;
+            Ok(data)
+        });
+    if result
+        .as_ref()
+        .is_err_and(|error| !super::language_requests::is_stopped(error))
+    {
         *guard = None;
     }
     result
@@ -180,6 +201,7 @@ pub fn synchronize_documents(
 ) -> Result<()> {
     let mut current = HashSet::new();
     for (path, content) in buffers {
+        super::language_requests::check()?;
         let uri = lsp_manager::path_to_file_uri(path)?;
         current.insert(uri.clone());
         let version = session.next_id;
@@ -220,12 +242,24 @@ pub fn request_method(
 ) -> Result<Value> {
     // Cold package loading can outlive ordinary completion requests. One shared
     // deadline bounds the entire query, including any "no views" retries.
-    let deadline = Instant::now() + Duration::from_secs(45);
+    let deadline = super::language_requests::deadline(Instant::now() + Duration::from_secs(45));
     loop {
+        super::language_requests::check()?;
         let id = session.next_id;
         session.next_id += 1;
         lsp_manager::write_lsp_request_sync(&mut session.stdin, id, method, params.clone())?;
-        let response = lsp_manager::wait_lsp_response_until_sync(&session.rx, id, deadline)?;
+        let response = match lsp_manager::wait_lsp_response_until_sync(&session.rx, id, deadline) {
+            Ok(response) => response,
+            Err(error) if super::language_requests::is_stopped(&error) => {
+                lsp_manager::write_lsp_notification_sync(
+                    &mut session.stdin,
+                    "$/cancelRequest",
+                    json!({"id": id}),
+                )?;
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         if lsp_manager::lsp_error_message_sync(&response) == Some("no views")
             && Instant::now() < deadline
         {
@@ -315,135 +349,4 @@ fn parse_result(root: &Path, kind: &QueryKind, result: &Value) -> Result<QueryRe
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    struct Workspace(std::path::PathBuf);
-    impl Workspace {
-        fn new() -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "goide-language # tiếng Việt {}",
-                uuid::Uuid::new_v4()
-            ));
-            std::fs::create_dir(&root).unwrap();
-            std::fs::write(
-                root.join("go.mod"),
-                "module example.com/language\n\ngo 1.22\n",
-            )
-            .unwrap();
-            std::fs::write(
-                root.join("main.go"),
-                "package main\nfunc main() { println(Greeting) }\n",
-            )
-            .unwrap();
-            std::fs::write(
-                root.join("helper.go"),
-                "package main\nconst Greeting = \"hello\"\n",
-            )
-            .unwrap();
-            Self(normalize_platform_pathbuf(root.canonicalize().unwrap()))
-        }
-    }
-    impl Drop for Workspace {
-        fn drop(&mut self) {
-            let handle = lsp_manager::get_lsp_session();
-            if let Ok(mut guard) = handle.lock() {
-                if guard
-                    .as_ref()
-                    .is_some_and(|session| session.workspace_root == self.0)
-                {
-                    guard.take();
-                }
-            }
-            for file in ["go.mod", "main.go", "helper.go"] {
-                let _ = std::fs::remove_file(self.0.join(file));
-            }
-            let _ = std::fs::remove_dir(&self.0);
-        }
-    }
-    #[test]
-    fn language_locations_preserve_selection_range_and_report_external_results() {
-        let root = Workspace::new();
-        let outside = Workspace::new();
-        let range =
-            json!({"start": {"line": 1, "character": 6}, "end": {"line": 1, "character": 14}});
-        let result = parse_result(&root.0, &QueryKind::Definition, &json!([
-            {"targetUri": lsp_manager::path_to_file_uri(&root.0.join("helper.go")).unwrap(), "targetSelectionRange": range},
-            {"uri": lsp_manager::path_to_file_uri(&outside.0.join("main.go")).unwrap(), "range": range}
-        ])).unwrap();
-        assert_eq!(result.locations.len(), 1);
-        assert_eq!(result.locations[0].path, "helper.go");
-        assert_eq!(
-            (result.locations[0].line, result.locations[0].column),
-            (2, 7)
-        );
-        assert_eq!(result.outside_workspace, 1);
-        assert!(parse_result(
-            &root.0,
-            &QueryKind::References,
-            &json!([{"uri": "https://example.com"}])
-        )
-        .is_err());
-        assert!(scoped_file(&root.0, "../outside.go").is_err());
-        assert!(scoped_file(&root.0, "go.mod").is_err());
-    }
-    #[test]
-    fn hover_supports_protocol_content_shapes_without_inventing_empty_results() {
-        assert_eq!(
-            hover_text(&json!({"kind": "markdown", "value": "hello"})).as_deref(),
-            Some("hello")
-        );
-        assert_eq!(
-            hover_text(&json!([{"language": "go", "value": "const X = 1"}, "docs"])).as_deref(),
-            Some("const X = 1\n\ndocs")
-        );
-        assert!(hover_text(&Value::Null).is_none());
-    }
-    #[test]
-    #[ignore = "requires installed Go and gopls; run explicitly with --include-ignored"]
-    fn real_gopls_queries_use_unsaved_buffers_across_files_without_writing_disk() {
-        let workspace = Workspace::new();
-        let base = Query {
-            workspace_root: workspace.0.to_string_lossy().to_string(),
-            relative_path: "main.go".into(),
-            line: 2,
-            column: 24,
-            kind: QueryKind::Definition,
-            buffers: vec![
-                Buffer {
-                    path: "main.go".into(),
-                    content: "package main\nfunc main() { println(Changed) }\n".into(),
-                },
-                Buffer {
-                    path: "helper.go".into(),
-                    content: "package main\nconst Changed = \"hello\"\n".into(),
-                },
-            ],
-        };
-        let definition = query(base.clone()).unwrap();
-        assert_eq!(definition.locations.len(), 1);
-        assert_eq!(definition.locations[0].path, "helper.go");
-        assert_eq!(definition.locations[0].line, 2);
-        let references = query(Query {
-            kind: QueryKind::References,
-            ..base.clone()
-        })
-        .unwrap();
-        assert!(references
-            .locations
-            .iter()
-            .any(|location| location.path == "main.go"));
-        assert!(references
-            .locations
-            .iter()
-            .any(|location| location.path == "helper.go"));
-        let hover = query(Query {
-            kind: QueryKind::Hover,
-            ..base
-        })
-        .unwrap();
-        assert!(hover.text.unwrap().contains("Changed"));
-        assert!(std::fs::read_to_string(workspace.0.join("helper.go"))
-            .unwrap()
-            .contains("Greeting"));
-    }
-}
+mod tests;

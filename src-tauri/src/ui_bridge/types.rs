@@ -5,6 +5,7 @@ pub use crate::integration::language::{
 pub use crate::integration::language_edits::{
     EditPlan as LanguageEditPlanDto, FormatRequest as LanguageFormatRequestDto,
 };
+pub use crate::integration::language_requests::CancelRequest as LanguageCancelRequestDto;
 pub use crate::integration::rename_symbol::{
     RenamePlan as LanguageRenamePlanDto, RenameRequest as LanguageRenameRequestDto,
 };

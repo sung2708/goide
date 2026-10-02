@@ -1,0 +1,234 @@
+//! Cancellation identity stays independent of the serialized gopls lock.
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex, OnceLock,
+    },
+    time::{Duration, Instant},
+};
+use uuid::Uuid;
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelRequest {
+    pub workspace_root: String,
+    pub request_id: String,
+}
+#[derive(Clone)]
+struct Context {
+    cancelled: Arc<AtomicBool>,
+    deadline: Instant,
+}
+#[derive(Default)]
+struct Registry {
+    active: HashMap<Uuid, (PathBuf, Arc<AtomicBool>)>,
+    cancelled: HashMap<Uuid, (PathBuf, Instant)>,
+}
+static REQUESTS: OnceLock<Mutex<Registry>> = OnceLock::new();
+thread_local! { static CURRENT: RefCell<Option<Context>> = const { RefCell::new(None) }; }
+
+#[derive(Debug)]
+struct Stopped(&'static str);
+impl std::fmt::Display for Stopped {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.0)
+    }
+}
+impl std::error::Error for Stopped {}
+pub fn is_stopped(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<Stopped>().is_some()
+}
+pub fn check() -> Result<()> {
+    if super::lifecycle::gate().is_closing() {
+        return Err(Stopped("Language request cancelled for app shutdown.").into());
+    }
+    CURRENT.with(|context| {
+        if let Some(context) = context.borrow().as_ref() {
+            if context.cancelled.load(Ordering::Acquire) {
+                return Err(Stopped("Language request cancelled.").into());
+            }
+            if Instant::now() >= context.deadline {
+                return Err(Stopped("Language request exceeded its execution deadline.").into());
+            }
+        }
+        Ok(())
+    })
+}
+pub fn deadline(fallback: Instant) -> Instant {
+    CURRENT.with(|context| {
+        context
+            .borrow()
+            .as_ref()
+            .map_or(fallback, |context| context.deadline.min(fallback))
+    })
+}
+
+pub struct Scope {
+    id: Uuid,
+    previous: Option<Context>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl Drop for Scope {
+    fn drop(&mut self) {
+        CURRENT.with(|context| {
+            context.replace(self.previous.take());
+        });
+        if let Ok(mut requests) = REQUESTS.get_or_init(Default::default).lock() {
+            requests.active.remove(&self.id);
+        }
+    }
+}
+pub fn begin(root: &Path, id: Option<&str>) -> Result<Scope> {
+    begin_with_timeout(root, id, Duration::from_secs(45))
+}
+fn begin_with_timeout(root: &Path, id: Option<&str>, timeout: Duration) -> Result<Scope> {
+    check()?;
+    let id = match id {
+        Some(id) => {
+            Uuid::parse_str(id).map_err(|_| anyhow!("Language request identity must be a UUID."))?
+        }
+        None => Uuid::new_v4(),
+    };
+    let mut requests = REQUESTS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| anyhow!("Language request registry unavailable."))?;
+    if requests.active.len() >= 128 || requests.active.contains_key(&id) {
+        return Err(anyhow!(
+            "Language request identity is active or the 128 request budget is exhausted."
+        ));
+    }
+    requests
+        .cancelled
+        .retain(|_, (_, time)| time.elapsed() < Duration::from_secs(300));
+    let cancelled = if let Some((cancelled_root, _)) = requests.cancelled.get(&id) {
+        if cancelled_root != root {
+            return Err(anyhow!(
+                "Language cancellation belongs to a different workspace."
+            ));
+        }
+        requests.cancelled.remove(&id);
+        true
+    } else {
+        false
+    };
+    let token = Arc::new(AtomicBool::new(cancelled));
+    requests
+        .active
+        .insert(id, (root.to_path_buf(), token.clone()));
+    drop(requests);
+    let previous = CURRENT.with(|context| {
+        context.replace(Some(Context {
+            cancelled: token,
+            deadline: Instant::now() + timeout,
+        }))
+    });
+    Ok(Scope {
+        id,
+        previous,
+        _thread: std::marker::PhantomData,
+    })
+}
+pub fn cancel(root: &Path, id: &str) -> Result<bool> {
+    let id =
+        Uuid::parse_str(id).map_err(|_| anyhow!("Language request identity must be a UUID."))?;
+    let mut requests = REQUESTS
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| anyhow!("Language request registry unavailable."))?;
+    if let Some((active_root, token)) = requests.active.get(&id) {
+        if active_root != root {
+            return Err(anyhow!(
+                "Language request belongs to a different workspace."
+            ));
+        }
+        token.store(true, Ordering::Release);
+        return Ok(true);
+    }
+    // Cancellation can precede spawn_blocking registration. Retain a bounded
+    // tombstone so a cancelled queued operation cannot start afterward.
+    requests
+        .cancelled
+        .retain(|_, (_, time)| time.elapsed() < Duration::from_secs(300));
+    if requests.cancelled.len() >= 256 {
+        if let Some(oldest) = requests
+            .cancelled
+            .iter()
+            .min_by_key(|(_, (_, time))| *time)
+            .map(|(id, _)| *id)
+        {
+            requests.cancelled.remove(&oldest);
+        }
+    }
+    if requests
+        .cancelled
+        .get(&id)
+        .is_some_and(|(existing_root, _)| existing_root != root)
+    {
+        return Err(anyhow!(
+            "Language cancellation belongs to a different workspace."
+        ));
+    }
+    requests
+        .cancelled
+        .insert(id, (root.to_path_buf(), Instant::now()));
+    Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn cancellation_is_scoped_and_also_covers_requests_not_registered_yet() {
+        let id = Uuid::new_v4().to_string();
+        let root = Path::new("repo");
+        let scope = begin(root, Some(&id)).unwrap();
+        assert!(cancel(Path::new("other"), &id).is_err());
+        assert!(check().is_ok());
+        assert!(cancel(root, &id).unwrap());
+        assert!(is_stopped(&check().unwrap_err()));
+        drop(scope);
+        assert!(check().is_ok());
+        let queued = Uuid::new_v4().to_string();
+        cancel(root, &queued).unwrap();
+        assert!(begin(Path::new("other"), Some(&queued)).is_err());
+        let scope = begin(root, Some(&queued)).unwrap();
+        assert!(is_stopped(&check().unwrap_err()));
+        drop(scope);
+        assert!(begin(root, Some("not-a-uuid")).is_err());
+    }
+    #[test]
+    fn deadline_is_shared_and_dropping_a_scope_restores_the_thread_context() {
+        let scope = begin_with_timeout(Path::new("repo"), None, Duration::ZERO).unwrap();
+        assert!(deadline(Instant::now() + Duration::from_secs(60)) <= Instant::now());
+        assert!(is_stopped(&check().unwrap_err()));
+        drop(scope);
+        assert!(check().is_ok());
+    }
+    #[test]
+    fn a_pending_protocol_wait_observes_scoped_cancellation_promptly() {
+        let id = Uuid::new_v4().to_string();
+        let root = Path::new("protocol-test");
+        let scope = begin(root, Some(&id)).unwrap();
+        let thread = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(20));
+            cancel(root, &id).unwrap();
+        });
+        let (_sender, receiver) = std::sync::mpsc::channel();
+        let start = Instant::now();
+        let result = super::super::lsp_manager::wait_lsp_response_until_sync(
+            &receiver,
+            1,
+            start + Duration::from_secs(5),
+        );
+        assert!(is_stopped(&result.unwrap_err()));
+        assert!(start.elapsed() < Duration::from_secs(1));
+        thread.join().unwrap();
+        drop(scope);
+    }
+}

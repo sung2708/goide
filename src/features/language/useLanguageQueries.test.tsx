@@ -4,7 +4,8 @@ import { positionAt, useLanguageQueries } from "./useLanguageQueries";
 import LanguageResults from "./LanguageResults";
 import { DocumentSession } from "../documents/DocumentSession";
 const queryMock = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/ipc/client", () => ({ queryWorkspaceLanguage: queryMock }));
+const cancelMock = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, data: true }));
+vi.mock("../../lib/ipc/client", () => ({ queryWorkspaceLanguage: queryMock, cancelLanguageRequest: cancelMock }));
 
 it("uses UTF-16 cursor positions across CRLF and Unicode", () => {
   expect(positionAt("😀x\r\nabc", 8)).toEqual({ line: 2, column: 4 });
@@ -30,6 +31,7 @@ it("sends every unsaved Go buffer and rejects results after editing or closing",
   expect(hook.result.current.state).toBeNull();
   act(() => { pending = hook.result.current.query("hover"); });
   act(() => hook.result.current.close());
+  expect(cancelMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: "C:/workspace", requestId: expect.any(String) }));
   await act(async () => { resolve({ ok: false, error: { code: "failed", message: "obsolete error" } }); await pending; });
   expect(hook.result.current.state).toBeNull();
 });

@@ -72,6 +72,7 @@ fn real_gopls_rename_captures_closed_files_and_keeps_unsaved_source_and_disk_ind
     let before = "package main\nfunc main() { println(Greeting) }\n";
     let plan = preview(RenameRequest {
         query: language::Query {
+            request_id: None,
             workspace_root: workspace.0.to_string_lossy().to_string(),
             relative_path: "main.go".into(),
             line: 2,
