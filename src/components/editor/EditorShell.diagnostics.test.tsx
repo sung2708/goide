@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -102,6 +102,26 @@ describe("EditorShell diagnostics", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+  });
+
+  it("shows located Problems and removes obsolete results immediately on edits", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: {
+      toolingAvailability: "available",
+      diagnostics: [{ severity: "error", message: "undefined: missing", source: "gopls", code: "UndeclaredName", range: { startLine: 1, startColumn: 2, endLine: 1, endColumn: 3 } }],
+    } });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await waitFor(() => expect(screen.getByTestId("diagnostic-message")).toHaveTextContent("undefined: missing"));
+    fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
+    const panel = await screen.findByRole("region", { name: "Problems" });
+    expect(within(panel).getByText(/main.go:1:2/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /type invalid content/i }));
+    expect(within(panel).queryByText("undefined: missing")).toBeNull();
+    expect(within(panel).getByText(/No problems in the current known results/)).toBeInTheDocument();
   });
 
   it("fetches diagnostics after successful save", async () => {

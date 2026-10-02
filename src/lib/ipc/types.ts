@@ -367,7 +367,7 @@ export type SwitchWorkspaceBranchRequest = {
 // ---- Shell session IPC types ----
 
 /** Identifies which tab in the BottomPanel is active. */
-export type BottomPanelTab = "logs" | "shell";
+export type BottomPanelTab = "logs" | "shell" | "problems";
 
 /** Request to create or reuse a shell session for a given workspace surface. */
 export type EnsureShellSessionRequest = {

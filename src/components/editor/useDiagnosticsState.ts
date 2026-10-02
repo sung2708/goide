@@ -16,6 +16,8 @@ type UseDiagnosticsStateParams = {
 };
 
 type DiagnosticsState = {
+  knownDiagnostics: Record<string, EditorDiagnostic[]>;
+  forgetDiagnostics: (path: string) => void;
   diagnostics: EditorDiagnostic[];
   diagnosticsByFile: Record<string, FileDiagnosticsSummary>;
   diagnosticsAvailability: DiagnosticsIndicatorState;
@@ -38,6 +40,11 @@ export function useDiagnosticsState({
   activeFilePathRef,
 }: UseDiagnosticsStateParams): DiagnosticsState {
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
+  const [knownDiagnostics, setKnownDiagnostics] = useState<Record<string, EditorDiagnostic[]>>({});
+  const forgetDiagnostics = useCallback((path: string) => {
+    setKnownDiagnostics(previous => { const next = { ...previous }; delete next[path]; return next; });
+    setDiagnosticsByFile(previous => { const next = { ...previous }; delete next[path]; return next; });
+  }, []);
   const [diagnosticsByFile, setDiagnosticsByFile] = useState<
     Record<string, FileDiagnosticsSummary>
   >({});
@@ -78,6 +85,7 @@ export function useDiagnosticsState({
     cancelDiagnosticsTimers();
     setDiagnostics([]);
     setDiagnosticsByFile({});
+    setKnownDiagnostics({});
     setDiagnosticsAvailability("idle");
   }, [cancelDiagnosticsTimers]);
 
@@ -123,6 +131,7 @@ export function useDiagnosticsState({
         }
 
         if (diagnosticsResponse.ok && diagnosticsResponse.data) {
+          setKnownDiagnostics(previous => ({ ...previous, [diagnosticFilePath]: diagnosticsResponse.data!.diagnostics }));
           setDiagnostics(diagnosticsResponse.data.diagnostics);
           setDiagnosticsAvailability(diagnosticsResponse.data.toolingAvailability);
           const hasErrors = diagnosticsResponse.data.diagnostics.some(
@@ -177,6 +186,7 @@ export function useDiagnosticsState({
   }, [cancelDiagnosticsTimers]);
 
   return {
+    knownDiagnostics, forgetDiagnostics,
     diagnostics,
     diagnosticsByFile,
     diagnosticsAvailability,
