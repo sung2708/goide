@@ -3,6 +3,7 @@ type Draft = { content: GitConflictContent; result: string };
 const drafts = new Map<string, Map<string, Draft>>();
 export const getConflictDraft = (root: string, path: string) => drafts.get(root)?.get(path);
 export const hasConflictDrafts = (root: string | null) => root !== null && (drafts.get(root)?.size ?? 0) > 0;
+export function discardConflictDrafts(root: string | null) { if (root !== null) drafts.delete(root); }
 export function hasConflictDraftsAt(root: string | null, path: string): boolean {
   const affected = path.replace(/\\/g, "/").toLowerCase();
   return root !== null && [...(drafts.get(root)?.keys() ?? [])].some(file => {
