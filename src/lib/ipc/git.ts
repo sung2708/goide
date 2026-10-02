@@ -17,7 +17,7 @@ export type GitConflictContent = { path: string; indexSignature: string; base: s
 export const getGitConflictContent = (workspaceRoot: string, path: string) => request<GitConflictContent>("git_conflict_content", { workspaceRoot, path });
 export type GitHistoryCommit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string[] };
 export type GitHistoryPage = { commits: GitHistoryCommit[]; tips: string[]; hasMore: boolean };
-export type GitHistorySearchRequest = { field: "message" | "author" | "hash"; text: string; offset: number; tips: string[] };
+export type GitHistorySearchRequest = { field: "message" | "author" | "hash" | "file"; text: string; offset: number; tips: string[] };
 export type GitCommitDetails = { hash: string; parents: string[]; author: string; email: string; date: string; message: string; selectedParent: string | null; files: { path: string; originalPath: string | null; status: string }[] };
 
 async function request<T>(command: string, args: Record<string, unknown>): Promise<ApiResponse<T>> {

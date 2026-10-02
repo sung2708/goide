@@ -11,6 +11,7 @@ pub enum SearchField {
     Message,
     Author,
     Hash,
+    File,
 }
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,16 +23,31 @@ pub struct SearchRequest {
 }
 
 pub fn search(root: &Path, request: SearchRequest) -> Result<HistoryPage, String> {
-    let text = request.text.trim();
+    let is_file = matches!(request.field, SearchField::File);
+    let text = if is_file {
+        request.text.as_str()
+    } else {
+        request.text.trim()
+    };
     if text.is_empty()
-        || text.len() > 512
-        || text.contains(['\0', '\n', '\r'])
+        || text.len() > if is_file { 4096 } else { 512 }
+        || text.contains('\0')
+        || (!is_file && text.contains(['\n', '\r']))
         || request.offset > 10000
     {
         return Err(
-            "Search requires one non-empty line of at most 512 bytes and a bounded result offset."
+            "Search requires non-empty text, at most 512 bytes (4096 for file paths), no NUL, and a bounded result offset. Message/author/hash searches require one line."
                 .into(),
         );
+    }
+    if is_file {
+        super::validate_path(text)?;
+        if text
+            .split('/')
+            .any(|part| part.is_empty() || part == "." || part == "..")
+        {
+            return Err("File history requires one exact repository-relative file path.".into());
+        }
     }
     if matches!(request.field, SearchField::Hash)
         && (!(7..=64).contains(&text.len()) || !text.bytes().all(|byte| byte.is_ascii_hexdigit()))
@@ -63,8 +79,10 @@ pub fn search(root: &Path, request: SearchRequest) -> Result<HistoryPage, String
         SearchField::Message => format!("--grep={text}"),
         SearchField::Author => format!("--author={text}"),
         SearchField::Hash => String::new(),
+        SearchField::File => String::new(),
     };
     let mut args = vec![
+        "--literal-pathspecs",
         "log",
         "--topo-order",
         "--no-color",
@@ -94,11 +112,17 @@ pub fn search(root: &Path, request: SearchRequest) -> Result<HistoryPage, String
             });
         }
         args.extend(["--max-count=1", hash.as_str()]);
+    } else if is_file {
+        args.push("--follow");
+        args.extend(tips.iter().map(String::as_str));
     } else {
         args.extend(["--fixed-strings", "--regexp-ignore-case", filter.as_str()]);
         args.extend(tips.iter().map(String::as_str));
     }
     args.push("--");
+    if is_file {
+        args.push(text);
+    }
     let raw = runner::text(root, &args)?;
     let mut commits = parse_records(&raw, &mut HashMap::new())?;
     let has_more = commits.len() > 100;
