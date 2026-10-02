@@ -13,6 +13,7 @@ const queryWorkspaceLanguageMock = vi.fn();
 const formatWorkspaceDocumentMock = vi.fn();
 const organizeWorkspaceImportsMock = vi.fn();
 const previewWorkspaceRenameMock = vi.fn();
+const getWorkspaceFileStateMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -32,6 +33,7 @@ vi.mock("../../lib/ipc/client", async () => {
     formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
     organizeWorkspaceImports: (...args: unknown[]) => organizeWorkspaceImportsMock(...args),
     previewWorkspaceRename: (...args: unknown[]) => previewWorkspaceRenameMock(...args),
+    getWorkspaceFileState: (...args: unknown[]) => getWorkspaceFileStateMock(...args),
   };
 });
 
@@ -111,6 +113,7 @@ describe("EditorShell diagnostics", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.useRealTimers();
+    getWorkspaceFileStateMock.mockResolvedValue({ ok: false, error: { code: "fs_state_unavailable" } });
     getRuntimeAvailabilityMock.mockResolvedValue({
       ok: true,
       data: { runtimeAvailability: "available" },
@@ -230,6 +233,24 @@ describe("EditorShell diagnostics", () => {
     fireEvent.keyDown(window, { key: "s", ctrlKey: true, altKey: true });
     await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go", helperAfter, helperBefore));
     expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before);
+  });
+
+  it("offers review for a dirty inactive tab changed externally and keeps its edits", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(screen.getByRole("button", { name: /type invalid content/i }));
+    await user.click(screen.getByRole("button", { name: /open other/i }));
+    getWorkspaceFileStateMock.mockImplementation((_root: string, path: string) => Promise.resolve({ ok: true, data: { exists: true, content: path === "main.go" ? "package changed\n" : "package main\n" } }));
+    act(() => window.dispatchEvent(new Event("focus")));
+    const status = await screen.findByRole("status", { name: "External changes in open tabs" });
+    await user.click(within(status).getByRole("button", { name: "Review main.go" }));
+    expect(screen.getByTestId("editor-value").textContent).toBe("package main\nfunc main() {\n");
+    expect(screen.getByRole("tab", { name: /main.go/ })).toHaveAttribute("aria-selected", "true");
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
   });
 
   it("fetches diagnostics after successful save", async () => {
