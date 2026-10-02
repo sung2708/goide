@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  WorkspaceFileInfo,
   WorkspaceReplacementRequest,
   WorkspaceReplacementPlan,
   WorkspaceSearchOptions,
@@ -79,6 +80,10 @@ export async function writeWorkspaceFile(
 export async function getWorkspaceFileState(workspaceRoot: string, relativePath: string): Promise<ApiResponse<{ exists: boolean; content: string | null }>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "fs_state_unavailable", message: "File state checks require the desktop app." } };
   return invoke("get_workspace_file_state", { workspaceRoot, relativePath });
+}
+export async function getWorkspaceFileInfo(workspaceRoot: string, relativePath: string): Promise<ApiResponse<WorkspaceFileInfo>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "fs_info_unavailable", message: "File metadata requires the desktop app." } };
+  return invoke("get_workspace_file_info", { workspaceRoot, relativePath });
 }
 
 export async function startWorkspaceFsWatch(

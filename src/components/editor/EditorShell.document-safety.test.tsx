@@ -6,11 +6,13 @@ const openMock = vi.fn();
 const readMock = vi.fn();
 const writeMock = vi.fn();
 const availabilityMock = vi.fn();
+const infoMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...args: unknown[]) => openMock(...args) }));
 vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
   readWorkspaceFile: (...args: unknown[]) => readMock(...args),
+  getWorkspaceFileInfo: (...args: unknown[]) => infoMock(...args),
   writeWorkspaceFile: (...args: unknown[]) => writeMock(...args),
   fetchWorkspaceDiagnostics: async () => ({ ok: true, data: { diagnostics: [], toolingAvailability: "available" } }),
   getRuntimeAvailability: (...args: unknown[]) => availabilityMock(...args),
@@ -28,9 +30,9 @@ vi.mock("../sidebar/Explorer", () => ({
   ),
 }));
 vi.mock("./CodeEditor", () => ({
-  default: ({ value, onChange, onSave }: { value: string; onChange: (value: string) => void; onSave: (value: string) => void }) => (
+  default: ({ value, onChange, onSave, editable }: { value: string; onChange: (value: string) => void; onSave: (value: string) => void; editable: boolean }) => (
     <div>
-      <textarea aria-label="Document" value={value} onChange={(event) => onChange(event.target.value)} />
+      <textarea aria-label="Document" readOnly={!editable} value={value} onChange={(event) => onChange(event.target.value)} />
       <button onClick={() => onSave(value)}>Save Document</button>
     </div>
   ),
@@ -56,30 +58,89 @@ describe("EditorShell document safety", () => {
     openMock.mockReset().mockResolvedValue("C:/workspace");
     readMock.mockReset().mockImplementation(async (_root: string, path: string) => ({ ok: true, data: path === "main.go" ? "original" : "other" }));
     writeMock.mockReset().mockResolvedValue({ ok: true });
+    infoMock.mockReset().mockResolvedValue({ ok: true, data: { sizeBytes: 8, readOnly: false } });
     availabilityMock.mockReset().mockResolvedValue({ ok: true, data: { runtimeAvailability: "available" } });
   });
 
-  it("persists the old buffer before switching files and cancels its autosave", async () => {
+  it("marks a native read-only file and prevents edit/save callbacks from changing it", async () => {
+    infoMock.mockResolvedValue({ ok: true, data: { sizeBytes: 8, readOnly: true } });
+    await openMain();
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveAttribute("readonly");
+    expect(screen.getByRole("tab", { name: /main.go/ })).toHaveTextContent("read only");
+    edit("cannot overwrite"); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("original");
+    fireEvent.click(screen.getByRole("button", { name: "Save Document" }));
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it("workspace Cancel retains dirty tabs and Don't Save discards only after that explicit choice", async () => {
+    await openMain(); edit("valuable edits"); openMock.mockResolvedValue("C:/new-workspace");
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /open workspace/i })[0]).toBeEnabled());
+    expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace"); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]); fireEvent.click(await screen.findByRole("button", { name: "Don't Save" }));
+    await waitFor(() => expect(screen.getByTestId("workspace")).toHaveTextContent("C:/new-workspace")); expect(screen.queryByRole("tab")).toBeNull(); expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it("offers Save, Don't Save and Cancel when closing a dirty tab", async () => {
+    await openMain(); edit("valuable edits");
+    fireEvent.click(screen.getByRole("button", { name: "Close main.go" }));
+    expect(await screen.findByRole("dialog", { name: "Unsaved document changes" })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits"); expect(writeMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close main.go" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: "Close main.go" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Don't Save" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /main.go/ })).toBeNull()); expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it("retains the dirty tab after a failed close-save and closes after a successful retry", async () => {
+    await openMain(); edit("valuable edits"); writeMock.mockResolvedValueOnce({ ok: false, error: { code: "denied", message: "Permission denied" } });
+    fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    await screen.findByText("Permission denied"); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
+    await waitFor(() => expect(screen.queryByRole("tab", { name: /main.go/ })).toBeNull());
+    expect(writeMock).toHaveBeenLastCalledWith("C:/workspace", "main.go", "valuable edits", "original");
+  });
+
+  it("Save All writes each dirty tab against its own disk baseline", async () => {
+    await openMain(); edit("edited main"); fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other")); edit("edited other");
+    fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, altKey: true });
+    await waitFor(() => expect(writeMock).toHaveBeenCalledTimes(2));
+    expect(writeMock.mock.calls).toEqual([["C:/workspace", "main.go", "edited main", "original"], ["C:/workspace", "other.go", "edited other", "other"]]);
+    await waitFor(() => expect(screen.getAllByRole("tab").every(tab => !tab.textContent?.includes("•"))).toBe(true));
+  });
+
+  it("retains independent dirty buffers when switching tabs and cancels the old active autosave", async () => {
     await openMain();
     vi.useFakeTimers();
     edit("unsaved main");
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open Other" })); });
-    expect(writeMock).toHaveBeenCalledWith("C:/workspace", "main.go", "unsaved main", "original");
+    expect(writeMock).not.toHaveBeenCalled();
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other");
     await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
-    expect(writeMock).toHaveBeenCalledTimes(1);
+    expect(writeMock).not.toHaveBeenCalled();
+    await act(async () => { fireEvent.click(screen.getByRole("tab", { name: /main.go/ })); });
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("unsaved main");
+    expect(readMock).toHaveBeenCalledTimes(2);
   });
 
-  it("keeps the current buffer when saving before a file switch fails", async () => {
+  it("keeps all dirty buffers when Save All fails on a non-active document", async () => {
     await openMain();
     writeMock.mockResolvedValue({ ok: false, error: { code: "write_failed", message: "Permission denied" } });
     edit("valuable edits");
     fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other"));
+    edit("other edits");
+    fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, altKey: true });
     await waitFor(() => expect(writeMock).toHaveBeenCalled());
-    expect(readMock).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
-    expect(screen.getByText(/save.*before.*switch/i)).toBeInTheDocument();
+    expect(readMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other edits");
     expect(screen.getByText(/permission denied/i)).toBeInTheDocument();
+    expect(writeMock).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole("tab", { name: /main.go/ }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits"));
   });
 
   it("keeps the current document when the requested file cannot be read", async () => {
@@ -96,18 +157,20 @@ describe("EditorShell document safety", () => {
     writeMock.mockResolvedValue({ ok: false });
     edit("valuable edits");
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(writeMock).toHaveBeenCalled());
     expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace");
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
   });
 
-  it("does not overwrite edits made while a transition save is pending", async () => {
+  it("blocks switching tabs while a save is pending and keeps newer edits", async () => {
     await openMain();
     let finishSave!: (result: { ok: boolean }) => void;
     writeMock.mockImplementation(() => new Promise((resolve) => { finishSave = resolve; }));
     edit("first edit");
-    fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save Document" }));
     await waitFor(() => expect(writeMock).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
     edit("newer edit");
     await act(async () => { finishSave({ ok: true }); });
     expect(readMock).toHaveBeenCalledTimes(1);
@@ -122,6 +185,8 @@ describe("EditorShell document safety", () => {
     await waitFor(() => expect(readMock).toHaveBeenCalledTimes(2));
     edit("edited during read");
     await act(async () => { finishRead({ ok: true, data: "other" }); });
+    fireEvent.click(screen.getByRole("tab", { name: /main.go/ }));
+    await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("edited during read"));
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("edited during read");
   });
 
@@ -157,6 +222,7 @@ describe("EditorShell document safety", () => {
     openMock.mockResolvedValue("C:/other-workspace");
     edit("saved before workspace switch");
     await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
     expect(writeMock).toHaveBeenCalledWith("C:/workspace", "main.go", "saved before workspace switch", "original");
     expect(screen.getByTestId("workspace")).toHaveTextContent("C:/other-workspace");
     expect(screen.queryByRole("textbox", { name: "Document" })).not.toBeInTheDocument();
@@ -168,7 +234,7 @@ describe("EditorShell document safety", () => {
     await openMain();
     writeMock.mockRejectedValue(new Error("Disk unavailable"));
     edit("valuable edits");
-    fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
+    fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, altKey: true });
     await screen.findByText(/disk unavailable/i);
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
     expect(readMock).toHaveBeenCalledTimes(1);

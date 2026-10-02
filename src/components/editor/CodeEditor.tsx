@@ -72,6 +72,7 @@ import { createSemanticAnalysisClient } from "../../features/semantics/createSem
 import { createSemanticAnalysisWorker } from "../../features/semantics/createSemanticAnalysisWorker";
 import type { DocumentOutlineItem } from "./DocumentOutline";
 import FindWidget from "./FindWidget";
+import { captureEditorSession, initialEditorSession, type EditorSessionState } from "../../features/documents/editorSession";
 import { useFindWidget } from "../../hooks/useFindWidget";
 
 const GO_IDENTIFIER_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -567,6 +568,8 @@ const inlineDiagnosticField = StateField.define<DecorationSet>({
 });
 
 type CodeEditorProps = {
+  sessionState?: EditorSessionState;
+  onSessionDispose?: (state: EditorSessionState) => void;
   value: string;
   selectionContextKey?: string | null;
   hintLine?: number | null;
@@ -599,6 +602,8 @@ type CodeEditorProps = {
 
 
 function CodeEditor({
+  sessionState,
+  onSessionDispose,
   value,
   selectionContextKey = null,
   hintLine = null,
@@ -1169,6 +1174,10 @@ function CodeEditor({
     suppressFindWidget,
   ]);
   const viewRef = useRef<EditorView | null>(null);
+  const sessionDispose = useRef(onSessionDispose); sessionDispose.current = onSessionDispose;
+  useEffect(() => () => {
+    if (viewRef.current && sessionDispose.current) sessionDispose.current(captureEditorSession(viewRef.current));
+  }, []);
   const findWidget = useFindWidget(viewRef);
   const findWidgetRef = useRef(findWidget);
   findWidgetRef.current = findWidget;
@@ -1717,6 +1726,7 @@ function CodeEditor({
         />
       )}
       <CodeMirror
+        initialState={initialEditorSession(sessionState, value)}
         value={value}
         className="h-full min-h-0 w-full"
         height="100%"
@@ -1728,6 +1738,10 @@ function CodeEditor({
           viewRef.current = view;
           setEditorView(view);
           view.requestMeasure();
+          if (sessionState) {
+            view.scrollDOM.scrollTop = sessionState.scrollTop;
+            view.scrollDOM.scrollLeft = sessionState.scrollLeft;
+          }
           emitViewportRange(view);
         }}
         editable={editable}

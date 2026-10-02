@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -257,7 +257,7 @@ describe("EditorShell debug controller", () => {
     const dialog = await screen.findByRole("dialog", { name: /unable to start debug session/i });
     expect(dialog).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: /close/i }));
+    await user.click(within(dialog).getByRole("button", { name: /close/i }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
 

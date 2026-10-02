@@ -1,3 +1,4 @@
+pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

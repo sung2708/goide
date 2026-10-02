@@ -13,6 +13,41 @@ pub struct FsEntry {
     pub is_dir: bool,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileInfo {
+    pub size_bytes: u64,
+    pub read_only: bool,
+}
+
+pub fn file_info(workspace_root: &str, relative_path: &str) -> Result<FileInfo> {
+    if relative_path.is_empty()
+        || Path::new(relative_path).components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir
+                    | std::path::Component::RootDir
+                    | std::path::Component::Prefix(_)
+            )
+        })
+    {
+        return Err(anyhow!("File path must stay relative to the workspace."));
+    }
+    let root = canonicalize_root(workspace_root)?;
+    let target = resolve_scoped_path(&root, Some(relative_path))?;
+    let metadata = fs::metadata(target)?;
+    if !metadata.is_file() {
+        return Err(anyhow!("path is not a file"));
+    }
+    Ok(FileInfo {
+        size_bytes: metadata.len(),
+        read_only: metadata.permissions().readonly()
+            || fs::symlink_metadata(root.join(relative_path))?
+                .file_type()
+                .is_symlink(),
+    })
+}
+
 pub fn list_directory(workspace_root: &str, relative_path: Option<&str>) -> Result<Vec<FsEntry>> {
     let root = canonicalize_root(workspace_root)?;
     let target = resolve_scoped_path(&root, relative_path)?;
@@ -82,6 +117,11 @@ pub fn write_file(workspace_root: &str, relative_path: &str, content: &str) -> R
     let mut target_permissions: Option<fs::Permissions> = None;
     match fs::symlink_metadata(&target) {
         Ok(metadata) => {
+            if metadata.permissions().readonly() {
+                return Err(anyhow!(
+                    "File is read only; change its permissions before saving."
+                ));
+            }
             target_exists = true;
             target_permissions = Some(metadata.permissions());
             if metadata.file_type().is_symlink() {
@@ -623,6 +663,45 @@ mod tests {
         fn drop(&mut self) {
             fs::remove_dir_all(&self.0).unwrap();
         }
+    }
+
+    #[test]
+    fn file_metadata_and_text_limits_are_honest_and_workspace_scoped() {
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        let path = workspace.0.join("workspace/sentinel.go");
+        assert!(!file_info(&root, "sentinel.go").unwrap().read_only);
+        assert_eq!(file_info(&root, "sentinel.go").unwrap().size_bytes, 7);
+        let original = fs::metadata(&path).unwrap().permissions();
+        let mut readonly = original.clone();
+        readonly.set_readonly(true);
+        fs::set_permissions(&path, readonly).unwrap();
+        let info = file_info(&root, "sentinel.go").unwrap();
+        let write_result = write_file(&root, "sentinel.go", "must not overwrite");
+        fs::set_permissions(&path, original).unwrap();
+        assert!(info.read_only);
+        assert!(write_result.unwrap_err().to_string().contains("read only"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), "keep me");
+        assert!(file_info(&root, "../escape").is_err());
+        assert!(file_info(&root, "nested").is_err());
+        fs::write(&path, b"binary\0data").unwrap();
+        assert!(read_file(&root, "sentinel.go")
+            .unwrap_err()
+            .to_string()
+            .contains("Binary"));
+        fs::write(&path, [0xff, 0xfe]).unwrap();
+        assert!(read_file(&root, "sentinel.go")
+            .unwrap_err()
+            .to_string()
+            .contains("UTF-8"));
+        fs::File::create(&path)
+            .unwrap()
+            .set_len(4 * 1024 * 1024 + 1)
+            .unwrap();
+        assert!(read_file(&root, "sentinel.go")
+            .unwrap_err()
+            .to_string()
+            .contains("4 MiB"));
     }
 
     #[test]

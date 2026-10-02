@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import Dialog from "../primitives/Dialog";
-type Params = { dirty: () => boolean; busy: () => boolean; save: () => Promise<boolean>; cancelAutosave: () => void; onError: (message: string) => void };
+type Params = { dirty: () => boolean; busy: () => boolean; save: () => Promise<boolean>; cancelAutosave: () => void; onError: (message: string) => void; onPending?: (pending: boolean) => void };
 export function useSafeWindowClose(params: Params) {
   const latest = useRef(params); latest.current = params;
   const [pending, setPending] = useState(false);
   const [closing, setClosing] = useState(false);
   const allowed = useRef(false);
+  useEffect(() => { latest.current.onPending?.(pending); }, [pending]);
   useEffect(() => {
     const native = Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
     if (!native) {

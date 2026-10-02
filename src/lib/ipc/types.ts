@@ -14,6 +14,7 @@ export type FsEntry = {
   path: string;
   isDir: boolean;
 };
+export type WorkspaceFileInfo = { sizeBytes: number; readOnly: boolean };
 
 export type WorkspaceFsSyncMode = "watch" | "polling";
 
