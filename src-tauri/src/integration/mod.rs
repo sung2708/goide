@@ -5,6 +5,7 @@ pub mod fs;
 pub mod fs_watch;
 pub mod git;
 pub mod gopls;
+pub mod language;
 pub mod lifecycle;
 pub mod lsp_manager;
 pub mod output;

@@ -9,6 +9,7 @@ const readWorkspaceFileMock = vi.fn();
 const writeWorkspaceFileMock = vi.fn();
 const fetchWorkspaceDiagnosticsMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
+const queryWorkspaceLanguageMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -24,6 +25,7 @@ vi.mock("../../lib/ipc/client", async () => {
       fetchWorkspaceDiagnosticsMock(...args),
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
+    queryWorkspaceLanguage: (...args: unknown[]) => queryWorkspaceLanguageMock(...args),
   };
 });
 
@@ -64,12 +66,18 @@ vi.mock("./CodeEditor", () => ({
     diagnostics,
     onSave,
     onChange,
+    onCursorOffsetChange,
+    jumpRequest,
   }: {
     diagnostics?: EditorDiagnostic[];
     onSave?: (content: string) => void;
     onChange?: (content: string) => void;
+    onCursorOffsetChange?: (offset: number) => void;
+    jumpRequest?: { line: number; column?: number } | null;
   }) => (
     <div data-testid="mock-code-editor">
+      <button onClick={() => onCursorOffsetChange?.(8)}>Place Cursor</button>
+      <output data-testid="jump-position">{jumpRequest ? `${jumpRequest.line}:${jumpRequest.column}` : "none"}</output>
       <button type="button" onClick={() => onSave?.("package main\nfunc main() {}\n")}>
         Save File
       </button>
@@ -122,6 +130,25 @@ describe("EditorShell diagnostics", () => {
     await user.click(screen.getByRole("button", { name: /type invalid content/i }));
     expect(within(panel).queryByText("undefined: missing")).toBeNull();
     expect(within(panel).getByText(/No problems in the current known results/)).toBeInTheDocument();
+  });
+
+  it("routes F12 through the language command and opens the returned file at its column", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\nconst Greeting = 1\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    queryWorkspaceLanguageMock.mockResolvedValue({ ok: true, data: { text: null, outsideWorkspace: 0, locations: [{ path: "helper.go", line: 2, column: 7, endLine: 2, endColumn: 15 }] } });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(screen.getByRole("button", { name: "Place Cursor" }));
+    fireEvent.keyDown(window, { key: "F12" });
+    const dialog = await screen.findByRole("dialog", { name: "Go to Definition" });
+    expect(queryWorkspaceLanguageMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go", kind: "definition", line: 1, column: 9 }));
+    await user.click(within(dialog).getByRole("button", { name: "helper.go:2:7" }));
+    await waitFor(() => expect(screen.getByTestId("jump-position")).toHaveTextContent("2:7"));
+    expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go");
+    expect(screen.getByRole("tab", { name: /helper.go/ })).toHaveAttribute("aria-selected", "true");
   });
 
   it("fetches diagnostics after successful save", async () => {

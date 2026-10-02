@@ -222,7 +222,7 @@ fn read_lsp_message_sync<R: BufRead>(reader: &mut R) -> Result<Value> {
     Ok(message)
 }
 
-fn write_lsp_request_sync<W: Write>(
+pub fn write_lsp_request_sync<W: Write>(
     writer: &mut W,
     id: i64,
     method: &str,
@@ -235,6 +235,9 @@ fn write_lsp_request_sync<W: Write>(
         "params": params,
     });
     let body = serde_json::to_string(&message)?;
+    if body.len() > 16 * 1024 * 1024 {
+        return Err(anyhow!("LSP request exceeds the 16 MiB limit"));
+    }
     write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     writer.flush()?;
     Ok(())
@@ -251,15 +254,24 @@ pub fn write_lsp_notification_sync<W: Write>(
         "params": params,
     });
     let body = serde_json::to_string(&message)?;
+    if body.len() > 16 * 1024 * 1024 {
+        return Err(anyhow!("LSP notification exceeds the 16 MiB limit"));
+    }
     write!(writer, "Content-Length: {}\r\n\r\n{}", body.len(), body)?;
     writer.flush()?;
     Ok(())
 }
 
 pub fn wait_lsp_response_sync(rx: &mpsc::Receiver<Value>, id: i64) -> Result<Value> {
-    let timeout = Duration::from_secs(15);
-    let start = std::time::Instant::now();
-    while start.elapsed() < timeout {
+    wait_lsp_response_until_sync(rx, id, std::time::Instant::now() + Duration::from_secs(15))
+}
+
+pub fn wait_lsp_response_until_sync(
+    rx: &mpsc::Receiver<Value>,
+    id: i64,
+    deadline: std::time::Instant,
+) -> Result<Value> {
+    while std::time::Instant::now() < deadline {
         if is_shutting_down() {
             return Err(anyhow!("language server is shutting down"));
         }
