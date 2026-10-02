@@ -11,6 +11,7 @@ const fetchWorkspaceDiagnosticsMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const queryWorkspaceLanguageMock = vi.fn();
 const formatWorkspaceDocumentMock = vi.fn();
+const organizeWorkspaceImportsMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -28,6 +29,7 @@ vi.mock("../../lib/ipc/client", async () => {
       getRuntimeAvailabilityMock(...args),
     queryWorkspaceLanguage: (...args: unknown[]) => queryWorkspaceLanguageMock(...args),
     formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
+    organizeWorkspaceImports: (...args: unknown[]) => organizeWorkspaceImportsMock(...args),
   };
 });
 
@@ -175,6 +177,26 @@ describe("EditorShell diagnostics", () => {
     expect(screen.getByTestId("editor-value").textContent).toBe(after);
     fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
+  });
+
+  it("runs Organize Imports from the palette and keeps Cancel separate from Apply", async () => {
+    const user = userEvent.setup();
+    const before = "package main\nfunc main() { fmt.Println(1) }\n", after = "package main\nimport \"fmt\"\nfunc main() { fmt.Println(1) }\n";
+    openMock.mockResolvedValue("C:/workspace"); readWorkspaceFileMock.mockResolvedValue({ ok: true, data: before });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    organizeWorkspaceImportsMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before, after, readOnly: false }] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
+    const invoke = async () => {
+      fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true });
+      const input = await screen.findByRole("textbox", { name: "Search commands" });
+      fireEvent.change(input, { target: { value: "Organize Imports" } }); fireEvent.keyDown(input, { key: "Enter" });
+      return screen.findByRole("dialog", { name: "Review Organize Imports" });
+    };
+    const first = await invoke(); await user.click(within(first).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(before);
+    const second = await invoke(); await user.click(within(second).getByRole("button", { name: "Apply to Editor" }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(after);
+    expect(organizeWorkspaceImportsMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go" }));
   });
 
   it("fetches diagnostics after successful save", async () => {
