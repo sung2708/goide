@@ -73,6 +73,8 @@ import { createSemanticAnalysisClient } from "../../features/semantics/createSem
 import { createSemanticAnalysisWorker } from "../../features/semantics/createSemanticAnalysisWorker";
 import type { DocumentOutlineItem } from "./DocumentOutline";
 import FindWidget from "./FindWidget";
+import { languageHover } from "./languageHover";
+import type { EditorHoverRequest, EditorHoverResult } from "../../features/language/useEditorHover";
 import { captureEditorSession, initialEditorSession, type EditorSessionState } from "../../features/documents/editorSession";
 import { useFindWidget } from "../../hooks/useFindWidget";
 
@@ -590,6 +592,7 @@ type CodeEditorProps = {
   onRequestCompletions?: (
     request: EditorCompletionRequest
   ) => Promise<CompletionItem[]>;
+  onRequestHover?: (request: EditorHoverRequest) => Promise<EditorHoverResult>;
   filePath?: string | null;
   semanticAnalysisClient?: SemanticAnalysisClient;
   onDocumentSymbolsChange?: (symbols: DocumentOutlineItem[]) => void;
@@ -622,6 +625,7 @@ function CodeEditor({
   onSave,
   onChange,
   onRequestCompletions,
+  onRequestHover,
   filePath = null,
   semanticAnalysisClient,
   onDocumentSymbolsChange,
@@ -1000,6 +1004,7 @@ function CodeEditor({
   };
 
   const extensions = useMemo(() => [
+    ...(onRequestHover ? languageHover(onRequestHover) : []),
     ...goideEditorExtensions,
     semanticFoldingExtension,
     breakpointField,
@@ -1171,6 +1176,7 @@ function CodeEditor({
     counterpartLine,
     editable,
     goplsCompletionSource,
+    onRequestHover,
     localSnippetSource,
     onCounterpartAnchorChange,
     onCursorOffsetChange,

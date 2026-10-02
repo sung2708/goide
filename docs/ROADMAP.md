@@ -309,3 +309,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - [x] Carry automatic completion identities into native gopls requests and cancel old requests on editor invalidation, supersession, context changes and unmount.
 - [x] Interrupt queued completion lock acquisition and LSP/CLI waits without starting a fallback after cancellation.
 - [ ] Extend explicit identities to diagnostics/symbol analysis, synchronize all unsaved completion overlays, and finish automatic hover/signature help and save preferences.
+
+### Editor hover checkpoint (2026-10-03)
+
+- [x] Display gopls hover information directly in the editor, bounded and safe to render.
+- [x] Cancel pointer hover requests and reject stale results while retaining unsaved buffers and UTF-16 locations.
+- [ ] Complete signature help, general reviewed code actions, save settings and remaining Go-native P0 workflows.

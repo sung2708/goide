@@ -175,3 +175,7 @@ Windows real-PTY fixtures verify descendant termination after root exit on both 
 ### Completion cancellation checkpoint (2026-10-03)
 
 Thirty-one frontend language/completion tests passed, including EditorShell command routing and completion DTO scope. Native tests verified that a completion waiting behind the gopls mutex cancels within the test's one-second bound without falling back to CLI, and that a running real CLI tool observes cancellation and stops promptly. The installed gopls completion fixture passed real fmt completions, unsaved strings completions and recovery after a server crash. Production build passed. This verifies completion cancellation, not every remaining language feature or release readiness. The complete native suite also passed: 187 tests, zero failures, seven opt-in tests ignored; installed-gopls completion was run separately and passed. Clippy with warnings denied and document link validation passed.
+
+### Editor hover checkpoint (2026-10-03)
+
+Sixty-six frontend tests passed across hover, CodeEditor and EditorShell language routing. Tests verify live active-buffer replacement alongside unsaved sibling tabs, UTF-16 positions, cancellation, stale responses, word anchoring, escaped markup, explicit display truncation and non-modal/non-mutating EditorShell routing. The native gopls hover path uses the previously verified real-language query implementation; this slice introduces no new native command. Type checking passed. Signature help and full desktop manual validation remain separate gates.
