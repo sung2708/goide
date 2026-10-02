@@ -349,7 +349,20 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> ApiResponse<()> {
     use tauri::Manager;
-    let _shutdown = crate::integration::lifecycle::gate().shutdown().await;
+    let _shutdown = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        crate::integration::lifecycle::gate().shutdown(),
+    )
+    .await
+    {
+        Ok(guard) => guard,
+        Err(_) => {
+            return ApiResponse::err(
+                "shutdown_failed",
+                "Owned resource registration is still pending; the window remains open.",
+            )
+        }
+    };
     match tauri::async_runtime::spawn_blocking(
         crate::integration::owned_tool_output::wait_for_shutdown,
     )
@@ -375,18 +388,22 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
     }
     let sessions = {
         let store = get_shell_sessions_handle();
-        let mut state = store.lock().await;
-        state.surface_to_shell.clear();
-        std::mem::take(&mut state.sessions)
+        let state =
+            match tokio::time::timeout(std::time::Duration::from_secs(10), store.lock()).await {
+                Ok(state) => state,
+                Err(_) => {
+                    return ApiResponse::err(
+                        "shutdown_failed",
+                        "Shell cleanup is still pending; the window remains open.",
+                    )
+                }
+            };
+        state.sessions.keys().cloned().collect::<Vec<_>>()
     };
-    let shells = tauri::async_runtime::spawn_blocking(move || {
-        for (_, session) in sessions {
-            session.terminate();
+    for id in sessions {
+        if let Err(error) = dispose_shell_session_inner(get_shell_sessions_handle(), &id).await {
+            return ApiResponse::err("shutdown_failed", &error.to_string());
         }
-    })
-    .await;
-    if let Err(error) = shells {
-        return ApiResponse::err("shutdown_failed", &error.to_string());
     }
     if let Err(error) = app.state::<FsWatchService>().stop_all() {
         return ApiResponse::err("shutdown_failed", &error.to_string());
