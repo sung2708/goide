@@ -141,6 +141,11 @@ pub fn start_new_lsp_session<'a>(
             "capabilities": {
                 "workspace": { "workspaceFolders": true },
                 "textDocument": {
+                    "signatureHelp": { "signatureInformation": {
+                        "documentationFormat": ["plaintext", "markdown"],
+                        "parameterInformation": { "labelOffsetSupport": true },
+                        "activeParameterSupport": true
+                    } },
                     "completion": {
                         "completionItem": {
                             "documentationFormat": ["markdown", "plaintext"],

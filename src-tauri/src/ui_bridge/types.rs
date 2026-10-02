@@ -585,6 +585,7 @@ pub use crate::integration::replacement::{
 pub use crate::integration::search::{
     SearchOptions as SearchOptionsDto, SearchReport as SearchReportDto,
 };
+pub use crate::integration::signature_help::SignatureHelp as SignatureHelpDto;
 
 #[cfg(test)]
 mod tests {

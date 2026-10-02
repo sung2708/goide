@@ -10,6 +10,7 @@ const writeWorkspaceFileMock = vi.fn();
 const fetchWorkspaceDiagnosticsMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const queryWorkspaceLanguageMock = vi.fn();
+const queryWorkspaceSignatureMock = vi.fn();
 const formatWorkspaceDocumentMock = vi.fn();
 const organizeWorkspaceImportsMock = vi.fn();
 const previewWorkspaceRenameMock = vi.fn();
@@ -30,6 +31,7 @@ vi.mock("../../lib/ipc/client", async () => {
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
     queryWorkspaceLanguage: (...args: unknown[]) => queryWorkspaceLanguageMock(...args),
+    queryWorkspaceSignature: (...args: unknown[]) => queryWorkspaceSignatureMock(...args),
     formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
     organizeWorkspaceImports: (...args: unknown[]) => organizeWorkspaceImportsMock(...args),
     previewWorkspaceRename: (...args: unknown[]) => previewWorkspaceRenameMock(...args),
@@ -76,6 +78,8 @@ vi.mock("./CodeEditor", () => ({
     onChange,
     onCursorOffsetChange,
     onRequestHover,
+    onRequestSignature,
+    signatureRequestTrigger,
     jumpRequest,
     value,
   }: {
@@ -84,12 +88,16 @@ vi.mock("./CodeEditor", () => ({
     onChange?: (content: string) => void;
     onCursorOffsetChange?: (offset: number) => void;
     onRequestHover?: (request: { offset: number; content: string; signal: AbortSignal }) => Promise<unknown>;
+    onRequestSignature?: (request: { offset: number; content: string; signal: AbortSignal }) => Promise<unknown>;
+    signatureRequestTrigger?: number;
     jumpRequest?: { line: number; column?: number } | null;
     value: string;
   }) => (
     <div data-testid="mock-code-editor">
       <button onClick={() => onCursorOffsetChange?.(8)}>Place Cursor</button>
       <button onClick={() => void onRequestHover?.({ offset: 8, content: value, signal: new AbortController().signal })}>Hover Symbol</button>
+      <button onClick={() => void onRequestSignature?.({ offset: 8, content: value, signal: new AbortController().signal })}>Request Signature</button>
+      <output data-testid="signature-trigger">{signatureRequestTrigger ?? 0}</output>
       <output data-testid="jump-position">{jumpRequest ? `${jumpRequest.line}:${jumpRequest.column}` : "none"}</output>
       <output data-testid="editor-value">{value}</output>
       <button type="button" onClick={() => onSave?.("package main\nfunc main() {}\n")}>
@@ -179,6 +187,22 @@ describe("EditorShell diagnostics", () => {
     expect(queryWorkspaceLanguageMock).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.any(String), kind: "hover", relativePath: "main.go", line: 1, column: 9 }));
     expect(screen.queryByRole("dialog", { name: "Symbol Information" })).toBeNull();
     expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+  });
+
+  it("routes Signature Help through the command registry and typed native callback", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    queryWorkspaceSignatureMock.mockResolvedValue({ ok: true, data: null });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(screen.getByRole("button", { name: "Place Cursor" }));
+    fireEvent.keyDown(window, { key: " ", ctrlKey: true, shiftKey: true });
+    await waitFor(() => expect(screen.getByTestId("signature-trigger")).toHaveTextContent("1"));
+    await user.click(screen.getByRole("button", { name: "Request Signature" }));
+    expect(queryWorkspaceSignatureMock).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.any(String), workspaceRoot: "C:/workspace", relativePath: "main.go", line: 1, column: 9 }));
   });
 
   it("reviews Format Document before editing and saves the applied result against its old disk baseline", async () => {
