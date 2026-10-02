@@ -32,10 +32,10 @@ export function useExternalFileState(params: Params) {
     } catch (error) { if (id === request.current) p.onError(error instanceof Error ? error.message : "Unable to check external file changes."); }
   }, []);
   useEffect(() => {
-    if (!params.revision) return;
+    if (!params.path) return;
     const timer = setTimeout(() => void check(), 100);
     return () => clearTimeout(timer);
-  }, [params.revision, check]);
+  }, [params.root, params.path, params.revision, check]);
   useEffect(() => {
     const focus = () => void check();
     window.addEventListener("focus", focus);
