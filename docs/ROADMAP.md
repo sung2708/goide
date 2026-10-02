@@ -342,3 +342,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: selectable Auto Save modes/delay and optional imports-then-format preparation through the canonical document save paths, retaining original disk baselines and newer edits.
 - Delivered: explicit save-preparation cancellation, source-context checks and unmount protection before disk writes.
 - Remaining: meaningful Debug/Git settings, native executable configuration/toolchain/module workflows, session restoration and the other unfinished Git/addendum gates. This checkpoint does not authorize a release or tag.
+
+## First-class Stash checkpoint (2026-10-03)
+
+- Delivered: native bounded stash list/patch, tracked and untracked-inclusive creation, Apply/Pop with optional staged-state restoration and confirmed Drop.
+- Delivered: full-hash/reference stale-selection checks, immutable-content application, no drop after failed/conflicted apply, source-control conflict refresh and guarded buffer saves/run-debug transitions.
+- Delivered: Source Control/Git Graph/Stashes command navigation and repeated view requests.
+- Remaining: selected/staged-only stashes, older-entry pagination beyond the visible 100-entry limit, external-ref concurrency acceptance, full graph filters/compare/blame/hunk workflows, and the unfinished addendum/platform matrix. No release/tag is authorized.

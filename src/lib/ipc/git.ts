@@ -12,8 +12,12 @@ export type GitRepositoryStatus = {
   remotes: string[];
 };
 export type GitFileDiff = { path: string; originalPath: string | null; patch: string; binary: boolean; limited: boolean };
-export type GitMutation = { kind: "stage" | "unstage"; paths: string[] } | { kind: "discard" | "deleteUntracked"; path: string } | { kind: "commit"; message: string } | { kind: "fetch"; remote: string } | { kind: "pull"; remote: string; branch: string } | { kind: "push"; remote: string; branch: string; setUpstream: boolean } | { kind: "saveConflict"; path: string; expectedIndex: string; expectedDisk: string; result: string } | { kind: "stageResolved"; path: string; expectedIndex: string; expectedDisk: string } | { kind: "createBranch"; name: string; start: string | null };
+export type GitMutation = { kind: "stashPush"; message: string; includeUntracked: boolean } | { kind: "stashApply" | "stashPop"; reference: string; hash: string; restoreIndex: boolean } | { kind: "stashDrop"; reference: string; hash: string } | { kind: "stage" | "unstage"; paths: string[] } | { kind: "discard" | "deleteUntracked"; path: string } | { kind: "commit"; message: string } | { kind: "fetch"; remote: string } | { kind: "pull"; remote: string; branch: string } | { kind: "push"; remote: string; branch: string; setUpstream: boolean } | { kind: "saveConflict"; path: string; expectedIndex: string; expectedDisk: string; result: string } | { kind: "stageResolved"; path: string; expectedIndex: string; expectedDisk: string } | { kind: "createBranch"; name: string; start: string | null };
 export type GitConflictContent = { path: string; indexSignature: string; base: string | null; current: string | null; incoming: string | null; result: string };
+export type GitStashEntry = { reference: string; hash: string; date: string; message: string };
+export type GitStashList = { entries: GitStashEntry[]; hasMore: boolean };
+export const getGitStashList = (workspaceRoot: string) => request<GitStashList>("git_stash_list", { workspaceRoot });
+export const getGitStashPreview = (workspaceRoot: string, reference: string, hash: string) => request<GitFileDiff>("git_stash_preview", { workspaceRoot, reference, hash });
 export const getGitConflictContent = (workspaceRoot: string, path: string) => request<GitConflictContent>("git_conflict_content", { workspaceRoot, path });
 export type GitHistoryCommit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string[] };
 export type GitHistoryPage = { commits: GitHistoryCommit[]; tips: string[]; hasMore: boolean };

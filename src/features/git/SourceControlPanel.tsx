@@ -3,10 +3,12 @@ import type { GitFileStatus } from "../../lib/ipc/git";
 import type { WorkspaceBranchSnapshot, WorkspaceGitSnapshot } from "../../lib/ipc/types";
 import GitDiffView from "./GitDiffView";
 import GitGraph from "./GitGraph";
+import StashPanel from "./StashPanel";
 import ConflictEditor from "./ConflictEditor";
 import { useSourceControl, type GitTransaction } from "./useSourceControl";
 
 type Props = {
+  requestedView?: { view: "changes" | "graph" | "stashes"; id: number };
   workspacePath?: string | null; revision?: number;
   snapshot: WorkspaceGitSnapshot | null; branchSnapshot?: WorkspaceBranchSnapshot | null;
   loading?: boolean; error?: string | null;
@@ -19,8 +21,9 @@ const button = "rounded px-1.5 py-1 text-xs hover:bg-(--bg-hover) focus-visible:
 export default function SourceControlPanel(props: Props) {
   const git = useSourceControl(props.workspacePath ?? null, props.revision ?? 0, props.transaction, props.onChanged);
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"changes" | "graph">("changes");
+  const [view, setView] = useState<"changes" | "graph" | "stashes">("changes");
   const [historyPath, setHistoryPath] = useState<string | null>(null);
+  useEffect(() => { if (props.requestedView) { setHistoryPath(null); setView(props.requestedView.view); } }, [props.requestedView]);
   useEffect(() => { setHistoryPath(null); }, [props.workspacePath]);
   const [chosenRemote, setChosenRemote] = useState("");
   const [conflictPath, setConflictPath] = useState<string | null>(null);
@@ -68,8 +71,8 @@ export default function SourceControlPanel(props: Props) {
         <button className={button} disabled={disabled || !branchName}>Create from HEAD (stay here)</button>
       </form>}
     </header>
-    {props.workspacePath && <div className="flex gap-2 border-b border-(--border-muted) px-3 py-1"><button className={button} aria-pressed={view === "changes"} onClick={() => setView("changes")}>Changes</button><button className={button} aria-pressed={view === "graph"} onClick={() => { setHistoryPath(null); setView("graph"); }}>Git Graph</button></div>}
-    {view === "graph" && props.workspacePath ? <GitGraph key={`${props.workspacePath}:${historyPath ?? ""}`} root={props.workspacePath} initialFilePath={historyPath} /> : <>
+    {props.workspacePath && <div className="flex gap-2 border-b border-(--border-muted) px-3 py-1"><button className={button} aria-pressed={view === "changes"} onClick={() => setView("changes")}>Changes</button><button className={button} aria-pressed={view === "graph"} onClick={() => { setHistoryPath(null); setView("graph"); }}>Git Graph</button><button className={button} aria-pressed={view === "stashes"} onClick={() => setView("stashes")}>Stashes</button></div>}
+    {view === "graph" && props.workspacePath ? <GitGraph key={`${props.workspacePath}:${historyPath ?? ""}`} root={props.workspacePath} initialFilePath={historyPath} /> : view === "stashes" && props.workspacePath ? <StashPanel root={props.workspacePath} revision={props.revision ?? 0} disabled={disabled} busy={git.busy} error={git.error} output={git.output} mutate={git.mutate} cancel={git.cancel} /> : <>
     {git.status && <div className="border-b border-(--border-subtle) p-2">
       <label className="sr-only" htmlFor="git-commit-message">Commit message</label>
       <textarea id="git-commit-message" value={message} onChange={(event) => setMessage(event.target.value)} disabled={git.busy} rows={3} placeholder="Message for staged changes" className="w-full resize-y rounded border border-(--border-muted) bg-(--crust) px-2 py-1.5 text-xs outline-none focus:border-(--border-active)" />
