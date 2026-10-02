@@ -90,3 +90,32 @@ pub async fn query_workspace_language(
         Err(error) => ApiResponse::err("language_query_failed", &error.to_string()),
     }
 }
+
+#[tauri::command]
+pub async fn list_workspace_code_actions(
+    request: super::types::LanguageCodeActionQueryDto,
+) -> ApiResponse<Vec<super::types::LanguageCodeActionDto>> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::code_actions::list(request)
+    })
+    .await
+    {
+        Ok(Ok(data)) => ApiResponse::ok(data),
+        Ok(Err(error)) => ApiResponse::err("code_actions_failed", &format!("{error:#}")),
+        Err(error) => ApiResponse::err("code_actions_failed", &error.to_string()),
+    }
+}
+#[tauri::command]
+pub async fn preview_workspace_code_action(
+    request: super::types::LanguageCodeActionPreviewDto,
+) -> ApiResponse<super::types::LanguageEditPlanDto> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::code_actions::preview(request)
+    })
+    .await
+    {
+        Ok(Ok(data)) => ApiResponse::ok(data),
+        Ok(Err(error)) => ApiResponse::err("code_action_preview_failed", &format!("{error:#}")),
+        Err(error) => ApiResponse::err("code_action_preview_failed", &error.to_string()),
+    }
+}

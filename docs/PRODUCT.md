@@ -76,3 +76,9 @@ To achieve true 1.0 maturity, GoIDE must satisfy all of the following criteria:
 3. **Robust LSP Integration**: Fault-tolerant `gopls` lifecycle management with automatic crash recovery, symbol caching, and formatting support.
 4. **Complete Test Suite**: Comprehensive integration test coverage for all IPC bridges and frontend views with zero intermittent test flakes.
 5. **Security Validation**: Strict path canonicalization, verified Tauri permissions, and audited dependency hygiene.
+
+## Reviewed Code Actions checkpoint (2026-10-03)
+
+Quick Fix / Code Actions is available through the command palette and `Mod+.` in a writable Go document. The chooser shows only actions returned by gopls at the captured cursor position, using current Go buffers and known diagnostics. Selecting an action requests a fresh, unambiguous server action and previews its complete Before/After edits. Apply changes editor buffers; Save or Save All persists them against the original disk baselines.
+
+Direct workspace edits and lazy `gopls.apply_fix` actions with `ResolveEdits=true` are supported. Command-only actions, other lazy commands, resource operations, edits outside the workspace, unsupported file types, stale versions, and read-only destinations are rejected or shown with an explicit disabled reason. Selection-based refactorings and command workflows remain incomplete.

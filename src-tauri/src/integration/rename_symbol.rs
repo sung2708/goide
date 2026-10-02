@@ -5,14 +5,12 @@ use super::{
     language,
     language_edits::{self, FileEdit},
     lsp_manager,
+    workspace_edits::group_edits,
 };
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::{collections::BTreeMap, path::PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -35,11 +33,6 @@ pub struct RenamePlan {
 struct Captured {
     path: String,
     before: String,
-}
-struct FileEdits {
-    path: PathBuf,
-    version: Option<i64>,
-    edits: Vec<Value>,
 }
 
 fn valid_name(name: &str) -> bool {
@@ -78,95 +71,6 @@ fn valid_name(name: &str) -> bool {
             "var",
         ]
         .contains(&name)
-}
-
-fn file_from_uri(root: &Path, uri: &str) -> Result<PathBuf> {
-    let uri = tauri::Url::parse(uri)?;
-    if uri.query().is_some() || uri.fragment().is_some() {
-        return Err(anyhow!("Rename returned an invalid file URI."));
-    }
-    let path = normalize_platform_pathbuf(
-        uri.to_file_path()
-            .map_err(|_| anyhow!("Rename location is not a file."))?
-            .canonicalize()?,
-    );
-    if !path.starts_with(root)
-        || !path.is_file()
-        || path.extension().is_none_or(|extension| extension != "go")
-    {
-        return Err(anyhow!(
-            "Rename would change files outside the workspace or unsupported file types."
-        ));
-    }
-    Ok(path)
-}
-
-fn group_edits(root: &Path, edit: &Value) -> Result<Vec<FileEdits>> {
-    if edit.is_null() {
-        return Ok(Vec::new());
-    }
-    let mut files = BTreeMap::<PathBuf, FileEdits>::new();
-    let mut insert = |uri: &str, version: Option<i64>, values: &Value| -> Result<()> {
-        let path = file_from_uri(root, uri)?;
-        let edits = values
-            .as_array()
-            .ok_or_else(|| anyhow!("Rename returned an invalid edit list."))?
-            .clone();
-        if files
-            .insert(
-                path.clone(),
-                FileEdits {
-                    path,
-                    version,
-                    edits,
-                },
-            )
-            .is_some()
-        {
-            return Err(anyhow!("Rename returned duplicate document edits."));
-        }
-        if files.len() > 100 {
-            return Err(anyhow!("Rename exceeds the 100 document review limit."));
-        }
-        Ok(())
-    };
-    if let Some(changes) = edit.get("changes") {
-        for (uri, values) in changes
-            .as_object()
-            .ok_or_else(|| anyhow!("Rename returned invalid changes."))?
-        {
-            insert(uri, None, values)?;
-        }
-    }
-    if let Some(changes) = edit.get("documentChanges") {
-        for change in changes
-            .as_array()
-            .ok_or_else(|| anyhow!("Rename returned invalid document changes."))?
-        {
-            if change.get("kind").is_some() {
-                return Err(anyhow!(
-                    "This rename requires unsupported file/folder resource operations."
-                ));
-            }
-            let uri = change["textDocument"]["uri"]
-                .as_str()
-                .ok_or_else(|| anyhow!("Rename returned an invalid document URI."))?;
-            let version = if change["textDocument"]["version"].is_null() {
-                None
-            } else {
-                Some(
-                    change["textDocument"]["version"]
-                        .as_i64()
-                        .ok_or_else(|| anyhow!("Rename returned an invalid document version."))?,
-                )
-            };
-            insert(uri, version, &change["edits"])?;
-        }
-    }
-    if edit.get("changes").is_none() && edit.get("documentChanges").is_none() {
-        return Err(anyhow!("Rename returned an invalid workspace edit."));
-    }
-    Ok(files.into_values().collect())
 }
 
 pub fn preview(request: RenameRequest) -> Result<RenamePlan> {

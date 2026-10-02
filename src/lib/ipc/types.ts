@@ -431,3 +431,7 @@ export type WorkspaceSearchOptions = { matchCase: boolean; wholeWord: boolean; u
 export type WorkspaceSearchReport = { files: WorkspaceSearchFile[]; limited: boolean; reason: string | null; scannedFiles: number };
 export type WorkspaceReplacementRequest = { workspaceRoot: string; query: string; replacement: string; options: WorkspaceSearchOptions; files: WorkspaceSearchFile[]; single: boolean };
 export type WorkspaceReplacementPlan = { path: string; before: string; after: string; occurrences: number };
+
+export type LanguageCodeAction = { title: string; kind: string | null; preferred: boolean; disabledReason: string | null };
+export type LanguageCodeActionQuery = { query: LanguageQuery; diagnostics: EditorDiagnostic[] };
+export type LanguageCodeActionPreview = { query: LanguageCodeActionQuery; action: LanguageCodeAction };

@@ -15,6 +15,7 @@ import LanguageResults from "../../features/language/LanguageResults";
 import { useEditorHover } from "../../features/language/useEditorHover";
 import { useEditorSignature } from "../../features/language/useEditorSignature";
 import { useLanguageEditReview } from "../../features/language/useLanguageEditReview";
+import { useCodeActions } from "../../features/language/useCodeActions";
 import LanguageEditReview from "../../features/language/LanguageEditReview";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -389,6 +390,10 @@ function EditorShell() {
   const requestEditorHover = useEditorHover(documentSnapshot, setFileError);
   const requestEditorSignature = useEditorSignature(documentSnapshot, setFileError);
   const [signatureRequestTrigger, setSignatureRequestTrigger] = useState(0);
+  const codeActions = useCodeActions(documents, documentSnapshot, cursorOffset, () => {
+    if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
+    setProblemRun(null); resetDiagnosticsState(); invalidateCompletionRequests(); resetCompletionAvailability(); setSaveStatus("idle"); setAnalysisRevision(value => value + 1);
+  }, setFileError, () => diagnostics);
   const languageEdits = useLanguageEditReview(documents, documentSnapshot, () => {
     if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
     setProblemRun(null);
@@ -2018,6 +2023,7 @@ function EditorShell() {
     { id: "language.signature", title: "Show Signature Help", shortcut: "Mod+Shift+Space", disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => setSignatureRequestTrigger(value => value + 1) },
     { id: "language.format", title: "Format Document", shortcut: "Shift+Alt+f", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.format },
     { id: "language.imports", title: "Organize Imports", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.organizeImports },
+    { id: "language.quickFix", title: "Quick Fix / Code Actions", shortcut: "Mod+.", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: codeActions.open },
     { id: "language.rename", title: "Rename Symbol", shortcut: "F2", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: languageEdits.beginRename },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
@@ -2041,6 +2047,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
+        <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
           const root = workspacePath;

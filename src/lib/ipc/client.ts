@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  LanguageQuery, LanguageQueryResult, LanguageCancelRequest, SignatureHelp,
+  LanguageQuery, LanguageQueryResult, LanguageCancelRequest, SignatureHelp, LanguageCodeAction, LanguageCodeActionPreview, LanguageCodeActionQuery,
   LanguageFormatRequest, LanguageEditPlan,
   LanguageRenameRequest,
   WorkspaceFileInfo,
@@ -622,4 +622,13 @@ export async function disposeShellSession(
     return { ok: true };
   }
   return invoke<ApiResponse<void>>("dispose_shell_session", { request });
+}
+
+export async function listWorkspaceCodeActions(request: LanguageCodeActionQuery): Promise<ApiResponse<LanguageCodeAction[]>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Code Actions require the desktop app and gopls." } };
+  return invoke<ApiResponse<LanguageCodeAction[]>>("list_workspace_code_actions", { request });
+}
+export async function previewWorkspaceCodeAction(request: LanguageCodeActionPreview): Promise<ApiResponse<LanguageEditPlan>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Code Actions require the desktop app and gopls." } };
+  return invoke<ApiResponse<LanguageEditPlan>>("preview_workspace_code_action", { request });
 }
