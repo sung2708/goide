@@ -1,16 +1,17 @@
 use crate::integration::command::std_command;
+use crate::integration::owned_sync_process::OwnedSyncChild;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, Stdio};
+use std::process::{ChildStdin, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 pub struct LspSession {
-    pub _child: Child,
+    pub _child: OwnedSyncChild,
     pub stdin: ChildStdin,
     pub rx: mpsc::Receiver<Value>,
     pub workspace_root: PathBuf,
@@ -19,24 +20,27 @@ pub struct LspSession {
     reader_task: Option<std::thread::JoinHandle<()>>,
 }
 
-impl Drop for LspSession {
-    fn drop(&mut self) {
+impl LspSession {
+    pub fn stop(&mut self) -> Result<()> {
         // Unblock a reader waiting to send into the bounded message queue.
         let (_, replacement) = mpsc::channel();
         drop(std::mem::replace(&mut self.rx, replacement));
-        if !matches!(self._child.try_wait(), Ok(Some(_))) {
-            if let Err(error) = self._child.kill() {
-                eprintln!("Unable to terminate gopls: {error}");
-                return;
-            }
-            if let Err(error) = self._child.wait() {
-                eprintln!("Unable to reap gopls: {error}");
-            }
-        }
+        self._child
+            .stop()
+            .context("Unable to terminate gopls process tree")?;
         if let Some(reader) = self.reader_task.take() {
-            if reader.join().is_err() {
-                eprintln!("The gopls reader thread failed during cleanup");
-            }
+            reader
+                .join()
+                .map_err(|_| anyhow!("The gopls reader thread failed during cleanup"))?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for LspSession {
+    fn drop(&mut self) {
+        if let Err(error) = self.stop() {
+            eprintln!("Unable to stop gopls: {error:#}");
         }
     }
 }
@@ -51,10 +55,13 @@ pub fn is_shutting_down() -> bool {
 pub fn shutdown_lsp_session() -> Result<()> {
     LSP_SHUTDOWN.store(true, Ordering::Release);
     let session = get_lsp_session();
-    session
+    let mut guard = session
         .lock()
-        .map_err(|_| anyhow!("LSP session lock poisoned"))?
-        .take();
+        .map_err(|_| anyhow!("LSP session lock poisoned"))?;
+    if let Some(session) = guard.as_mut() {
+        session.stop()?;
+    }
+    guard.take();
     Ok(())
 }
 
@@ -71,14 +78,16 @@ pub fn start_new_lsp_session<'a>(
     if is_shutting_down() {
         return Err(anyhow!("language server is shutting down"));
     }
-    let mut child = std_command("gopls")
-        .arg("serve")
-        .current_dir(workspace_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .context("failed to start gopls language server")?;
+    let mut command = std_command("gopls");
+    let mut child = OwnedSyncChild::spawn(
+        command
+            .arg("serve")
+            .current_dir(workspace_root)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null()),
+    )
+    .context("failed to start gopls language server")?;
 
     let stdin = child
         .stdin
@@ -173,18 +182,33 @@ pub fn path_to_file_uri(path: &Path) -> Result<String> {
 }
 
 fn read_lsp_message_sync<R: BufRead>(reader: &mut R) -> Result<Value> {
-    let mut content_length = 0;
+    let mut content_length = None;
+    let mut header_remaining = 16 * 1024;
     loop {
         let mut line = String::new();
-        reader.read_line(&mut line)?;
+        let count = (&mut *reader)
+            .take(header_remaining as u64)
+            .read_line(&mut line)?;
+        if count == 0 {
+            return Err(anyhow!("LSP connection closed inside header"));
+        }
+        header_remaining -= count;
+        if !line.ends_with('\n') || header_remaining == 0 {
+            return Err(anyhow!("LSP header exceeds the 16 KiB limit"));
+        }
         if line.trim().is_empty() {
             break;
         }
-        if let Some(len) = line.strip_prefix("Content-Length: ") {
-            content_length = len.trim().parse::<usize>()?;
+        if let Some((name, value)) = line.split_once(':') {
+            if name.eq_ignore_ascii_case("Content-Length") {
+                if content_length.is_some() {
+                    return Err(anyhow!("duplicate LSP Content-Length header"));
+                }
+                content_length = Some(value.trim().parse::<usize>()?);
+            }
         }
     }
-
+    let content_length = content_length.ok_or_else(|| anyhow!("missing Content-Length header"))?;
     if content_length == 0 {
         return Err(anyhow!("missing Content-Length header"));
     }
@@ -339,6 +363,26 @@ mod tests {
     }
 
     #[test]
+    fn language_server_headers_are_bounded_and_unambiguous() {
+        let mut reader = std::io::Cursor::new(vec![b'a'; 32 * 1024]);
+        assert!(read_lsp_message_sync(&mut reader)
+            .unwrap_err()
+            .to_string()
+            .contains("16 KiB"));
+        assert_eq!(reader.position(), 16 * 1024);
+        let mut duplicate =
+            std::io::Cursor::new(b"Content-Length: 2\r\ncontent-length: 2\r\n\r\n{}");
+        assert!(read_lsp_message_sync(&mut duplicate)
+            .unwrap_err()
+            .to_string()
+            .contains("duplicate"));
+        let mut valid = std::io::Cursor::new(b"content-length:2\r\nContent-Type: application/vscode-jsonrpc; charset=utf-8\r\n\r\n{}");
+        assert_eq!(read_lsp_message_sync(&mut valid).unwrap(), json!({}));
+        let mut truncated = std::io::Cursor::new(b"Content-Length: 20\r\n\r\n{}");
+        assert!(read_lsp_message_sync(&mut truncated).is_err());
+    }
+
+    #[test]
     fn dropping_session_terminates_the_child_and_reader() {
         #[cfg(windows)]
         let mut command = std_command("powershell.exe");
@@ -353,11 +397,8 @@ mod tests {
         let mut command = std_command("sleep");
         #[cfg(not(windows))]
         command.arg("30");
-        let mut child = command
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap();
+        let mut child =
+            OwnedSyncChild::spawn(command.stdin(Stdio::piped()).stdout(Stdio::piped())).unwrap();
         let stdin = child.stdin.take().unwrap();
         let mut stdout = child.stdout.take().unwrap();
         let (exit_sender, exit_receiver) = mpsc::channel();
