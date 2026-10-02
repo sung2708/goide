@@ -5,6 +5,7 @@ mod history;
 mod history_search;
 mod operations;
 mod runner;
+mod stash;
 mod status;
 #[cfg(test)]
 mod tests;
@@ -21,6 +22,7 @@ pub use runner::text as command_text;
 pub fn shutdown() -> Result<(), String> {
     runner::wait_for_shutdown()
 }
+pub use stash::{list as stash_list, preview as stash_preview, StashList};
 pub use status::{repository_status, FileStatus, RepositoryStatus};
 
 use std::collections::HashMap;

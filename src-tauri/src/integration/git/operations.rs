@@ -9,6 +9,24 @@ use std::path::Path;
     rename_all_fields = "camelCase"
 )]
 pub enum Mutation {
+    StashPush {
+        message: String,
+        include_untracked: bool,
+    },
+    StashApply {
+        reference: String,
+        hash: String,
+        restore_index: bool,
+    },
+    StashPop {
+        reference: String,
+        hash: String,
+        restore_index: bool,
+    },
+    StashDrop {
+        reference: String,
+        hash: String,
+    },
     CreateBranch {
         name: String,
         start: Option<String>,
@@ -68,6 +86,23 @@ pub fn mutate(root: &Path, mutation: Mutation) -> Result<(), String> {
         return Err("A Git operation/conflict is in progress. Resolve it in the repository terminal; no files were staged or committed.".into());
     }
     match mutation {
+        Mutation::StashPush {
+            message,
+            include_untracked,
+        } => super::stash::push(root, &message, include_untracked),
+        Mutation::StashApply {
+            reference,
+            hash,
+            restore_index,
+        } => super::stash::restore(root, &reference, &hash, restore_index, false),
+        Mutation::StashPop {
+            reference,
+            hash,
+            restore_index,
+        } => super::stash::restore(root, &reference, &hash, restore_index, true),
+        Mutation::StashDrop { reference, hash } => {
+            super::stash::drop_entry(root, &reference, &hash)
+        }
         Mutation::CreateBranch { name, start } => {
             checked_branch(root, &name)?;
             let start = start

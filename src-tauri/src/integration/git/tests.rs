@@ -2,6 +2,181 @@ use super::*;
 use std::fs;
 use std::path::PathBuf;
 
+#[test]
+fn stash_list_preview_restore_and_drop_follow_real_git_semantics() {
+    let repo = Repo::new();
+    repo.write("space Ω.go", b"base\n");
+    repo.stage(&["space Ω.go"]);
+    repo.commit("base");
+    assert!(stash_list(&repo.0).unwrap().entries.is_empty());
+    repo.write("space Ω.go", b"staged\n");
+    repo.stage(&["space Ω.go"]);
+    repo.write("space Ω.go", b"working\n");
+    repo.write("new Ω.go", b"untracked\n");
+    mutate(
+        &repo.0,
+        Mutation::StashPush {
+            message: "review Ω".into(),
+            include_untracked: true,
+        },
+    )
+    .unwrap();
+    assert!(repository_status(&repo.0).unwrap().files.is_empty());
+    let list = stash_list(&repo.0).unwrap();
+    let entry = &list.entries[0];
+    assert_eq!(entry.reference, "stash@{0}");
+    assert!(entry.message.contains("review Ω"));
+    assert!(!entry.date.is_empty());
+    let preview = stash_preview(&repo.0, &entry.reference, &entry.hash).unwrap();
+    assert!(preview.patch.contains("+working"));
+    assert!(preview.patch.contains("+untracked"));
+    mutate(
+        &repo.0,
+        Mutation::StashApply {
+            reference: entry.reference.clone(),
+            hash: entry.hash.clone(),
+            restore_index: true,
+        },
+    )
+    .unwrap();
+    assert_eq!(repo.git(&["show", ":space Ω.go"]), "staged\n");
+    assert_eq!(fs::read(repo.0.join("space Ω.go")).unwrap(), b"working\n");
+    assert_eq!(stash_list(&repo.0).unwrap().entries.len(), 1);
+    mutate(
+        &repo.0,
+        Mutation::StashDrop {
+            reference: entry.reference.clone(),
+            hash: entry.hash.clone(),
+        },
+    )
+    .unwrap();
+    assert!(stash_list(&repo.0).unwrap().entries.is_empty());
+}
+
+#[test]
+fn stash_pop_conflict_retains_stash_and_reports_unmerged_files() {
+    let repo = Repo::new();
+    repo.write("main.go", b"base\n");
+    repo.stage(&["main.go"]);
+    repo.commit("base");
+    repo.write("main.go", b"stashed\n");
+    mutate(
+        &repo.0,
+        Mutation::StashPush {
+            message: "change".into(),
+            include_untracked: false,
+        },
+    )
+    .unwrap();
+    let entry = stash_list(&repo.0).unwrap().entries.remove(0);
+    repo.write("main.go", b"branch\n");
+    repo.stage(&["main.go"]);
+    repo.commit("branch edit");
+    let error = mutate(
+        &repo.0,
+        Mutation::StashPop {
+            reference: entry.reference,
+            hash: entry.hash.clone(),
+            restore_index: false,
+        },
+    )
+    .unwrap_err();
+    assert!(error.contains("stash is retained"));
+    assert_eq!(stash_list(&repo.0).unwrap().entries[0].hash, entry.hash);
+    assert!(repository_status(&repo.0)
+        .unwrap()
+        .files
+        .iter()
+        .any(|file| file.conflicted));
+}
+
+#[test]
+fn stash_tracked_only_leaves_untracked_and_ignored_files_and_checks_unborn_head() {
+    let repo = Repo::new();
+    repo.write("main.go", b"base\n");
+    assert!(mutate(
+        &repo.0,
+        Mutation::StashPush {
+            message: "before first commit".into(),
+            include_untracked: true
+        }
+    )
+    .is_err());
+    assert_eq!(fs::read(repo.0.join("main.go")).unwrap(), b"base\n");
+    repo.write(".gitignore", b"ignored.txt\n");
+    repo.stage(&["main.go", ".gitignore"]);
+    repo.commit("base");
+    repo.write("main.go", b"changed\n");
+    repo.write("new.go", b"untracked\n");
+    repo.write("ignored.txt", b"keep\n");
+    mutate(
+        &repo.0,
+        Mutation::StashPush {
+            message: "tracked only".into(),
+            include_untracked: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(fs::read(repo.0.join("main.go")).unwrap(), b"base\n");
+    assert!(repo.0.join("new.go").exists());
+    assert!(repo.0.join("ignored.txt").exists());
+    mutate(
+        &repo.0,
+        Mutation::StashPush {
+            message: "include untracked".into(),
+            include_untracked: true,
+        },
+    )
+    .unwrap();
+    assert!(!repo.0.join("new.go").exists());
+    assert!(repo.0.join("ignored.txt").exists());
+    assert_eq!(stash_list(&repo.0).unwrap().entries.len(), 2);
+}
+
+#[test]
+fn stash_rejects_shifted_reference_and_pop_removes_only_selected_entry() {
+    let repo = Repo::new();
+    repo.write("main.go", b"base\n");
+    repo.stage(&["main.go"]);
+    repo.commit("base");
+    for message in ["first", "second"] {
+        repo.write("main.go", message.as_bytes());
+        mutate(
+            &repo.0,
+            Mutation::StashPush {
+                message: message.into(),
+                include_untracked: false,
+            },
+        )
+        .unwrap();
+    }
+    let entries = stash_list(&repo.0).unwrap().entries;
+    assert!(mutate(
+        &repo.0,
+        Mutation::StashDrop {
+            reference: entries[0].reference.clone(),
+            hash: entries[1].hash.clone()
+        }
+    )
+    .unwrap_err()
+    .contains("list changed"));
+    assert!(stash_preview(&repo.0, "--help", &entries[0].hash).is_err());
+    mutate(
+        &repo.0,
+        Mutation::StashPop {
+            reference: entries[1].reference.clone(),
+            hash: entries[1].hash.clone(),
+            restore_index: false,
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        stash_list(&repo.0).unwrap().entries[0].hash,
+        entries[0].hash
+    );
+    assert_eq!(fs::read(repo.0.join("main.go")).unwrap(), b"first");
+}
+
 struct Repo(PathBuf);
 impl Repo {
     fn bare() -> Self {

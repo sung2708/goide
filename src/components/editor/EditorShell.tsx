@@ -356,6 +356,11 @@ function EditorShell() {
     nextPollingDelay,
   });
   const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
+  const [requestedGitView, setRequestedGitView] = useState<{ view: "changes" | "graph" | "stashes"; id: number }>();
+  const openGitView = (view: "changes" | "graph" | "stashes") => {
+    setActiveTab("git");
+    setRequestedGitView(current => ({ view, id: (current?.id ?? 0) + 1 }));
+  };
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
@@ -2010,6 +2015,9 @@ function EditorShell() {
   const commands: Command[] = [
     { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
+    { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
+    { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
+    { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
     { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: handleOpenWorkspace },
     { id: "file.quickOpen", title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); } },
     { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || documents.active?.readOnly || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
@@ -2150,6 +2158,7 @@ function EditorShell() {
               {activeTab === "git" && (
                 <GitPanel
                   key={workspacePath}
+                  requestedView={requestedGitView}
                   workspacePath={workspacePath}
                   revision={explorerRevision + analysisRevision}
                   transaction={gitDocumentTransaction}

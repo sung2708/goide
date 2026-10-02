@@ -16,6 +16,8 @@ pub fn run() {
             ui_bridge::git_commands::git_repository_status,
             ui_bridge::git_commands::git_file_diff,
             ui_bridge::git_commands::git_mutate,
+            ui_bridge::git_commands::git_stash_list,
+            ui_bridge::git_commands::git_stash_preview,
             ui_bridge::git_commands::git_cancel,
             ui_bridge::search_commands::search_workspace_text_v2,
             ui_bridge::search_commands::cancel_workspace_search,

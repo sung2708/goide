@@ -1,0 +1,53 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import StashPanel from "./StashPanel";
+const mocks = vi.hoisted(() => ({ list: vi.fn(), preview: vi.fn() }));
+vi.mock("../../lib/ipc/git", () => ({ getGitStashList: mocks.list, getGitStashPreview: mocks.preview }));
+const entry = { reference: "stash@{0}", hash: "a".repeat(40), date: "2026-10-03", message: "On main: saved Ω" };
+const mutate = vi.fn(), cancel = vi.fn();
+beforeEach(() => { vi.clearAllMocks(); mocks.list.mockResolvedValue({ ok: true, data: { entries: [entry], hasMore: false } }); mocks.preview.mockResolvedValue({ ok: true, data: { path: entry.reference, originalPath: null, patch: "@@ -1 +1 @@\n-old\n+stash", binary: false, limited: false } }); mutate.mockResolvedValue(true); });
+afterEach(() => { cleanup(); vi.restoreAllMocks(); });
+const props = { root: "repo", revision: 0, disabled: false, busy: false, error: null, mutate, cancel };
+it("lists real stash metadata, previews native diff and confirms explicit restore/drop", async () => {
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  render(<StashPanel {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "stash@{0} — On main: saved Ω" }));
+  expect(await screen.findByRole("region", { name: "Git diff" })).toHaveTextContent("+stash");
+  expect(mocks.preview).toHaveBeenCalledWith("repo", entry.reference, entry.hash);
+  fireEvent.click(screen.getByRole("button", { name: "Drop stash@{0}" })); expect(mutate).not.toHaveBeenCalled();
+  confirm.mockReturnValue(true); fireEvent.click(screen.getByRole("checkbox", { name: "Restore staged state on Apply/Pop" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Apply stash@{0}" })); });
+  expect(mutate).toHaveBeenCalledWith({ kind: "stashApply", reference: entry.reference, hash: entry.hash, restoreIndex: true });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Pop stash@{0}" })); });
+  expect(mutate).toHaveBeenCalledWith(expect.objectContaining({ kind: "stashPop", hash: entry.hash }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Drop stash@{0}" })); });
+  expect(mutate).toHaveBeenCalledWith({ kind: "stashDrop", reference: entry.reference, hash: entry.hash });
+});
+it("keeps the creation message after failure, refreshes conflicts, and exposes busy cancellation", async () => {
+  vi.spyOn(window, "confirm").mockReturnValue(true); mutate.mockResolvedValue(false);
+  const view = render(<StashPanel {...props} />); await screen.findByRole("button", { name: "Drop stash@{0}" });
+  fireEvent.change(screen.getByRole("textbox", { name: "Stash message" }), { target: { value: "retain" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Stash Including Untracked" })); });
+  expect(mutate).toHaveBeenCalledWith({ kind: "stashPush", message: "retain", includeUntracked: true });
+  expect(screen.getByRole("textbox", { name: "Stash message" })).toHaveValue("retain");
+  expect(mocks.list.mock.calls.length).toBeGreaterThan(1);
+  view.rerender(<StashPanel {...props} busy disabled error="Conflict; stash retained" />);
+  expect(screen.getByRole("alert")).toHaveTextContent("stash retained"); expect(screen.getByRole("button", { name: "Pop stash@{0}" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel Git operation" })); expect(cancel).toHaveBeenCalledOnce();
+});
+it("reports unavailable/stale requests and ignores retired workspace previews", async () => {
+  let resolve!: (response: unknown) => void; mocks.preview.mockImplementation(() => new Promise(complete => { resolve = complete; }));
+  const view = render(<StashPanel {...props} />);
+  fireEvent.click(await screen.findByRole("button", { name: "stash@{0} — On main: saved Ω" }));
+  mocks.list.mockResolvedValue({ ok: false, error: { message: "Git unavailable" } }); view.rerender(<StashPanel {...props} root="other" />);
+  await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Git unavailable"));
+  await act(async () => { resolve({ ok: true, data: { path: "old", patch: "obsolete", binary: false, limited: false } }); });
+  expect(screen.queryByRole("region", { name: "Git diff" })).toBeNull(); expect(mutate).not.toHaveBeenCalled();
+});
+it("shows an honest empty/limited list rather than invented stashes", async () => {
+  mocks.list.mockResolvedValue({ ok: true, data: { entries: [], hasMore: false } }); const view = render(<StashPanel {...props} />);
+  expect(await screen.findByText("No saved stashes.")).toBeInTheDocument();
+  mocks.list.mockResolvedValue({ ok: true, data: { entries: [entry], hasMore: true } });
+  view.rerender(<StashPanel {...props} revision={1} />);
+  expect(await screen.findByText(/latest 100/)).toBeInTheDocument(); expect(within(screen.getByRole("list", { name: "Saved stashes" })).getAllByRole("listitem")).toHaveLength(1);
+});
