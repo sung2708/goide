@@ -64,3 +64,15 @@ it("rejects workspace edits during Save All without changing the pending write",
   expect(() => session.applyReviewedEdits(expected, [{ path: "a.go", before: "unsaved", after: "formatted" }])).toThrow("Wait for document saves");
   finish({ ok: true }); await pending; expect(session.active?.text).toBe("unsaved"); expect(session.active?.baseline).toBe("unsaved");
 });
+
+it("applies preparation before deciding that no disk write is needed", async () => {
+  const session = setup(); const document = session.open("a.go", "formatted"); session.edit(document.id, "unformatted");
+  const writer = vi.fn(); await session.save(document.id, writer, async () => "formatted");
+  expect(writer).not.toHaveBeenCalled(); expect(session.active?.text).toBe("formatted"); expect(session.dirty).toBe(false);
+});
+it("acknowledges only prepared content while preserving edits made during its write", async () => {
+  const session = setup(); const document = session.open("a.go", "disk"); session.edit(document.id, "source");
+  const writer = vi.fn(async () => { session.edit(document.id, "newer"); return { ok: true }; });
+  await session.save(document.id, writer, async () => "formatted");
+  expect(writer).toHaveBeenCalledWith("repo", "a.go", "formatted", "disk"); expect(session.active?.text).toBe("newer"); expect(session.active?.baseline).toBe("formatted");
+});

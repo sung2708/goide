@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useSettings } from "../../features/settings/useSettings";
 import { Terminal } from "@xterm/xterm";
 import type { ITerminalInitOnlyOptions, ITerminalOptions } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
@@ -112,10 +113,12 @@ function TerminalSurface({
   options,
   className,
 }: TerminalSurfaceProps) {
+  const { values: settings } = useSettings();
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
+  const fontSizeRef = useRef(options?.fontSize ?? settings["terminal.fontSize"]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -135,6 +138,7 @@ function TerminalSurface({
     try {
       const resolvedOptions: TerminalCtorOptions = {
         ...DEFAULT_OPTIONS,
+        fontSize: settings["terminal.fontSize"],
         disableStdin: readOnly,
         cursorBlink: !readOnly,
         ...options,
@@ -253,6 +257,20 @@ function TerminalSurface({
       window.cancelAnimationFrame(handle);
     };
   }, [fitRequestKey, onResize]);
+
+  useEffect(() => {
+    const terminal = terminalRef.current;
+    if (!terminal) return;
+    const fontSize = options?.fontSize ?? settings["terminal.fontSize"];
+    if (fontSizeRef.current === fontSize) return;
+    fontSizeRef.current = fontSize;
+    terminal.options.fontSize = fontSize;
+    const frame = window.requestAnimationFrame(() => {
+      try { fitAddonRef.current?.fit(); onResize?.(terminal.cols, terminal.rows); }
+      catch (error) { setInitError(`Unable to resize the terminal renderer: ${String(error)}`); }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [settings["terminal.fontSize"], options?.fontSize, onResize]);
 
   if (initError !== null) {
     return (

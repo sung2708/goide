@@ -8,6 +8,7 @@ export type OpenDocument = Readonly<{
 }>;
 export type DocumentSnapshot = { root: string | null; activeId: number | null; documents: readonly OpenDocument[] };
 export type ReviewedDocumentEdit = { path: string; before: string; after: string; readOnly?: boolean };
+export type SavePreparation = (document: OpenDocument, root: string) => Promise<string>;
 type Writer = (root: string, path: string, text: string, baseline: string) => Promise<ApiResponse<unknown>>;
 export const isDocumentDirty = (document: OpenDocument) => document.text !== document.baseline;
 
@@ -103,24 +104,29 @@ export class DocumentSession {
     this.editors.delete(id);
     this.publish({ ...this.state, documents, activeId: this.state.activeId === id ? documents[documents.length - 1]?.id ?? null : this.state.activeId });
   }
-  async save(id: number, writer: Writer): Promise<void> {
+  async save(id: number, writer: Writer, prepare?: SavePreparation): Promise<void> {
     const document = this.state.documents.find(item => item.id === id), root = this.state.root;
     if (!document || !root) throw new Error("Document is no longer open.");
-    if (!isDocumentDirty(document)) return;
+    if (!isDocumentDirty(document) && !prepare) return;
     if (document.readOnly) throw new Error(`Cannot save read-only document ${document.path}.`);
     if (this.pending.has(id)) throw new Error(`Save already in progress for ${document.path}.`);
     this.pending.add(id);
     try {
-      const response = await writer(root, document.path, document.text, document.baseline);
-      if (!response.ok) throw new Error(response.error?.message ?? `Cannot save ${document.path}.`);
+      const text = prepare ? await prepare(document, root) : document.text;
+      const current = this.state.documents.find(item => item.id === id);
+      if (this.state.root !== root || !current || current.version !== document.version || current.text !== document.text || current.readOnly) throw new Error("Document changed during save preparation. Save again.");
+      if (text !== document.text) this.update(id, current => ({ ...current, text, version: current.version + 1 }));
+      if (text === document.baseline) return;
+      const response = await writer(root, document.path, text, document.baseline);
+      if (!response.ok) throw Object.assign(new Error(response.error?.message ?? `Cannot save ${document.path}.`), { code: response.error?.code });
       if (this.state.root !== root || !this.state.documents.some(item => item.id === id)) throw new Error("Document context changed while saving.");
       // Acknowledge only the written snapshot; newer edits remain dirty.
-      this.update(id, current => ({ ...current, baseline: document.text }));
+      this.update(id, current => ({ ...current, baseline: text }));
     } finally { this.pending.delete(id); }
   }
-  async saveAll(writer: Writer) {
+  async saveAll(writer: Writer, prepare?: SavePreparation) {
     const documents = this.state.documents.filter(isDocumentDirty);
-    for (const document of documents) await this.save(document.id, writer);
+    for (const document of documents) await this.save(document.id, writer, prepare);
     if (this.dirty) throw new Error("Documents changed while saving. Save again before continuing.");
   }
   remap(previous: string, next: string) {
