@@ -289,3 +289,10 @@ Real repository tests cover renames, deletion, skipped-result pagination and a b
 PTY root kill/wait failures now propagate instead of being discarded. A failed cleanup restores the session and surface mapping, retaining scrollback for retry. Potentially blocking stop/reap work runs outside the async runtime with an owned registry guard; an IPC timeout does not release that guard or permit a replacement shell to race with unfinished cleanup. App shutdown disposes each recorded session through this same path and keeps the window open on failure. Registration waits, shell-registry waits and stop/reap acknowledgement each have a 10-second response deadline; timing out leaves the lifecycle start gate closed while cleanup can be retried.
 
 Native tests cover stop failure/retry with preserved output, pending reaping across timeout, and a timed-out shutdown rejecting new registrations. This checkpoint does not establish complete per-session descendant teardown or joining every PTY reader on all platforms; those remain release-gate work. No tag/release is authorized.
+
+### Language cancellation checkpoint (2026-10-03)
+
+- [x] Cancel manual definition/reference/symbol queries and reviewed format/import/rename operations on supersession, snapshot changes and review close.
+- [x] Bound the whole native language operation, interrupt queued lock acquisition and pending protocol waits, and preserve a reusable gopls session after cancellation.
+- [ ] Extend native cancellation to automatic completion and remaining legacy language/tool paths.
+- [ ] Finish automatic hover/signature help, save preferences and the remaining source-control/addendum requirements before release. No release tag is authorized by this checkpoint.

@@ -274,6 +274,7 @@ pub fn wait_lsp_response_until_sync(
     deadline: std::time::Instant,
 ) -> Result<Value> {
     while std::time::Instant::now() < deadline {
+        super::language_requests::check()?;
         if is_shutting_down() {
             return Err(anyhow!("language server is shutting down"));
         }
@@ -290,6 +291,7 @@ pub fn wait_lsp_response_until_sync(
             _ => {}
         }
     }
+    super::language_requests::check()?;
     Err(anyhow!("timeout waiting for LSP response for id {}", id))
 }
 
