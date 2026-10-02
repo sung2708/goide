@@ -349,3 +349,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: full-hash/reference stale-selection checks, immutable-content application, no drop after failed/conflicted apply, source-control conflict refresh and guarded buffer saves/run-debug transitions.
 - Delivered: Source Control/Git Graph/Stashes command navigation and repeated view requests.
 - Remaining: selected/staged-only stashes, older-entry pagination beyond the visible 100-entry limit, external-ref concurrency acceptance, full graph filters/compare/blame/hunk workflows, and the unfinished addendum/platform matrix. No release/tag is authorized.
+
+## Toolchain information checkpoint (2026-10-03)
+
+- Delivered: shared concrete executable resolution, bounded actual version output, typed readiness states and visible native probe errors.
+- Delivered: status-bar/command inspection, retry/loading, stale-response rejection and an honest desktop-only browser response.
+- Remaining: configurable Go/gopls/Delve paths, project environment/module detection/actions, explicit probe cancellation and complete platform/tool-version acceptance. This checkpoint is not release certification.

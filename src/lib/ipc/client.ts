@@ -310,12 +310,8 @@ export async function getRuntimeAvailability(): Promise<
 export async function getToolchainStatus(): Promise<ApiResponse<ToolchainStatus>> {
   if (!hasTauriInternals()) {
     return {
-      ok: true,
-      data: {
-        go: { available: false },
-        gopls: { available: false },
-        delve: { available: false },
-      },
+      ok: false,
+      error: { code: "toolchain_native_required", message: "Toolchain detection requires the desktop app. Native tools cannot be inspected in browser preview." },
     };
   }
   return invoke<ApiResponse<ToolchainStatus>>("get_toolchain_status");

@@ -20,6 +20,7 @@ import LanguageEditReview from "../../features/language/LanguageEditReview";
 import { useSavePreparation } from "../../features/language/useSavePreparation";
 import { useSettings } from "../../features/settings/useSettings";
 import SettingsDialog from "../../features/settings/SettingsDialog";
+import ToolchainDialog from "../../features/settings/ToolchainDialog";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -288,6 +289,7 @@ function EditorShell() {
   const settings = useSettings();
   const settingsRef = useRef(settings.values); settingsRef.current = settings.values;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isToolchainOpen, setIsToolchainOpen] = useState(false);
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const { session: documents, snapshot: documentSnapshot, workspacePath, setWorkspacePath, activeFilePath, setActiveFilePath, activeFileContent, setActiveFileContent, isDirty, activeFilePathRef, savedContentRef, latestEditorContentRef } = useDocumentSession();
   const [isOpening, setIsOpening] = useState(false);
@@ -305,7 +307,8 @@ function EditorShell() {
   const [runtimeAvailability, setRuntimeAvailability] = useState<
     "available" | "unavailable" | "degraded"
   >("unavailable");
-  const toolchainStatus = useToolchainStatus();
+  const toolchain = useToolchainStatus();
+  const toolchainStatus = toolchain.status;
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runMode, setRunMode] = useState<RunMode>("standard");
@@ -2015,6 +2018,7 @@ function EditorShell() {
   const commands: Command[] = [
     { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
+    { id: "go.toolchain", title: "Go: Inspect Toolchain", run: () => setIsToolchainOpen(true) },
     { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
     { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
     { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
@@ -2056,6 +2060,7 @@ function EditorShell() {
       <div className="workspace-titlebar">
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+        <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
@@ -2683,6 +2688,9 @@ function EditorShell() {
         diagnosticsAvailability={diagnosticsAvailability}
         completionAvailability={completionAvailability}
         toolchainStatus={toolchainStatus}
+        toolchainError={toolchain.error}
+        toolchainChecking={toolchain.checking}
+        onOpenToolchain={() => setIsToolchainOpen(true)}
         saveStatus={saveStatus}
         runStatus={runStatus}
         branchName={branchSnapshot?.currentBranch ?? null}
