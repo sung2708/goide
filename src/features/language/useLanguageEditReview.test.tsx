@@ -4,7 +4,8 @@ import { DocumentSession } from "../documents/DocumentSession";
 import { useLanguageEditReview } from "./useLanguageEditReview";
 import LanguageEditReview from "./LanguageEditReview";
 const formatMock = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock }));
+const importsMock = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock, organizeWorkspaceImports: importsMock }));
 
 it("requires review before editing and retains the original save baseline", async () => {
   const session = new DocumentSession(); session.reset("repo"); const doc = session.open("main.go", "disk"); session.edit(doc.id, "unsaved");
@@ -37,4 +38,14 @@ it("shows complete before/after and disables Apply for unavailable tooling", () 
   fireEvent.click(screen.getByRole("button", { name: "Apply to Editor" })); expect(apply).toHaveBeenCalledOnce();
   view.rerender(<LanguageEditReview state={{ loading: false, error: "gopls unavailable", plan: null }} onApply={apply} onClose={close} />);
   expect(screen.getByRole("alert")).toHaveTextContent("gopls unavailable"); expect(screen.getByRole("button", { name: "Apply to Editor" })).toBeDisabled();
+});
+
+it("uses the Organize Imports endpoint and the same reviewed baseline protection", async () => {
+  const session = new DocumentSession(); session.reset("repo"); session.open("main.go", "source without import");
+  importsMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before: "source without import", after: "source with import", readOnly: false }] } });
+  const hook = renderHook(() => useLanguageEditReview(session, session.snapshot(), vi.fn()));
+  await act(() => hook.result.current.organizeImports());
+  expect(importsMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go" }));
+  expect(hook.result.current.state?.operation).toBe("imports"); expect(session.active?.text).toBe("source without import");
+  act(() => hook.result.current.apply()); expect(session.active?.text).toBe("source with import"); expect(session.active?.baseline).toBe("source without import");
 });
