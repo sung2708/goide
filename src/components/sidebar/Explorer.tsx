@@ -10,6 +10,7 @@ import {
 } from "../../lib/ipc/client";
 import { FileIcon, FolderIconComponent } from "./FileIcon";
 import { cn } from "../../lib/utils/cn";
+import type { ExplorerTransaction } from "../editor/useExplorerDocumentTransaction";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faAngleDown,
@@ -41,6 +42,7 @@ type ExplorerProps = {
   fileDecorations?: Map<string, FileDecoration>;
   /** Incrementing this value from outside forces the tree to reload from disk. */
   explorerRevision?: number;
+  transaction?: ExplorerTransaction;
 };
 
 type EntryState = {
@@ -346,6 +348,7 @@ function Explorer({
   onEntryDeleted,
   fileDecorations,
   explorerRevision = 0,
+  transaction,
 }: ExplorerProps) {
   const [rootState, setRootState] = useState<EntryState>(emptyState);
   const [childrenByPath, setChildrenByPath] = useState<Record<string, EntryState>>({});
@@ -594,7 +597,8 @@ function Explorer({
   const runMutation = useCallback(
     async <T,>(operation: () => Promise<{ ok: boolean; data?: T; error?: { message: string } }>, affectedPath?: string) => {
       setOperationError(null);
-      const response = await operation();
+      const response = transaction ? await transaction(operation, affectedPath) : await operation();
+      if (!response) return null;
       if (!response.ok) {
         setOperationError(response.error?.message ?? "Operation failed");
         return null;
@@ -604,9 +608,10 @@ function Explorer({
       } else {
         refreshTree();
       }
-      return response.data ?? null;
+      // Successful void responses differ from failed operations (null).
+      return response.data ?? undefined;
     },
-    [refreshParentDirectory, refreshTree]
+    [refreshParentDirectory, refreshTree, transaction]
   );
 
   const remapTreePaths = useCallback((previousPath: string, nextPath: string) => {
@@ -658,7 +663,7 @@ function Explorer({
         return;
       }
       const result = await runMutation(() => deleteWorkspaceEntry(workspacePath, entry.path), entry.path);
-      if (result === null && result !== undefined) {
+      if (result === null) {
         return;
       }
       setExpanded((prev) => {

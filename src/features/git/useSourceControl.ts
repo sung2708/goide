@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getGitFileDiff, getGitRepositoryStatus, mutateGit, type GitFileDiff, type GitMutation, type GitRepositoryStatus } from "../../lib/ipc/git";
+import { getGitFileDiff, getGitRepositoryStatus, mutateGit, cancelGit, type GitFileDiff, type GitMutation, type GitRepositoryStatus } from "../../lib/ipc/git";
 
-export type GitTransaction = (operation: () => Promise<void>, saveBuffer?: boolean) => Promise<boolean>;
+export type GitTransaction = (operation: () => Promise<void>, saveBuffer?: boolean, changesFiles?: boolean) => Promise<boolean>;
 
 export function useSourceControl(root: string | null, revision: number, transaction?: GitTransaction, onChanged?: () => void) {
   const [status, setStatus] = useState<GitRepositoryStatus | null>(null);
@@ -16,6 +16,7 @@ export function useSourceControl(root: string | null, revision: number, transact
   const generation = useRef(0);
   const diffGeneration = useRef(0);
   const mutationPending = useRef(false);
+  const cancellationRequested = useRef(false);
   const epoch = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -67,15 +68,16 @@ export function useSourceControl(root: string | null, revision: number, transact
 
   const mutate = useCallback(async (mutation: GitMutation) => {
     if (!root || mutationPending.current || !transaction) return false;
-    mutationPending.current = true; setBusy(true); setOperationError(null);
+    mutationPending.current = true; cancellationRequested.current = false; setBusy(true); setOperationError(null);
     const session = epoch.current;
     let succeeded = false;
     try {
       await transaction(async () => {
+        if (cancellationRequested.current) throw new Error("Git operation cancelled before execution. No Git mutation was started.");
         const response = await mutateGit(root, mutation);
         if (!response.ok) throw new Error(response.error?.message ?? "Git operation failed.");
         succeeded = true;
-      }, mutation.kind === "stage");
+      }, ["stage", "pull", "discard", "deleteUntracked"].includes(mutation.kind), ["pull", "discard", "deleteUntracked"].includes(mutation.kind));
       if (currentRoot.current !== root || epoch.current !== session) return false;
       if (succeeded) {
         diffGeneration.current++; setDiff(null);
@@ -94,5 +96,12 @@ export function useSourceControl(root: string | null, revision: number, transact
     return succeeded;
   }, [root, transaction, onChanged, refresh]);
 
-  return { status, error: operationError ?? error, loading, busy, diff, diffLoading, output, refresh, openDiff, mutate, closeDiff: () => { diffGeneration.current++; setDiff(null); setDiffLoading(false); } };
+  const cancel = async () => {
+    if (!root || !busy) return;
+    cancellationRequested.current = true;
+    try { const response = await cancelGit(root); if (!response.ok) throw new Error(response.error?.message ?? "Cancellation failed.");
+      setOutput((lines) => [...lines.slice(-19), "Cancellation requested; waiting for Git to stop. Repository state will be refreshed."]);
+    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+  };
+  return { status, error: operationError ?? error, loading, busy, diff, diffLoading, output, refresh, openDiff, mutate, cancel, closeDiff: () => { diffGeneration.current++; setDiff(null); setDiffLoading(false); } };
 }

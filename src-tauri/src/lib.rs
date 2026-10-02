@@ -12,8 +12,12 @@ pub fn run() {
             ui_bridge::git_commands::git_repository_status,
             ui_bridge::git_commands::git_file_diff,
             ui_bridge::git_commands::git_mutate,
+            ui_bridge::git_commands::git_cancel,
             ui_bridge::git_commands::git_history_page,
+            ui_bridge::git_commands::git_commit_details,
+            ui_bridge::git_commands::git_historical_diff,
             ui_bridge::document_commands::get_workspace_file_state,
+            ui_bridge::commands::shutdown_owned_resources,
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
             ui_bridge::commands::write_workspace_file,
@@ -47,6 +51,12 @@ pub fn run() {
             ui_bridge::commands::debugger_toggle_breakpoint,
             ui_bridge::commands::search_workspace_text,
             ui_bridge::commands::get_workspace_git_snapshot,
+            ui_bridge::commands::stage_workspace_git_file,
+            ui_bridge::commands::unstage_workspace_git_file,
+            ui_bridge::commands::commit_workspace_git_changes,
+            ui_bridge::commands::get_workspace_commit_detail,
+            ui_bridge::commands::get_workspace_git_graph,
+            ui_bridge::commands::get_workspace_git_graph_commits,
             ui_bridge::commands::get_workspace_branches,
             ui_bridge::commands::switch_workspace_branch,
             ui_bridge::commands::ensure_shell_session,
@@ -57,16 +67,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(|app, event| {
-            if matches!(event, tauri::RunEvent::Exit) {
-                use tauri::Manager;
-                if let Err(error) = app
-                    .state::<integration::fs_watch::FsWatchService>()
-                    .stop_all()
-                {
-                    eprintln!("Filesystem sync shutdown failed: {error}");
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                if !integration::lifecycle::exit_approved() {
+                    use tauri::Emitter;
+                    api.prevent_exit();
+                    if let Err(error) = app.emit("app-close-requested", ()) {
+                        eprintln!("Unable to request safe close: {error}");
+                    }
                 }
-                if let Err(error) = integration::lsp_manager::shutdown_lsp_session() {
-                    eprintln!("Language server shutdown failed: {error}");
+            }
+            if matches!(event, tauri::RunEvent::Exit) {
+                let response = tauri::async_runtime::block_on(
+                    ui_bridge::commands::shutdown_owned_resources(app.clone()),
+                );
+                if !response.ok {
+                    eprintln!("Owned resource shutdown failed");
                 }
             }
         });

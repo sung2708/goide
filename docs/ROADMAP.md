@@ -182,3 +182,15 @@ Implementation order is baseline green, data safety, process ownership, command/
 The target journey is open -> navigate -> edit -> format/save -> diagnose -> run/test/debug -> inspect concurrency -> fix -> commit -> close/reopen/restore. Fundamental reliability takes precedence over feature count.
 
 Each meaningful milestone reports implemented/hardened work, tests, bugs found/fixed, performance/security findings, remaining P0/P1/P2, validation (PASS/FAIL/NOT RUN/BLOCKED BY ENVIRONMENT) and the next dependency milestone. Do not invent completion percentages or claim runtime data unsupported by Go/gopls/Delve. Before Stable, manually validate the complete journey and required install/upgrade/platform paths; automated mocks do not replace native evidence.
+
+### Verified Source Control and Document Safety Foundation
+
+- [x] Repository status uses porcelain v2 NUL records, keeps index/worktree states independent, preserves rename paths and exposes real conflict/operation state. Mutations target the opened repository root and use a per-repository lock.
+- [x] Explicit stage/unstage and staged-only commits respect configured hooks/signing. Unified diffs distinguish index/worktree, binary files and bounded large output. Discard preserves the index; untracked deletion is a separate confirmed file-only operation.
+- [x] Fetch, fast-forward-only Pull and explicit-target Push use configured named remotes and system Git authentication. No force push, config override, automatic retries or implicit staging. Cancellation stops owned Git processes and refreshes actual state.
+- [x] Commit history pins ref tips while paging, includes merge parents/local and remote refs/tags/HEAD, and renders bounded virtual rows. The develop graph renderer is retained and connected to the typed history API. Commit details expose full messages, renamed paths, parent selection and historical diffs.
+- [x] Existing-file saves require a disk-content baseline. External clean edits reload; dirty/deleted buffers remain available for compare, confirmed reload/overwrite or copying. A deleted file is never recreated by autosave. This is optimistic conflict detection, not an OS-level atomic compare-and-swap against arbitrary external writers.
+- [x] Explorer mutations preserve affected buffers, block failed/in-flight saves, remap active paths and retire deleted editor identities. Native close/quit routes through Save/Discard/Cancel and shared resource teardown; registration is serialized against final shutdown.
+- [ ] Finish conflict resolution, stash/history operations and the remaining Git prompt requirements. Conflict indicators and terminal escape are not a merge editor.
+- [ ] Complete multi-document ownership, Save All, every transition choice, cached fuzzy navigation, Go/LSP/test/debug workflows and the remaining feature addendum requirements above.
+- [ ] Verify real native quit/cancellation/descendant ownership and clean install/upgrade on required platforms. Windows automated suites do not establish macOS/Linux or release readiness. Do not create or push release tags.
