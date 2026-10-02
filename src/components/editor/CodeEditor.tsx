@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import CodeMirror from "@uiw/react-codemirror";
+import { preserveExternalSelection, synchronizeControlledDocument } from "../../features/documents/preserveSelection";
 import {
   EditorState,
   EditorSelection,
@@ -632,6 +633,10 @@ function CodeEditor({
   externalSearchQuery = null,
 }: CodeEditorProps) {
   const [editorView, setEditorView] = useState<EditorView | null>(null);
+  useLayoutEffect(() => {
+    const view = viewRef.current;
+    if (view && typeof view.state.doc.length === "number") synchronizeControlledDocument(view, value);
+  }, [value, editorView]);
   const internalSemanticClient = useMemo(() => {
     if (semanticAnalysisClient || typeof Worker === "undefined") {
       return null;
@@ -1107,6 +1112,7 @@ function CodeEditor({
       ...historyKeymap,
       ...defaultKeymap,
     ])),
+    preserveExternalSelection,
     EditorView.updateListener.of((update) => {
       if (suppressFindWidget && searchPanelOpen(update.state)) {
         closeSearchPanel(update.view);

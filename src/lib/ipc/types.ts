@@ -119,6 +119,8 @@ export type LanguageQueryKind = "definition" | "references" | "hover";
 export type LanguageLocation = { path: string; line: number; column: number; endLine: number; endColumn: number };
 export type LanguageQuery = { workspaceRoot: string; relativePath: string; line: number; column: number; kind: LanguageQueryKind; buffers: { path: string; content: string }[] };
 export type LanguageQueryResult = { locations: LanguageLocation[]; text: string | null; outsideWorkspace: number };
+export type LanguageFormatRequest = { workspaceRoot: string; relativePath: string; buffers: { path: string; content: string }[] };
+export type LanguageEditPlan = { files: { path: string; before: string; after: string; readOnly: boolean }[] };
 
 export type DeepTraceConstructKind =
   | "channel"
