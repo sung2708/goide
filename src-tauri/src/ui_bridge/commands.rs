@@ -27,7 +27,7 @@ use crate::ui_bridge::types::{
     WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDetailDto,
     WorkspaceGitCommitDto, WorkspaceGitCommitFileStatDto, WorkspaceGitCommitRequestDto,
     WorkspaceGitFileActionRequestDto, WorkspaceGitGraphCommitDto, WorkspaceGitGraphEntryDto,
-    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
+    WorkspaceGitSnapshotDto, WorkspaceSearchFileDto,
 };
 use std::collections::{HashMap, HashSet};
 use std::fs as std_fs;
@@ -366,6 +366,11 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
 ) -> ApiResponse<()> {
     use tauri::Manager;
     let _shutdown = crate::integration::lifecycle::gate().shutdown().await;
+    match tauri::async_runtime::spawn_blocking(crate::integration::git::shutdown).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return ApiResponse::err("shutdown_failed", &error),
+        Err(error) => return ApiResponse::err("shutdown_failed", &error.to_string()),
+    }
     let stopped = stop_current_run().await;
     if !stopped.ok {
         return stopped;
@@ -1563,164 +1568,15 @@ fn resolve_workspace_root(workspace_root: &str) -> Result<PathBuf, String> {
     Ok(root)
 }
 
-fn should_search_file(path: &Path) -> bool {
-    let extension = path
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .map(|value| value.to_ascii_lowercase());
-    matches!(
-        extension.as_deref(),
-        Some("go")
-            | Some("mod")
-            | Some("sum")
-            | Some("md")
-            | Some("txt")
-            | Some("json")
-            | Some("yaml")
-            | Some("yml")
-            | Some("toml")
-            | Some("rs")
-            | Some("ts")
-            | Some("tsx")
-            | Some("js")
-            | Some("jsx")
-            | Some("css")
-            | Some("html")
-    )
-}
-
-fn collect_search_results(
-    root: &Path,
-    current: &Path,
-    query: &str,
-    results: &mut Vec<WorkspaceSearchFileDto>,
-    file_cap: usize,
-) {
-    if results.len() >= file_cap {
-        return;
-    }
-    let Ok(entries) = std_fs::read_dir(current) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        if results.len() >= file_cap {
-            break;
-        }
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if matches!(
-                name.as_str(),
-                ".git" | "node_modules" | "target" | "dist" | ".turbo" | ".cache" | "vendor"
-            ) {
-                continue;
-            }
-            collect_search_results(root, &path, query, results, file_cap);
-            continue;
-        }
-        if !file_type.is_file() || !should_search_file(&path) {
-            continue;
-        }
-
-        // Skip large files (> 1MB) for search performance
-        if let Ok(metadata) = path.metadata() {
-            if metadata.len() > 1_000_000 {
-                continue;
-            }
-        }
-
-        let Ok(content) = std_fs::read_to_string(&path) else {
-            continue;
-        };
-        let mut matches = Vec::new();
-        for (index, line) in content.lines().enumerate() {
-            if line.to_ascii_lowercase().contains(query) {
-                matches.push(WorkspaceSearchMatchDto {
-                    line: index + 1,
-                    preview: line.trim().to_string(),
-                });
-                if matches.len() >= 10 {
-                    break;
-                }
-            }
-        }
-        if matches.is_empty() {
-            continue;
-        }
-        let relative_path = path
-            .strip_prefix(root)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .replace('\\', "/");
-        results.push(WorkspaceSearchFileDto {
-            relative_path,
-            matches,
-        });
-    }
-}
-
+#[cfg(test)]
 fn search_with_git_grep(root: &Path, query: &str) -> Result<Vec<WorkspaceSearchFileDto>, String> {
-    let output = std_command("git")
-        .arg("grep")
-        .arg("-F")
-        .arg("-i")
-        .arg("-I")
-        .arg("--line-number")
-        .arg("--")
-        .arg(query)
-        .current_dir(root)
-        .output()
-        .map_err(|e| e.to_string())?;
-
-    if !output.status.success() && output.status.code() != Some(1) {
-        return Err(String::from_utf8_lossy(&output.stderr).to_string());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut file_map: HashMap<String, Vec<WorkspaceSearchMatchDto>> = HashMap::new();
-
-    for line in stdout.lines() {
-        let parts: Vec<&str> = line.splitn(3, ':').collect();
-        if parts.len() < 3 {
-            continue;
-        }
-
-        let path = parts[0].replace('\\', "/");
-        let line_num = parts[1].parse::<usize>().unwrap_or(0);
-        let preview = parts[2].trim().to_string();
-
-        if line_num == 0 {
-            continue;
-        }
-
-        let matches = file_map.entry(path).or_default();
-        if matches.len() < 10 {
-            matches.push(WorkspaceSearchMatchDto {
-                line: line_num,
-                preview,
-            });
-        }
-    }
-
-    let mut results: Vec<WorkspaceSearchFileDto> = file_map
-        .into_iter()
-        .map(|(relative_path, matches)| WorkspaceSearchFileDto {
-            relative_path,
-            matches,
-        })
-        .collect();
-
-    results.sort_by(|a, b| a.relative_path.cmp(&b.relative_path));
-
-    // Limit to 100 files for git grep to maintain UI performance
-    if results.len() > 100 {
-        results.truncate(100);
-    }
-
-    Ok(results)
+    crate::integration::search::search(
+        root.to_str().ok_or("Non-UTF-8 workspace")?,
+        &uuid::Uuid::new_v4().to_string(),
+        query,
+        Default::default(),
+    )
+    .map(|report| report.files)
 }
 
 #[tauri::command]
@@ -1728,37 +1584,21 @@ pub async fn search_workspace_text(
     workspace_root: String,
     query: String,
 ) -> ApiResponse<Vec<WorkspaceSearchFileDto>> {
-    let trimmed = query.trim().to_ascii_lowercase();
-    if trimmed.is_empty() {
-        return ApiResponse::ok(Vec::new());
+    if query.trim().is_empty() {
+        return ApiResponse::ok(vec![]);
     }
-    let root = match resolve_workspace_root(&workspace_root) {
-        Ok(path) => path,
-        Err(message) => return ApiResponse::err("search_invalid_workspace", &message),
-    };
-
-    let is_git = root.join(".git").exists();
-    let query_clone = trimmed.clone();
-    let root_clone = root.clone();
-
-    let result = tauri::async_runtime::spawn_blocking(
-        move || -> Result<Vec<WorkspaceSearchFileDto>, String> {
-            if is_git {
-                if let Ok(results) = search_with_git_grep(&root_clone, &query_clone) {
-                    return Ok(results);
-                }
-            }
-
-            let mut files = Vec::new();
-            collect_search_results(&root_clone, &root_clone, &query_clone, &mut files, 100);
-            Ok(files)
-        },
-    )
-    .await;
-
-    match result {
-        Ok(Ok(files)) => ApiResponse::ok(files),
-        Ok(Err(message)) => ApiResponse::err("search_failed", &message),
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::search::search(
+            &workspace_root,
+            &uuid::Uuid::new_v4().to_string(),
+            &query,
+            Default::default(),
+        )
+    })
+    .await
+    {
+        Ok(Ok(report)) => ApiResponse::ok(report.files),
+        Ok(Err(error)) => ApiResponse::err("search_failed", &error),
         Err(error) => ApiResponse::err("search_failed", &error.to_string()),
     }
 }

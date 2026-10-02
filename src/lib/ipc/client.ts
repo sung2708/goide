@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  WorkspaceReplacementRequest,
+  WorkspaceReplacementPlan,
+  WorkspaceSearchOptions,
+  WorkspaceSearchReport,
   ActivateDeepTraceRequest,
   ActivateDeepTraceResponse,
   AnalyzeConcurrencyRequest,
@@ -373,18 +377,31 @@ export async function debuggerToggleBreakpoint(
 
 export async function searchWorkspaceText(
   workspaceRoot: string,
-  query: string
-): Promise<ApiResponse<WorkspaceSearchFile[]>> {
+  query: string,
+  options: WorkspaceSearchOptions = { matchCase: false, wholeWord: false, useRegex: false, include: [], exclude: [] },
+  requestId: string = crypto.randomUUID(),
+): Promise<ApiResponse<WorkspaceSearchFile[]> & { limited?: boolean; reason?: string | null }> {
   if (!hasTauriInternals()) {
     return {
-      ok: true,
-      data: [],
+      ok: false,
+      error: { code: "search_native_required", message: "Workspace search requires the desktop app." },
     };
   }
-  return invoke<ApiResponse<WorkspaceSearchFile[]>>("search_workspace_text", {
+  const response = await invoke<ApiResponse<WorkspaceSearchReport>>("search_workspace_text_v2", {
     workspaceRoot,
     query,
+    options,
+    requestId,
   });
+  return { ok: response.ok, error: response.error, data: response.data?.files, limited: response.data?.limited, reason: response.data?.reason };
+}
+export async function cancelWorkspaceSearch(requestId: string): Promise<ApiResponse<boolean>> {
+  if (!hasTauriInternals()) return { ok: true, data: false };
+  return invoke<ApiResponse<boolean>>("cancel_workspace_search", { requestId });
+}
+export async function previewWorkspaceReplacement(request: WorkspaceReplacementRequest): Promise<ApiResponse<WorkspaceReplacementPlan[]>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "replacement_native_required", message: "Replacement requires the desktop app." } };
+  return invoke<ApiResponse<WorkspaceReplacementPlan[]>>("preview_workspace_replacement", { request });
 }
 
 export async function getWorkspaceGitSnapshot(

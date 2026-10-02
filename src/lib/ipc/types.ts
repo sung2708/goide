@@ -412,3 +412,8 @@ export type ShellOutputPayload = {
   shellSessionId: string;
   data: string;
 };
+export type { GitRepositoryStatus, GitFileStatus, GitFileDiff, GitHistoryCommit, GitHistoryPage, GitCommitDetails, GitConflictContent, GitMutation } from "./git";
+export type WorkspaceSearchOptions = { matchCase: boolean; wholeWord: boolean; useRegex: boolean; include: string[]; exclude: string[] };
+export type WorkspaceSearchReport = { files: WorkspaceSearchFile[]; limited: boolean; reason: string | null; scannedFiles: number };
+export type WorkspaceReplacementRequest = { workspaceRoot: string; query: string; replacement: string; options: WorkspaceSearchOptions; files: WorkspaceSearchFile[]; single: boolean };
+export type WorkspaceReplacementPlan = { path: string; before: string; after: string; occurrences: number };

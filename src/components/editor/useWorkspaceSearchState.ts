@@ -1,129 +1,94 @@
-import { useCallback, useRef, useState } from "react";
-import {
-  readWorkspaceFile,
-  searchWorkspaceText,
-  writeWorkspaceFile,
-} from "../../lib/ipc/client";
-import type { WorkspaceSearchFile } from "../../lib/ipc/types";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { searchWorkspaceText, writeWorkspaceFile, cancelWorkspaceSearch, previewWorkspaceReplacement } from "../../lib/ipc/client";
+import type { WorkspaceSearchFile, WorkspaceSearchOptions, WorkspaceReplacementPlan } from "../../lib/ipc/types";
 
-type WorkspaceSearchState = {
-  searchLoading: boolean;
-  workspaceSearchResults: WorkspaceSearchFile[];
-  resetWorkspaceSearch: () => void;
-  handleWorkspaceSearch: (query: string) => Promise<void>;
-  replaceMatch: (
-    file: string,
-    line: number,
-    searchText: string,
-    replacement: string
-  ) => Promise<void>;
-  replaceAllMatches: (searchText: string, replacement: string) => Promise<void>;
-};
-
-export function useWorkspaceSearchState(
-  workspacePath: string | null
-): WorkspaceSearchState {
+type Safety = { transaction?: (operation: () => Promise<void>) => Promise<boolean>; onChanged?: () => void; review?: (plans: WorkspaceReplacementPlan[]) => Promise<boolean> };
+const defaults: WorkspaceSearchOptions = { matchCase: false, wholeWord: false, useRegex: false, include: [], exclude: [] };
+export function useWorkspaceSearchState(workspacePath: string | null, safety: Safety = {}) {
   const [searchLoading, setSearchLoading] = useState(false);
-  const [workspaceSearchResults, setWorkspaceSearchResults] = useState<
-    WorkspaceSearchFile[]
-  >([]);
+  const [workspaceSearchResults, setWorkspaceSearchResults] = useState<WorkspaceSearchFile[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchWarning, setSearchWarning] = useState<string | null>(null);
+  const nativeId = useRef<string | null>(null);
+  const submittedOptions = useRef(defaults);
   const searchRequestIdRef = useRef(0);
-
+  const currentRoot = useRef(workspacePath); currentRoot.current = workspacePath;
+  const latestSafety = useRef(safety); latestSafety.current = safety;
+  const replacing = useRef(false);
+  const submittedQuery = useRef("");
   const resetWorkspaceSearch = useCallback(() => {
-    searchRequestIdRef.current += 1;
-    setWorkspaceSearchResults([]);
-    setSearchLoading(false);
+    searchRequestIdRef.current++; submittedQuery.current = "";
+    if (nativeId.current) void cancelWorkspaceSearch(nativeId.current).catch(() => undefined);
+    nativeId.current = null; setSearchWarning(null);
+    setWorkspaceSearchResults([]); setSearchLoading(false); setSearchError(null);
   }, []);
-
-  const handleWorkspaceSearch = useCallback(
-    async (query: string) => {
-      const trimmedQuery = query.trim();
-      if (!workspacePath || !trimmedQuery) {
-        searchRequestIdRef.current += 1;
-        setWorkspaceSearchResults([]);
-        setSearchLoading(false);
-        return;
+  useEffect(() => { resetWorkspaceSearch(); return () => { searchRequestIdRef.current++; if (nativeId.current) void cancelWorkspaceSearch(nativeId.current).catch(() => undefined); }; }, [workspacePath, resetWorkspaceSearch]);
+  const handleWorkspaceSearch = useCallback(async (query: string, options: WorkspaceSearchOptions = defaults) => {
+    const request = ++searchRequestIdRef.current;
+    if (nativeId.current) void cancelWorkspaceSearch(nativeId.current).catch(() => undefined);
+    const requestId = crypto.randomUUID(); nativeId.current = requestId;
+    submittedQuery.current = query.trim();
+    submittedOptions.current = options;
+    if (!workspacePath || !query.trim()) { setWorkspaceSearchResults([]); setSearchLoading(false); return; }
+    setSearchLoading(true); setSearchError(null); setSearchWarning(null); setWorkspaceSearchResults([]);
+    try {
+      const response = await searchWorkspaceText(workspacePath, query.trim(), options, requestId);
+      if (request !== searchRequestIdRef.current || currentRoot.current !== workspacePath) return;
+      if (!response.ok || !response.data) throw new Error(response.error?.message ?? "Workspace search failed.");
+      setWorkspaceSearchResults(response.data);
+      setSearchWarning(response.limited ? response.reason ?? "Results are limited. Narrow the search." : null);
+    } catch (error) {
+      if (request === searchRequestIdRef.current && currentRoot.current === workspacePath) {
+        setWorkspaceSearchResults([]); setSearchError(error instanceof Error ? error.message : String(error));
       }
-      const requestId = searchRequestIdRef.current + 1;
-      searchRequestIdRef.current = requestId;
-      setSearchLoading(true);
-      try {
-        const resp = await searchWorkspaceText(workspacePath, trimmedQuery);
-        if (requestId !== searchRequestIdRef.current) {
-          return;
+    } finally { if (request === searchRequestIdRef.current && currentRoot.current === workspacePath) setSearchLoading(false); }
+  }, [workspacePath]);
+  const replace = async (files: WorkspaceSearchFile[], searchText: string, replacement: string, single: boolean) => {
+    if (!workspacePath || replacing.current || !searchText || searchText !== submittedQuery.current) return;
+    if (!latestSafety.current.transaction) { setSearchError("Safe document transaction unavailable; no files were replaced."); return; }
+    replacing.current = true; setSearchError(null);
+    let completed = 0;
+    const options = submittedOptions.current;
+    try {
+      const allowed = await latestSafety.current.transaction(async () => {
+        const response = await previewWorkspaceReplacement({ workspaceRoot: workspacePath, query: searchText, replacement, options, files, single });
+        if (!response.ok || !response.data) throw new Error(response.error?.message ?? "Cannot prepare replacement preview.");
+        const plans = response.data;
+        if (currentRoot.current !== workspacePath) throw new Error("Workspace changed; replacement stopped.");
+        const preview = plans.map((plan) => `${plan.path}: ${plan.occurrences} occurrence(s)\n${plan.before.slice(0, 300)}\n→\n${plan.after.slice(0, 300)}`).join("\n\n");
+        const accepted = latestSafety.current.review ? await latestSafety.current.review(plans) : window.confirm(`Save these ${single ? "selected" : "displayed"} replacements to disk? Unlisted lines are retained. Replacement text is literal, including $ characters.\n\n${preview.slice(0, 12000)}`);
+        if (!accepted) return;
+        if (searchText !== submittedQuery.current || submittedOptions.current !== options) throw new Error("Search scope changed during review. Prepare a new replacement preview.");
+        for (const plan of plans) {
+          if (currentRoot.current !== workspacePath) throw new Error("Workspace changed; remaining replacements stopped.");
+          const response = await writeWorkspaceFile(workspacePath, plan.path, plan.after, plan.before);
+          if (!response.ok) throw new Error(response.error?.message ?? `Cannot save ${plan.path}.`);
+          completed++;
         }
-        if (resp.ok && resp.data) {
-          setWorkspaceSearchResults(resp.data);
-        } else {
-          setWorkspaceSearchResults([]);
-        }
-      } catch (err) {
-        console.error("Search failed:", err);
-        if (requestId === searchRequestIdRef.current) {
-          setWorkspaceSearchResults([]);
-        }
-      } finally {
-        if (requestId === searchRequestIdRef.current) {
-          setSearchLoading(false);
-        }
+      });
+      if (!allowed) throw new Error("Document preservation failed; replacement did not complete.");
+      if (currentRoot.current === workspacePath) { latestSafety.current.onChanged?.(); await handleWorkspaceSearch(searchText, submittedOptions.current); }
+    } catch (error) {
+      if (currentRoot.current === workspacePath) {
+        latestSafety.current.onChanged?.();
+        setSearchError(`${error instanceof Error ? error.message : String(error)} ${completed} file(s) saved; remaining files were not changed. Review and search again.`);
       }
-    },
-    [workspacePath]
-  );
-
-  const replaceMatch = useCallback(
-    async (
-      file: string,
-      line: number,
-      searchText: string,
-      replacement: string
-    ): Promise<void> => {
-      if (!workspacePath) return;
-
-      const resp = await readWorkspaceFile(workspacePath, file);
-      if (!resp.ok || resp.data == null) return;
-
-      const lines = resp.data.split("\n");
-      const idx = line - 1;
-      if (idx < 0 || idx >= lines.length) return;
-
-      const before = lines[idx].indexOf(searchText);
-      if (before === -1) return;
-      lines[idx] =
-        lines[idx].slice(0, before) +
-        replacement +
-        lines[idx].slice(before + searchText.length);
-      await writeWorkspaceFile(workspacePath, file, lines.join("\n"));
-      await handleWorkspaceSearch(searchText);
-    },
-    [workspacePath, handleWorkspaceSearch]
-  );
-
-  const replaceAllMatches = useCallback(
-    async (searchText: string, replacement: string): Promise<void> => {
-      if (!workspacePath) return;
-
-      for (const file of workspaceSearchResults) {
-        const resp = await readWorkspaceFile(workspacePath, file.relativePath);
-        if (!resp.ok || resp.data == null) continue;
-
-        const newContent = resp.data.split(searchText).join(replacement);
-        if (newContent === resp.data) continue;
-
-        await writeWorkspaceFile(workspacePath, file.relativePath, newContent);
-      }
-
-      await handleWorkspaceSearch(searchText);
-    },
-    [workspacePath, workspaceSearchResults, handleWorkspaceSearch]
-  );
-
-  return {
-    searchLoading,
-    workspaceSearchResults,
-    resetWorkspaceSearch,
-    handleWorkspaceSearch,
-    replaceMatch,
-    replaceAllMatches,
+    } finally { replacing.current = false; }
   };
+  const replaceMatch = (file: string, line: number, searchText: string, replacement: string) => {
+    const found = workspaceSearchResults.find((item) => item.relativePath === file);
+    const match = found?.matches.find((item) => item.line === line);
+    return match ? replace([{ relativePath: file, matches: [match] }], searchText, replacement, true) : Promise.resolve();
+  };
+  const replaceAllMatches = (searchText: string, replacement: string) => replace(workspaceSearchResults, searchText, replacement, false);
+  const cancelSearch = async () => {
+    const id = nativeId.current; if (!id) return;
+    try {
+      const response = await cancelWorkspaceSearch(id);
+      if (nativeId.current !== id) return;
+      if (!response.ok) throw new Error(response.error?.message ?? "Search cancellation failed.");
+      searchRequestIdRef.current++; nativeId.current = null; setSearchLoading(false); setSearchWarning("Search cancelled. Start a new search to get complete results.");
+    } catch (error) { if (nativeId.current === id) setSearchError(error instanceof Error ? error.message : String(error)); }
+  };
+  return { searchLoading, workspaceSearchResults, searchError, searchWarning, cancelSearch, resetWorkspaceSearch, handleWorkspaceSearch, replaceMatch, replaceAllMatches };
 }
