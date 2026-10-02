@@ -1,19 +1,27 @@
 import { listen } from "@tauri-apps/api/event";
-import { useEffect, type MutableRefObject } from "react";
-import { startWorkspaceFsWatch } from "../../lib/ipc/client";
+import { useEffect, useRef, type MutableRefObject } from "react";
+import { startWorkspaceFsWatch, stopWorkspaceFsWatch } from "../../lib/ipc/client";
 import { normalizeWorkspaceRoot } from "./editorShellUtils";
 
 type UseWorkspaceFsSyncParams = {
   workspacePath: string | null;
   workspacePathRef: MutableRefObject<string | null>;
   onWorkspaceChanged: () => void;
+  onSyncError: (message: string | null) => void;
 };
 
 export function useWorkspaceFsSync({
   workspacePath,
   workspacePathRef,
   onWorkspaceChanged,
+  onSyncError,
 }: UseWorkspaceFsSyncParams): void {
+  const lifecycle = useRef<Promise<void>>(Promise.resolve());
+  const callbacks = useRef({ onWorkspaceChanged, onSyncError });
+  useEffect(() => {
+    callbacks.current = { onWorkspaceChanged, onSyncError };
+  }, [onWorkspaceChanged, onSyncError]);
+
   useEffect(() => {
     if (!workspacePath) {
       return;
@@ -21,19 +29,33 @@ export function useWorkspaceFsSync({
 
     let disposed = false;
     let unlisten: (() => void) | null = null;
-    const expectedWorkspaceRoot = normalizeWorkspaceRoot(workspacePath);
+    let watchId: string | null = null;
+    const requestedWorkspaceRoot = normalizeWorkspaceRoot(workspacePath);
+    let expectedWorkspaceRoot = requestedWorkspaceRoot;
+
+    const stopWatch = async () => {
+      if (!watchId) return;
+      const id = watchId;
+      watchId = null;
+      const response = await stopWorkspaceFsWatch(id);
+      if (!response.ok) {
+        throw new Error(response.error?.message ?? "Unable to stop filesystem sync.");
+      }
+    };
+
+    const enqueue = (operation: () => Promise<void>) => {
+      lifecycle.current = lifecycle.current.then(operation).catch((error: unknown) => {
+        callbacks.current.onSyncError(`Filesystem sync for ${workspacePath} failed: ${error instanceof Error ? error.message : String(error)} Use Explorer refresh.`);
+      });
+    };
 
     const setupWorkspaceFsSync = async () => {
-      try {
-        await startWorkspaceFsWatch(workspacePath);
-      } catch (_error) {
-        // Best-effort watch bootstrap; fallback behavior is backend-owned.
-      }
-
+      if (disposed) return;
       try {
         const dispose = await listen<{ workspaceRoot: string }>(
           "workspace-fs-changed",
           (event) => {
+            if (disposed) return;
             const activeWorkspaceRoot = workspacePathRef.current;
             if (!activeWorkspaceRoot) {
               return;
@@ -42,10 +64,10 @@ export function useWorkspaceFsSync({
             if (payloadRoot !== expectedWorkspaceRoot) {
               return;
             }
-            if (payloadRoot !== normalizeWorkspaceRoot(activeWorkspaceRoot)) {
+            if (requestedWorkspaceRoot !== normalizeWorkspaceRoot(activeWorkspaceRoot)) {
               return;
             }
-            onWorkspaceChanged();
+            callbacks.current.onWorkspaceChanged();
           }
         );
         if (disposed) {
@@ -53,17 +75,34 @@ export function useWorkspaceFsSync({
           return;
         }
         unlisten = dispose;
-      } catch (_error) {
-        // Event listener setup failed - Explorer remains refreshable manually.
+        const response = await startWorkspaceFsWatch(workspacePath);
+        if (!response.ok || !response.data?.watchId) {
+          throw new Error(response.error?.message ?? "Unable to start filesystem sync.");
+        }
+        watchId = response.data.watchId;
+        expectedWorkspaceRoot = normalizeWorkspaceRoot(response.data.workspaceRoot);
+        if (disposed) {
+          unlisten?.();
+          unlisten = null;
+          await stopWatch();
+          return;
+        }
+        callbacks.current.onSyncError(null);
+      } catch (error) {
+        unlisten?.();
+        unlisten = null;
+        throw error;
       }
     };
 
-    void setupWorkspaceFsSync();
+    enqueue(setupWorkspaceFsSync);
     return () => {
       disposed = true;
       if (unlisten) {
         unlisten();
+        unlisten = null;
       }
+      enqueue(stopWatch);
     };
-  }, [onWorkspaceChanged, workspacePath, workspacePathRef]);
+  }, [workspacePath, workspacePathRef]);
 }

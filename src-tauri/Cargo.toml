@@ -1,6 +1,6 @@
 [package]
 name = "goide"
-version = "1.0.2"
+version = "0.2.0-alpha.1"
 description = "A desktop IDE for Go editing, runtime inspection, and concurrency workflows"
 authors = ["sung2708"]
 license = "MIT"
@@ -8,6 +8,7 @@ repository = "https://github.com/sung2708/goide"
 homepage = "https://github.com/sung2708/goide"
 keywords = ["go", "ide", "tauri", "debugger", "concurrency"]
 edition = "2021"
+rust-version = "1.88"
 resolver = "2"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -33,3 +34,4 @@ thiserror = "1"
 tokio = { version = "1", features = ["full"] }
 portable-pty = "0.8"
 uuid = { version = "1", features = ["v4"] }
+notify = "8.2"

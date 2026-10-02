@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" fill="none"><title>GoIDE</title><rect width="1280" height="640" fill="#10232F"/><g transform="translate(188 174) scale(2.8)">
+  
+  <desc>GoIDE adaptation of Renee French's Go gopher, CC BY 4.0. Redrawn with three concurrent flow trails.</desc>
+  <g stroke="#35CDBE" stroke-width="6" stroke-linecap="round">
+    <path d="M64 48C81 48 78 34 95 34"/><path d="M65 61H95"/><path d="M64 74C81 74 78 88 95 88"/>
+  </g>
+  <g stroke="#123A50" stroke-width="1.7" stroke-linejoin="round">
+    <path fill="#EAC79C" d="m28 89-6 7q-3 5 2 3l10-7Zm28 0 7 9q4 3 5-1l-5-9Z"/>
+    <path fill="#EAC79C" d="m21 64-8 2q-5 2-2 5l10-2Zm43 0 8 2q5 2 2 5l-10-2Z"/>
+    <circle cx="20" cy="24" r="7" fill="#35CDBE"/><circle cx="66" cy="24" r="7" fill="#35CDBE"/>
+    <path fill="#35CDBE" d="M20 36Q19 10 43 10T66 36L68 76Q69 94 44 95T18 76Z"/>
+  </g>
+  <g fill="#EFF9F8" stroke="#123A50" stroke-width="1.7">
+    <ellipse cx="31" cy="31" rx="10.5" ry="11.5"/><ellipse cx="55" cy="30" rx="10.5" ry="11.5"/>
+    <path d="M38 52v7q0 5 5 3V52Zm5 0v10q6 2 6-3v-7Z"/>
+  </g>
+  <g fill="#123A50"><ellipse cx="31" cy="33" rx="3.7" ry="4.2"/><ellipse cx="53" cy="32" rx="3.7" ry="4.2"/></g>
+  <g fill="#EFF9F8"><circle cx="32" cy="32" r="1.2"/><circle cx="54" cy="31" r="1.2"/></g>
+  <path fill="#EAC79C" stroke="#123A50" stroke-width="1.5" d="M35 48q1-5 8-5 8 0 9 5 0 5-9 3-8 2-8-3Z"/>
+  <ellipse cx="43" cy="44" rx="5.5" ry="3.2" fill="#123A50"/>
+  <rect x="25" y="68" width="37" height="18" rx="3" fill="#123A50"/>
+  <path d="M33 71v12" stroke="#35CDBE" stroke-width="1.5"/>
+  <path d="M38 73h17M38 77h11M38 81h14" stroke="#EFF9F8" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="29" cy="77" r="2" fill="#F4B45F"/>
+  <circle cx="85" cy="61" r="2.8" fill="#F4B45F"/>
+
+<g transform="translate(112 26)"><path transform="translate(0 0)" d="M36 10C30 3 7 2 7 25S28 50 38 40V27H25" stroke="#35CDBE" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(45 0)" d="M8 25C8 9 34 9 34 25S8 42 8 25Z" stroke="#35CDBE" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(87 0)" d="M8 6H32M20 6V44M8 44H32" stroke="#EFF9F8" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(123 0)" d="M8 6H20C44 6 44 44 20 44H8Z" stroke="#EFF9F8" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(167 0)" d="M34 6H8V44H34M8 25H30" stroke="#EFF9F8" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/></g></g></svg>

@@ -61,6 +61,9 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     globals: false,
     setupFiles: ["src/test/setup.ts"],
+    // Each workbench suite loads a full jsdom/React graph. Bound concurrent
+    // workers so resource contention does not turn UI tests into timeouts.
+    maxWorkers: 2,
     exclude: [...configDefaults.exclude, ".worktrees/**"],
   },
 

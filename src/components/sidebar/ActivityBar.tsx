@@ -37,11 +37,9 @@ const ActivityBar: React.FC<ActivityBarProps> = ({
   const tabs = showDebugTab ? [...MAIN_TABS, DEBUG_TAB] : MAIN_TABS;
 
   return (
-    <div className="flex w-11 flex-col border-r border-(--border-subtle) bg-(--crust)">
-      <div className="flex h-9 items-center justify-center">
-        <span className="select-none text-[10px] font-bold uppercase tracking-widest text-(--blue)">
-          go
-        </span>
+    <nav aria-label="Workspace views" className="activity-bar flex w-12 shrink-0 flex-col border-r border-(--border-subtle) bg-(--crust)">
+      <div className="flex h-11 items-center justify-center">
+        <img src="/brand/icon-small.svg" alt="GoIDE" width="28" height="28" />
       </div>
 
       <div className="flex flex-1 flex-col gap-0.5 py-2">
@@ -50,7 +48,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({
           return (
             <div key={tab} className="relative">
               {isActive && (
-                <div className="absolute inset-y-0 left-0 w-0.5 rounded-r-sm bg-(--blue)" />
+                <div className="absolute inset-y-0 left-0 w-0.5 bg-(--text)" />
               )}
               <button
                 type="button"
@@ -61,7 +59,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({
                 className={cn(
                   "relative flex w-full items-center justify-center py-2.5 outline-none transition-colors duration-100 focus-visible:bg-(--bg-active)",
                   isActive
-                    ? "bg-(--bg-active) text-(--blue)"
+                    ? "bg-(--bg-active) text-(--text)"
                     : "text-(--overlay1) hover:bg-(--bg-hover) hover:text-(--subtext1)"
                 )}
               >
@@ -76,7 +74,7 @@ const ActivityBar: React.FC<ActivityBarProps> = ({
           );
         })}
       </div>
-    </div>
+    </nav>
   );
 };
 

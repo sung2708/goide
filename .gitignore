@@ -1,5 +1,34 @@
+# Dependencies
+node_modules/
+
+# Frontend build outputs
+dist/
+dist-ssr/
+
+# Rust / Tauri build outputs
+target/
+src-tauri/target/
+*.exe
+*.msi
+*.dmg
+*.deb
+*.AppImage
+*.tar.gz
+*.zip
+SHA256SUMS.txt
+
+# Test and coverage artifacts
+coverage/
+*.lcov
+
+# Environment and local configs
+.env
+.env.local
+.env.*.local
+*.local
+
 # Logs
-logs
+logs/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -7,37 +36,37 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Editor directories and files
+# Editor and OS metadata
 .vscode/*
 !.vscode/extensions.json
-.idea
-.DS_Store
+.idea/
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+.DS_Store
+Thumbs.db
+ehthumbs.db
 
-# Project-specific
-_uv-cache
-.superpowers
-_bmad-output/code-review.diff
-.codex
-.gemini/
+# Ephemeral scratch and patches
+scratch/
+.tmp/
+*.patch
+*.diff
 
-# Internal AI/planning artifacts are not part of release branches.
+# Internal AI, agent scratchpads, and planning artifacts
+.ai/
 .agent/
 .agents/
 .claude/
 .cortex/
+.codex/
+.gemini/
+.superpowers/
+.tools/
+.worktrees/
+_uv-cache/
 _bmad/
 _bmad-output/
 skills-lock.json
-full_diff.patch
-.tools/
-.worktrees/

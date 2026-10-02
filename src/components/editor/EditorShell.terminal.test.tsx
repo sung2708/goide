@@ -211,7 +211,7 @@ describe("EditorShell terminal wiring", () => {
     stopCurrentRunMock.mockResolvedValue({ ok: true });
     startWorkspaceFsWatchMock.mockResolvedValue({
       ok: true,
-      data: { workspaceRoot: "C:/workspace", mode: "watch" },
+      data: { workspaceRoot: "C:/workspace", watchId: "watch-terminal", mode: "watch" },
     });
     listenMock.mockResolvedValue(() => {});
   });

@@ -19,6 +19,7 @@ export type WorkspaceFsSyncMode = "watch" | "polling";
 
 export type StartWorkspaceFsWatchResponse = {
   workspaceRoot: string;
+  watchId: string;
   mode: WorkspaceFsSyncMode;
 };
 

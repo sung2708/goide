@@ -1,6 +1,6 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ConcurrencyConfidence } from "../../lib/ipc/types";
 import type { LensConstruct } from "../../features/concurrency/lensTypes";
 import EditorShell from "./EditorShell";
@@ -104,6 +104,7 @@ vi.mock("./CodeEditor", () => ({
 }));
 
 describe("EditorShell inline actions", () => {
+  afterEach(() => { vi.useRealTimers(); });
   const openWorkspaceAndShowExplorer = async (
     user: ReturnType<typeof userEvent.setup>
   ) => {
@@ -948,7 +949,6 @@ describe("EditorShell inline actions", () => {
         ok: true,
         data: [],
       });
-    const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({
       ok: true,
@@ -957,27 +957,21 @@ describe("EditorShell inline actions", () => {
 
     render(<EditorShell />);
 
-    await openWorkspaceAndShowExplorer(user);
-    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /explorer/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open mock file/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /select line 1/i }));
     expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
-    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /deep trace/i })); });
 
-    await waitFor(() => {
-      expect(screen.getByText(/Runtime: Runtime Retry/i)).toBeInTheDocument();
-      expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
-      expect(
-        screen.queryByTestId("trace-bubble-blocked-indicator")
-      ).not.toBeInTheDocument();
-    });
+    expect(screen.getByText(/Runtime: Runtime Retry/i)).toBeInTheDocument();
+    expect(screen.getByTestId("counterpart-line")).toHaveTextContent("2");
+    expect(screen.queryByTestId("trace-bubble-blocked-indicator")).not.toBeInTheDocument();
 
-    await waitFor(
-      () => {
-        expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
-        expect(screen.getByText(/Runtime: Runtime OK/i)).toBeInTheDocument();
-      },
-      { timeout: 2500 }
-    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Runtime: Runtime OK/i)).toBeInTheDocument();
   });
 
   it("recovers from timed-out runtime polling and continues polling", async () => {
@@ -1000,23 +994,24 @@ describe("EditorShell inline actions", () => {
       }
       return Promise.resolve({ ok: true, data: [] });
     });
-    const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
 
     render(<EditorShell />);
 
-    await openWorkspaceAndShowExplorer(user);
-    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(await screen.findByRole("button", { name: /select line 1/i }));
-    await user.click(await screen.findByRole("button", { name: /deep trace/i }));
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.click(screen.getByRole("button", { name: /explorer/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /open mock file/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /select line 1/i }));
+    vi.useFakeTimers();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /deep trace/i })); });
 
-    await waitFor(
-      () => {
-        expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
-      },
-      { timeout: 2500 }
-    );
+    await act(async () => { await vi.advanceTimersByTimeAsync(450); });
+    expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByText(/Runtime: Runtime Retry/i)).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(1500); });
+    expect(getRuntimeSignalsMock).toHaveBeenCalledTimes(2);
+    expect(screen.getByText(/Runtime: Runtime OK/i)).toBeInTheDocument();
   });
 
   it("ignores stale runtime responses after switching active file", async () => {

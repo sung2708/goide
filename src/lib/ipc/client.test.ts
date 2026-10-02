@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { searchWorkspaceText } from "./client";
+import { searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   beforeEach(() => {
@@ -37,5 +37,26 @@ describe("ipc client searchWorkspaceText", () => {
       workspaceRoot: "C:/workspace",
       query: "needle",
     });
+  });
+});
+
+describe("filesystem watcher IPC", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+
+  it("does not claim a live watcher in the browser preview", async () => {
+    expect(await startWorkspaceFsWatch("D:/workspace")).toMatchObject({
+      ok: false, error: { code: "fs_watch_unavailable" },
+    });
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("passes the subscription ID back to native cleanup", async () => {
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true });
+    await stopWorkspaceFsWatch("watch-a");
+    expect(invokeMock).toHaveBeenCalledWith("stop_workspace_fs_watch", { watchId: "watch-a" });
   });
 });

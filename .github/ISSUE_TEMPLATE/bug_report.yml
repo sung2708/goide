@@ -1,0 +1,94 @@
+name: Bug Report
+description: Create a report to help us improve GoIDE
+title: "fix: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue with GoIDE. Please fill in the details below to help us reproduce and resolve the problem.
+  - type: input
+    id: version
+    attributes:
+      label: GoIDE Version / Git Commit
+      description: What version or commit of GoIDE are you running?
+      placeholder: "e.g. 0.2.0-alpha.1 or git commit hash"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: arch
+    attributes:
+      label: System Architecture
+      placeholder: "e.g. x86_64, aarch64 / Apple Silicon"
+    validations:
+      required: true
+  - type: input
+    id: go-version
+    attributes:
+      label: Go Toolchain Version
+      placeholder: "e.g. go version go1.22.4 darwin/arm64"
+    validations:
+      required: true
+  - type: input
+    id: gopls-version
+    attributes:
+      label: gopls Version
+      placeholder: "e.g. golang.org/x/tools/gopls v0.16.0"
+    validations:
+      required: false
+  - type: input
+    id: dlv-version
+    attributes:
+      label: Delve (dlv) Version
+      placeholder: "e.g. Delve debugger version 1.22.1"
+    validations:
+      required: false
+  - type: textarea
+    id: description
+    attributes:
+      label: Describe the Bug
+      description: A clear and concise description of what the bug is.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Detailed steps to reproduce the behavior.
+      placeholder: |
+        1. Open folder '...'
+        2. Open file 'main.go'
+        3. Trigger command '...'
+        4. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually occurred?
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Terminal Logs / Console Output
+      description: Paste relevant logs or stack traces here.
+      render: shell
