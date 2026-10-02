@@ -94,3 +94,9 @@ Format on Save and Organize Imports on Save are explicit opt-ins, both disabled 
 The Stashes view lists actual Git stash references, object IDs, dates and reflog messages (including branch context when Git supplies it). Selecting an entry opens a bounded native patch, including untracked content. Explicit Stash Changes, Stash Including Untracked, Apply, Pop and confirmed Drop are available; ignored files are excluded. Apply/Pop can optionally restore staged state. Worktree-changing actions save open buffers first and use the shared run/debug/document guard. Failed operations refresh Git and file state; conflicted Apply/Pop retains the stash. The palette opens Source Control, Git Graph and Stashes; Mod+Shift+G opens Source Control.
 
 Lists show the latest 100 entries and direct older history to the terminal. Staged-only/partial stashing, simultaneous external-ref mutation acceptance, and remaining full Git workflows are separate gates.
+
+## Go toolchain inspection checkpoint (2026-10-03)
+
+Inspect Go Toolchain from the status bar or the Go: Inspect Toolchain command. Native probes report the concrete executable path, actual bounded version output, Ready/Missing/Failed/Unknown status and genuine execution errors. Refresh retries detection; stale responses cannot replace a newer result. Browser preview explicitly reports that native detection is unavailable. Successful version commands do not certify project/debugger compatibility.
+
+Tool launches and inspection resolve PATH first, then Go-installed tool directories for Go/gopls/Delve. Configurable executable paths, project Go environment/module awareness and explicit probe cancellation remain separate unfinished gates.

@@ -21,6 +21,7 @@ pub mod replacement;
 pub mod search;
 pub mod shell;
 pub mod signature_help;
+pub mod toolchain;
 
 pub mod code_actions;
 mod workspace_edits;

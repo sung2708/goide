@@ -22,8 +22,8 @@ use crate::ui_bridge::types::{
     RuntimeAvailabilityResponseDto, RuntimePanelSnapshotDto, RuntimeSignalDto,
     RuntimeTopologyInteractionDto, RuntimeTopologySnapshotDto, ShellInputRequestDto,
     ShellResizeRequestDto, StartDebugSessionRequestDto, StartWorkspaceFsWatchResponseDto,
-    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
-    ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
+    SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolchainStatusDto,
+    WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
     WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDetailDto,
     WorkspaceGitCommitDto, WorkspaceGitCommitFileStatDto, WorkspaceGitCommitRequestDto,
     WorkspaceGitFileActionRequestDto, WorkspaceGitGraphCommitDto, WorkspaceGitGraphEntryDto,
@@ -1063,37 +1063,12 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
     })
 }
 
-fn command_version(command: &str, args: &[&str]) -> ToolAvailabilityDto {
-    let output =
-        crate::integration::owned_tool_output::output(std_command(command).args(args), None);
-    match output {
-        Ok(output) if output.status.success() => {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let version = stdout
-                .lines()
-                .chain(stderr.lines())
-                .map(str::trim)
-                .find(|line| !line.is_empty())
-                .map(str::to_string);
-            ToolAvailabilityDto {
-                available: true,
-                version,
-            }
-        }
-        _ => ToolAvailabilityDto {
-            available: false,
-            version: None,
-        },
-    }
-}
-
 #[tauri::command]
 pub async fn get_toolchain_status() -> ApiResponse<ToolchainStatusDto> {
     let result = tauri::async_runtime::spawn_blocking(move || ToolchainStatusDto {
-        go: command_version("go", &["version"]),
-        gopls: command_version("gopls", &["version"]),
-        delve: command_version("dlv", &["version"]),
+        go: crate::integration::toolchain::probe("go", &["version"]),
+        gopls: crate::integration::toolchain::probe("gopls", &["version"]),
+        delve: crate::integration::toolchain::probe("dlv", &["version"]),
     })
     .await;
 

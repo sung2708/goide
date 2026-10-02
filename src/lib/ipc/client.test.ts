@@ -6,12 +6,16 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  });
+  it("reports desktop-only toolchain inspection instead of invented availability", async () => {
+    await expect(getToolchainStatus()).resolves.toMatchObject({ ok: false, error: { code: "toolchain_native_required" } });
+    expect(invokeMock).not.toHaveBeenCalled();
   });
 
   it("reports native search unavailable in browser preview", async () => {

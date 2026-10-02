@@ -15,6 +15,9 @@ type StatusBarProps = {
   diagnosticsAvailability: "available" | "unavailable" | "idle";
   completionAvailability: "available" | "degraded" | "idle";
   toolchainStatus?: ToolchainStatus | null;
+  toolchainError?: string | null;
+  toolchainChecking?: boolean;
+  onOpenToolchain?: () => void;
   saveStatus?: "idle" | "saving" | "saved" | "error";
   runStatus?: "idle" | "running" | "done" | "error";
   branchName?: string | null;
@@ -33,6 +36,9 @@ function StatusBar({
   diagnosticsAvailability,
   completionAvailability,
   toolchainStatus = null,
+  toolchainError = null,
+  toolchainChecking = false,
+  onOpenToolchain,
   saveStatus = "idle",
   runStatus = "idle",
   branchName,
@@ -198,6 +204,7 @@ function StatusBar({
           >
             Health {healthOkCount}/4
           </span>
+          {onOpenToolchain && <button type="button" aria-label="Inspect Go toolchain" onClick={onOpenToolchain} title={toolchainError ?? "Inspect executable paths, versions and native tool errors."} className={cn("rounded px-1.5 py-0.5 font-semibold", toolchainError ? pillWarn : pillIdle)}>{toolchainChecking ? "Tools…" : toolchainError ? "Tools Retry" : toolsLabel}</button>}
         </div>
 
         <div className="flex items-center">

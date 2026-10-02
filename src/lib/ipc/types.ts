@@ -164,6 +164,9 @@ export type RuntimeAvailabilityResponse = {
 export type ToolAvailability = {
   available: boolean;
   version?: string | null;
+  path?: string | null;
+  status?: "ready" | "missing" | "failed" | "unknown";
+  error?: string | null;
 };
 
 export type ToolchainStatus = {
