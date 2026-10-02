@@ -14,6 +14,8 @@ const queryWorkspaceSignatureMock = vi.fn();
 const formatWorkspaceDocumentMock = vi.fn();
 const organizeWorkspaceImportsMock = vi.fn();
 const previewWorkspaceRenameMock = vi.fn();
+const listWorkspaceCodeActionsMock = vi.fn();
+const previewWorkspaceCodeActionMock = vi.fn();
 const getWorkspaceFileStateMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -35,6 +37,8 @@ vi.mock("../../lib/ipc/client", async () => {
     formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
     organizeWorkspaceImports: (...args: unknown[]) => organizeWorkspaceImportsMock(...args),
     previewWorkspaceRename: (...args: unknown[]) => previewWorkspaceRenameMock(...args),
+    listWorkspaceCodeActions: (...args: unknown[]) => listWorkspaceCodeActionsMock(...args),
+    previewWorkspaceCodeAction: (...args: unknown[]) => previewWorkspaceCodeActionMock(...args),
     getWorkspaceFileState: (...args: unknown[]) => getWorkspaceFileStateMock(...args),
   };
 });
@@ -205,6 +209,26 @@ describe("EditorShell diagnostics", () => {
     expect(queryWorkspaceSignatureMock).toHaveBeenCalledWith(expect.objectContaining({ requestId: expect.any(String), workspaceRoot: "C:/workspace", relativePath: "main.go", line: 1, column: 9 }));
   });
 
+  it("routes Quick Fix through its shortcut and reviews actual edits before saving", async () => {
+    const user = userEvent.setup(); const before = "package main\n", after = "package main\n// fixed\n";
+    const action = { title: "Actual server fix", kind: "quickfix", preferred: true, disabledReason: null };
+    const diagnostic = { message: "actual diagnostic", severity: "warning", source: "gopls", range: { startLine: 1, startColumn: 1, endLine: 1, endColumn: 2 } };
+    openMock.mockResolvedValue("C:/workspace"); readWorkspaceFileMock.mockResolvedValue({ ok: true, data: before }); writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [diagnostic] } });
+    listWorkspaceCodeActionsMock.mockResolvedValue({ ok: true, data: [action] });
+    previewWorkspaceCodeActionMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before, after, readOnly: false }] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await waitFor(() => expect(screen.getByTestId("diagnostic-message")).toHaveTextContent("actual diagnostic"));
+    await user.click(screen.getByRole("button", { name: "Place Cursor" })); fireEvent.keyDown(window, { key: ".", ctrlKey: true });
+    const review = await screen.findByRole("dialog", { name: "Quick Fix / Code Actions" });
+    await user.click(await within(review).findByRole("button", { name: "Actual server fix (preferred)" }));
+    await waitFor(() => expect(within(review).getByText("Review: Actual server fix")).toBeInTheDocument());
+    expect(listWorkspaceCodeActionsMock).toHaveBeenCalledWith(expect.objectContaining({ diagnostics: [diagnostic], query: expect.objectContaining({ relativePath: "main.go", requestId: expect.any(String) }) }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(before); expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(within(review).getByRole("button", { name: "Apply to Editor" })).toBeEnabled()); await user.click(within(review).getByRole("button", { name: "Apply to Editor" }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(after); fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
+  });
   it("reviews Format Document before editing and saves the applied result against its old disk baseline", async () => {
     const user = userEvent.setup();
     const before = "package main\nfunc main( ){}\n", after = "package main\n\nfunc main() {}\n";

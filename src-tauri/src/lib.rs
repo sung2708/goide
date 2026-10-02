@@ -29,6 +29,8 @@ pub fn run() {
             ui_bridge::document_commands::get_workspace_file_info,
             ui_bridge::language_commands::query_workspace_language,
             ui_bridge::language_commands::query_workspace_signature,
+            ui_bridge::language_commands::list_workspace_code_actions,
+            ui_bridge::language_commands::preview_workspace_code_action,
             ui_bridge::language_commands::cancel_language_request,
             ui_bridge::language_commands::format_workspace_document,
             ui_bridge::language_commands::organize_workspace_imports,
