@@ -12,6 +12,7 @@ const readWorkspaceFileMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const runWorkspaceFileWithRaceMock = vi.fn();
 const runWorkspaceFileMock = vi.fn();
+const stopCurrentRunMock = vi.fn();
 let mockFileToOpen = "main.go";
 let mockConstructs: LensConstruct[] = [
   {
@@ -78,6 +79,7 @@ vi.mock("../../lib/ipc/client", async () => {
     runWorkspaceFileWithRace: (...args: unknown[]) =>
       runWorkspaceFileWithRaceMock(...args),
     runWorkspaceFile: (...args: unknown[]) => runWorkspaceFileMock(...args),
+    stopCurrentRun: (...args: unknown[]) => stopCurrentRunMock(...args),
     activateScopedDeepTrace: vi.fn().mockResolvedValue({
       ok: true,
       data: { mode: "deep-trace", scopeKey: "scope-a" },
@@ -150,6 +152,7 @@ describe("EditorShell race run", () => {
     });
     runWorkspaceFileWithRaceMock.mockResolvedValue({ ok: true });
     runWorkspaceFileMock.mockResolvedValue({ ok: true });
+    stopCurrentRunMock.mockResolvedValue({ ok: true });
     mockFileToOpen = "main.go";
     mockConstructs = [
       {
@@ -161,6 +164,18 @@ describe("EditorShell race run", () => {
         confidence: ConcurrencyConfidence.Predicted,
       },
     ];
+  });
+
+  it("keeps a run active after a failed stop and shows the native error", async () => {
+    const user = userEvent.setup(); render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /^run active go file$/i }));
+    stopCurrentRunMock.mockResolvedValue({ ok: false, error: { message: "Owned process could not be stopped" } });
+    await user.click(await screen.findByRole("button", { name: /^stop$/i }));
+    expect(await screen.findByText("Owned process could not be stopped")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^run active go file$/i })).toBeDisabled();
   });
 
   it("runs go with race mode from the editor header and surfaces confirmed race signal", async () => {

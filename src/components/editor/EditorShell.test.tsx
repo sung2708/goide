@@ -108,11 +108,21 @@ describe("EditorShell panels", () => {
     expect(screen.queryByText(/toolchain issues detected/i)).toBeNull();
   });
 
-  it("does not render command palette controls", () => {
+  it("keeps the command palette closed until requested", () => {
     render(<EditorShell />);
 
     expect(screen.queryByTestId("command-palette")).toBeNull();
     expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
+  });
+
+  it("opens the shared command palette with Ctrl+Shift+P and executes a searched command", async () => {
+    render(<EditorShell />);
+    fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
+    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    fireEvent.change(input, { target: { value: "Toggle Terminal Panel" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.queryByTestId("command-palette")).toBeNull());
+    expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
   });
 
   it("pressing Ctrl+Shift+F switches to search tab and focuses the search input", async () => {

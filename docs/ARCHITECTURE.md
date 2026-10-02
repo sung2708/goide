@@ -186,3 +186,7 @@ The process boundary wraps Go Run and Delve children in OwnedChild. Each run has
 ## Quick Open Index Boundary
 
 Navigation indexing and fuzzy ranking live in features/navigation, separate from EditorShell. The hook caches one workspace/revision index, rejects stale asynchronous responses, and stores at most 30 recent file paths per workspace. Traversal skips generated trees and stops at 20,000 files, 2,000 folders, depth 64 or a five-second traversal budget between directory requests. Closing the picker invalidates pending frontend traversal; directory IPC calls already in progress finish independently. Partial results and errors remain visible.
+
+## Workbench Command Routing
+
+features/commands owns shortcut matching and command execution. Each command has a stable ID, title, optional default shortcut, availability reason and action. The shared executor propagates rejected IPC envelopes and prevents duplicate execution of the same pending command. Command Palette renders those definitions and reasons. Global capture routing avoids modal dialogs, composition, repeated keydown events and unsupported modifier combinations. Run and debugger controls consume the same command actions; Debug Pause/Continue do not optimistically invent runtime state.

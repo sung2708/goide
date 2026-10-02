@@ -2,7 +2,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
-import { startDebugSession } from "../../lib/ipc/client";
+import { startDebugSession, debuggerPause } from "../../lib/ipc/client";
 import type { DebuggerState } from "../../lib/ipc/types";
 
 const openMock = vi.fn();
@@ -79,6 +79,7 @@ vi.mock("../../lib/ipc/client", async () => {
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
     }),
+    debuggerPause: vi.fn().mockResolvedValue({ ok: true }),
     getWorkspaceGitSnapshot: vi.fn().mockResolvedValue({
       ok: true,
       data: { branch: "main", changedFiles: [], commits: [] },
@@ -326,6 +327,20 @@ describe("EditorShell debug controller", () => {
     expect(screen.getByRole("button", { name: /run active go file with race detector/i })).toBeDisabled();
 
     resolveStart();
+  });
+
+  it("waits for observed debugger state after a pause acknowledgement", async () => {
+    const user = userEvent.setup(); render(<EditorShell />);
+    setMockDebuggerState({ sessionActive: true, paused: false, activeRelativePath: "main.go" });
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
+    await user.click(await screen.findByRole("button", { name: /^pause debugging$/i }));
+    await waitFor(() => expect(debuggerPause).toHaveBeenCalled());
+    expect(screen.queryByRole("button", { name: /step over/i })).toBeNull();
+    setMockDebuggerState({ paused: true });
+    expect(await screen.findByRole("button", { name: /step over/i })).toBeInTheDocument();
   });
 
   it("renders step controls when the debug session is paused", async () => {
