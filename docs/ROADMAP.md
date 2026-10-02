@@ -315,3 +315,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - [x] Display gopls hover information directly in the editor, bounded and safe to render.
 - [x] Cancel pointer hover requests and reject stale results while retaining unsaved buffers and UTF-16 locations.
 - [ ] Complete signature help, general reviewed code actions, save settings and remaining Go-native P0 workflows.
+
+### Signature Help checkpoint (2026-10-03)
+
+- [x] Query actual gopls signatures and active parameters with typed, bounded, cancellable IPC.
+- [x] Show automatic and explicit editor Signature Help, with loading/errors and appropriate dismissal.
+- [x] Preserve UTF-16 parameter highlights and reject obsolete results across document/view changes.
+- [ ] Complete reviewed general code actions, format/import save settings, module/toolchain workflows, structured tests and debugger inspection before the full addendum can be considered complete.

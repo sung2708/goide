@@ -74,6 +74,8 @@ import { createSemanticAnalysisWorker } from "../../features/semantics/createSem
 import type { DocumentOutlineItem } from "./DocumentOutline";
 import FindWidget from "./FindWidget";
 import { languageHover } from "./languageHover";
+import { signatureHelp, requestSignatureHelp } from "./signatureHelp";
+import type { EditorSignatureResult } from "../../features/language/useEditorSignature";
 import type { EditorHoverRequest, EditorHoverResult } from "../../features/language/useEditorHover";
 import { captureEditorSession, initialEditorSession, type EditorSessionState } from "../../features/documents/editorSession";
 import { useFindWidget } from "../../hooks/useFindWidget";
@@ -593,6 +595,8 @@ type CodeEditorProps = {
     request: EditorCompletionRequest
   ) => Promise<CompletionItem[]>;
   onRequestHover?: (request: EditorHoverRequest) => Promise<EditorHoverResult>;
+  onRequestSignature?: (request: EditorHoverRequest) => Promise<EditorSignatureResult>;
+  signatureRequestTrigger?: number;
   filePath?: string | null;
   semanticAnalysisClient?: SemanticAnalysisClient;
   onDocumentSymbolsChange?: (symbols: DocumentOutlineItem[]) => void;
@@ -626,6 +630,8 @@ function CodeEditor({
   onChange,
   onRequestCompletions,
   onRequestHover,
+  onRequestSignature,
+  signatureRequestTrigger = 0,
   filePath = null,
   semanticAnalysisClient,
   onDocumentSymbolsChange,
@@ -1003,8 +1009,11 @@ function CodeEditor({
     return true;
   };
 
+  const hoverExtensions = useMemo(() => onRequestHover ? languageHover(onRequestHover) : [], [onRequestHover]);
+  const signatureExtensions = useMemo(() => onRequestSignature ? signatureHelp(onRequestSignature) : [], [onRequestSignature]);
   const extensions = useMemo(() => [
-    ...(onRequestHover ? languageHover(onRequestHover) : []),
+    ...hoverExtensions,
+    ...signatureExtensions,
     ...goideEditorExtensions,
     semanticFoldingExtension,
     breakpointField,
@@ -1176,7 +1185,8 @@ function CodeEditor({
     counterpartLine,
     editable,
     goplsCompletionSource,
-    onRequestHover,
+    hoverExtensions,
+    signatureExtensions,
     localSnippetSource,
     onCounterpartAnchorChange,
     onCursorOffsetChange,
@@ -1187,6 +1197,13 @@ function CodeEditor({
     suppressFindWidget,
   ]);
   const viewRef = useRef<EditorView | null>(null);
+  const lastSignatureRequest = useRef(signatureRequestTrigger);
+  useEffect(() => {
+    if (!viewRef.current || lastSignatureRequest.current === signatureRequestTrigger) return;
+    lastSignatureRequest.current = signatureRequestTrigger;
+    viewRef.current.focus();
+    viewRef.current.dispatch({ effects: requestSignatureHelp.of(null) });
+  }, [signatureRequestTrigger, editorView]);
   const sessionDispose = useRef(onSessionDispose); sessionDispose.current = onSessionDispose;
   useEffect(() => () => {
     if (viewRef.current && sessionDispose.current) sessionDispose.current(captureEditorSession(viewRef.current));

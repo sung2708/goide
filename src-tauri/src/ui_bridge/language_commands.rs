@@ -1,6 +1,21 @@
 use super::types::{ApiResponse, LanguageQueryDto, LanguageQueryResultDto};
 
 #[tauri::command]
+pub async fn query_workspace_signature(
+    request: LanguageQueryDto,
+) -> ApiResponse<Option<super::types::SignatureHelpDto>> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::signature_help::query(request)
+    })
+    .await
+    {
+        Ok(Ok(data)) => ApiResponse::ok(data),
+        Ok(Err(error)) => ApiResponse::err("signature_help_failed", &format!("{error:#}")),
+        Err(error) => ApiResponse::err("signature_help_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn cancel_language_request(
     request: super::types::LanguageCancelRequestDto,
 ) -> ApiResponse<bool> {
