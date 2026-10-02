@@ -9,6 +9,15 @@ const branches = [
 ] as const;
 
 describe("BranchPicker", () => {
+  it("can remain mounted while opening and closing without changing hook order", () => {
+    const props = { currentBranch: "develop", branches: [...branches], query: "", onQueryChange: vi.fn(), onSelectBranch: vi.fn(), onClose: vi.fn() };
+    const view = render(<BranchPicker {...props} open={false} />);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    view.rerender(<BranchPicker {...props} open />);
+    expect(screen.getByRole("dialog", { name: "Branch picker" })).toBeInTheDocument();
+    view.rerender(<BranchPicker {...props} open={false} />);
+    fireEvent.keyDown(window, { key: "Enter" }); expect(props.onSelectBranch).not.toHaveBeenCalled();
+  });
   it("renders current, local, and remote branches distinctly", () => {
     render(
       <BranchPicker

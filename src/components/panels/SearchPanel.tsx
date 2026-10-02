@@ -304,6 +304,10 @@ function SearchPanel({
             autoFocus={autoFocus}
             value={query}
             type="text"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === "Enter") {
@@ -342,6 +346,10 @@ function SearchPanel({
           <input
             value={replaceQuery}
             type="text"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck={false}
             onChange={(e) => setReplaceQuery(e.target.value)}
             placeholder="Replace"
             aria-label="Replace query"
@@ -397,6 +405,10 @@ function SearchPanel({
               value={filesInclude}
               onChange={(e) => setFilesInclude(e.target.value)}
               placeholder="e.g. *.go, src/**"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               aria-label="Files to include"
               className="w-full rounded border border-(--surface1) bg-(--crust) px-2 py-1 text-[11px] text-(--text) outline-none placeholder:text-(--overlay0) focus:border-(--border-active)"
             />
@@ -404,6 +416,10 @@ function SearchPanel({
               value={filesExclude}
               onChange={(e) => setFilesExclude(e.target.value)}
               placeholder="e.g. **/vendor/**, *.test.go"
+              autoComplete="off"
+              autoCorrect="off"
+              autoCapitalize="off"
+              spellCheck={false}
               aria-label="Files to exclude"
               className="w-full rounded border border-(--surface1) bg-(--crust) px-2 py-1 text-[11px] text-(--text) outline-none placeholder:text-(--overlay0) focus:border-(--border-active)"
             />

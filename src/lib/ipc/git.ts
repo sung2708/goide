@@ -9,11 +9,13 @@ export type GitRepositoryStatus = {
   root: string; gitDir: string; gitVersion: string;
   branch: string | null; head: string | null; upstream: string | null;
   ahead: number; behind: number; operation: string | null; files: GitFileStatus[];
+  remotes: string[];
 };
 export type GitFileDiff = { path: string; originalPath: string | null; patch: string; binary: boolean; limited: boolean };
-export type GitMutation = { kind: "stage" | "unstage"; paths: string[] } | { kind: "commit"; message: string };
+export type GitMutation = { kind: "stage" | "unstage"; paths: string[] } | { kind: "discard" | "deleteUntracked"; path: string } | { kind: "commit"; message: string } | { kind: "fetch"; remote: string } | { kind: "pull"; remote: string; branch: string } | { kind: "push"; remote: string; branch: string; setUpstream: boolean };
 export type GitHistoryCommit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string[] };
 export type GitHistoryPage = { commits: GitHistoryCommit[]; tips: string[]; hasMore: boolean };
+export type GitCommitDetails = { hash: string; parents: string[]; author: string; email: string; date: string; message: string; selectedParent: string | null; files: { path: string; originalPath: string | null; status: string }[] };
 
 async function request<T>(command: string, args: Record<string, unknown>): Promise<ApiResponse<T>> {
   if (!("__TAURI_INTERNALS__" in window)) {
@@ -24,4 +26,7 @@ async function request<T>(command: string, args: Record<string, unknown>): Promi
 export const getGitRepositoryStatus = (workspaceRoot: string) => request<GitRepositoryStatus>("git_repository_status", { workspaceRoot });
 export const getGitFileDiff = (workspaceRoot: string, path: string, staged: boolean) => request<GitFileDiff>("git_file_diff", { workspaceRoot, path, staged });
 export const mutateGit = (workspaceRoot: string, mutation: GitMutation) => request<void>("git_mutate", { workspaceRoot, mutation });
+export const cancelGit = (workspaceRoot: string) => request<boolean>("git_cancel", { workspaceRoot });
 export const getGitHistoryPage = (workspaceRoot: string, offset: number, tips: string[]) => request<GitHistoryPage>("git_history_page", { workspaceRoot, offset, tips });
+export const getGitCommitDetails = (workspaceRoot: string, hash: string, parent: string | null) => request<GitCommitDetails>("git_commit_details", { workspaceRoot, hash, parent });
+export const getGitHistoricalDiff = (workspaceRoot: string, hash: string, parent: string | null, path: string) => request<GitFileDiff>("git_historical_diff", { workspaceRoot, hash, parent, path });

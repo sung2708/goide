@@ -64,6 +64,7 @@ impl ShellSessionHandle {
         self.reader_task.abort();
         // Best-effort kill; ignore errors (process may have already exited).
         let _ = self.child.kill();
+        let _ = self.child.wait();
     }
 }
 

@@ -24,7 +24,9 @@ use crate::ui_bridge::types::{
     ShellResizeRequestDto, StartDebugSessionRequestDto, StartWorkspaceFsWatchResponseDto,
     SwitchWorkspaceBranchRequestDto, ToggleBreakpointRequestDto, ToolAvailabilityDto,
     ToolchainStatusDto, WorkspaceBranchSnapshotDto, WorkspaceFsSyncModeDto, WorkspaceGitBranchDto,
-    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDto,
+    WorkspaceGitChangedFileDto, WorkspaceGitChangedFileSummaryDto, WorkspaceGitCommitDetailDto,
+    WorkspaceGitCommitDto, WorkspaceGitCommitFileStatDto, WorkspaceGitCommitRequestDto,
+    WorkspaceGitFileActionRequestDto, WorkspaceGitGraphCommitDto, WorkspaceGitGraphEntryDto,
     WorkspaceGitSnapshotDto, WorkspaceSearchFileDto, WorkspaceSearchMatchDto,
 };
 use std::collections::{HashMap, HashSet};
@@ -104,7 +106,7 @@ fn is_blocked_wait_reason(wait_reason: &str) -> bool {
         || normalized.contains("io wait")
 }
 
-async fn stop_dap_session(session: DapSessionHandle) {
+async fn stop_dap_session(session: DapSessionHandle) -> Result<(), String> {
     let DapSessionHandle {
         mut child,
         stop_tx,
@@ -114,12 +116,16 @@ async fn stop_dap_session(session: DapSessionHandle) {
     let mut sampler_task = sampler_task;
 
     let _ = stop_tx.send(());
-    let _ = child.kill().await;
+    let stopped = crate::integration::process::kill_process_group(&mut child)
+        .await
+        .map_err(|e| e.to_string());
     let timeout_result = tokio::time::timeout(Duration::from_secs(1), &mut sampler_task).await;
     if timeout_result.is_err() {
         // The sampler task did not complete within the timeout, abort it.
         sampler_task.abort();
+        let _ = sampler_task.await;
     }
+    stopped
 }
 
 fn map_runtime_signal(signal: RuntimeSignal) -> RuntimeSignalDto {
@@ -210,17 +216,19 @@ pub async fn write_workspace_file(
     content: String,
     expected_content: Option<String>,
 ) -> ApiResponse<()> {
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        match expected_content {
-            Some(expected) => crate::integration::document::save(&workspace_root, &relative_path, &content, &expected),
-            None => Err("A disk baseline is required to save an existing document.".to_string()),
+    let result = tauri::async_runtime::spawn_blocking(move || match expected_content {
+        Some(expected) => {
+            crate::integration::document::save(&workspace_root, &relative_path, &content, &expected)
         }
+        None => Err("A disk baseline is required to save an existing document.".to_string()),
     })
     .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
-        Ok(Err(error)) if error.starts_with("external_file_conflict:") => ApiResponse::err("external_file_conflict", &error),
+        Ok(Err(error)) if error.starts_with("external_file_conflict:") => {
+            ApiResponse::err("external_file_conflict", &error)
+        }
         Ok(Err(error)) => ApiResponse::err("fs_write_failed", &error.to_string()),
         Err(error) => ApiResponse::err("fs_write_failed", &error.to_string()),
     }
@@ -323,20 +331,17 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
 }
 
 #[cfg(windows)]
-async fn kill_process_group(child: &mut tokio::process::Child) {
-    if let Some(pid) = child.id() {
-        let _ = std::process::Command::new("taskkill")
-            .arg("/F")
-            .arg("/T")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .output();
-    }
+async fn kill_process_group(child: &mut tokio::process::Child) -> Result<(), String> {
+    crate::integration::process::kill_process_group(child)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(not(windows))]
-async fn kill_process_group(child: &mut tokio::process::Child) {
-    let _ = child.kill().await;
+async fn kill_process_group(child: &mut tokio::process::Child) -> Result<(), String> {
+    crate::integration::process::kill_process_group(child)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -345,11 +350,61 @@ pub async fn stop_current_run() -> ApiResponse<()> {
     let mut guard = handle.lock().await;
 
     if let Some(child) = guard.as_mut() {
-        kill_process_group(child).await;
+        if let Err(error) = kill_process_group(child).await {
+            return ApiResponse::err("run_stop_failed", &error);
+        }
     }
     *guard = None;
 
     ApiResponse::ok(())
+}
+
+/// One shutdown authority for GoIDE-owned run, debugger, PTY, watcher and LSP resources.
+#[tauri::command]
+pub async fn shutdown_owned_resources<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> ApiResponse<()> {
+    use tauri::Manager;
+    let _shutdown = crate::integration::lifecycle::gate().shutdown().await;
+    let stopped = stop_current_run().await;
+    if !stopped.ok {
+        return stopped;
+    }
+    if let Some(session) = get_dap_session_handle().lock().await.take() {
+        if let Err(error) = stop_dap_session(session).await {
+            return ApiResponse::err("shutdown_failed", &error);
+        }
+    }
+    let sessions = {
+        let store = get_shell_sessions_handle();
+        let mut state = store.lock().await;
+        state.surface_to_shell.clear();
+        std::mem::take(&mut state.sessions)
+    };
+    let shells = tauri::async_runtime::spawn_blocking(move || {
+        for (_, session) in sessions {
+            session.terminate();
+        }
+    })
+    .await;
+    if let Err(error) = shells {
+        return ApiResponse::err("shutdown_failed", &error.to_string());
+    }
+    if let Err(error) = app.state::<FsWatchService>().stop_all() {
+        return ApiResponse::err("shutdown_failed", &error.to_string());
+    }
+    match tauri::async_runtime::spawn_blocking(
+        crate::integration::lsp_manager::shutdown_lsp_session,
+    )
+    .await
+    {
+        Ok(Ok(())) => {
+            crate::integration::lifecycle::approve_exit();
+            ApiResponse::ok(())
+        }
+        Ok(Err(error)) => ApiResponse::err("shutdown_failed", &error.to_string()),
+        Err(error) => ApiResponse::err("shutdown_failed", &error.to_string()),
+    }
 }
 
 #[tauri::command]
@@ -857,7 +912,9 @@ async fn start_debug_session_internal(
         })
     };
     if let Some(previous) = previous_session {
-        stop_dap_session(previous).await;
+        if let Err(error) = stop_dap_session(previous).await {
+            return ApiResponse::err("debug_stop_failed", &error);
+        }
     }
 
     ApiResponse::ok(ActivateDeepTraceResponseDto {
@@ -870,6 +927,10 @@ async fn start_debug_session_internal(
 pub async fn activate_scoped_deep_trace(
     request: ActivateDeepTraceRequestDto,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    let _registration = match crate::integration::lifecycle::gate().operation().await {
+        Ok(guard) => guard,
+        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
+    };
     start_debug_session_internal(
         request.workspace_root,
         request.relative_path,
@@ -884,6 +945,10 @@ pub async fn activate_scoped_deep_trace(
 pub async fn start_debug_session(
     request: StartDebugSessionRequestDto,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    let _registration = match crate::integration::lifecycle::gate().operation().await {
+        Ok(guard) => guard,
+        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
+    };
     start_debug_session_internal(
         request.workspace_root,
         request.relative_path,
@@ -1699,29 +1764,12 @@ pub async fn search_workspace_text(
 }
 
 fn git_command_output(root: &Path, args: &[&str], trim_stdout: bool) -> Result<String, String> {
-    let output = std_command("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|error| error.to_string())?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        return Err(if stderr.is_empty() {
-            "git command failed".to_string()
-        } else {
-            stderr
-        });
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stdout = crate::integration::git::command_text(root, args)?;
     Ok(if trim_stdout {
         stdout.trim().to_string()
     } else {
         stdout
     })
-}
-
-fn run_git_command(root: &Path, args: &[&str]) -> Result<String, String> {
-    git_command_output(root, args, false)
 }
 
 /// Strip internal `<code>::` prefixes from error messages before surfacing
@@ -1745,45 +1793,32 @@ pub async fn get_workspace_git_snapshot(
     };
 
     let snapshot_result = tauri::async_runtime::spawn_blocking(move || {
-        let branch = run_git_command(&root, &["rev-parse", "--abbrev-ref", "HEAD"])
-            .map(|value| value.trim().to_string())
-            .map_err(|message| format!("git_unavailable::{message}"))?;
-
-        let status_output = run_git_command(&root, &["status", "--porcelain"])
-            .map_err(|message| format!("git_status_failed::{message}"))?;
-        let changed_files = status_output
-            .lines()
-            .filter_map(|line| {
-                if line.len() < 4 {
-                    return None;
-                }
-                let status = line[..2].trim().to_string();
-                let path = line[3..].trim().replace('\\', "/");
-                if path.is_empty() {
-                    return None;
-                }
-                Some(WorkspaceGitChangedFileDto { path, status })
+        let status = crate::integration::git::repository_status(&root)?;
+        let branch = status
+            .branch
+            .clone()
+            .unwrap_or_else(|| "Detached HEAD".into());
+        let changed_files = status
+            .files
+            .into_iter()
+            .map(|file| WorkspaceGitChangedFileDto {
+                path: file.path,
+                status: format!(
+                    "{}{}",
+                    file.index_status.replace('.', " "),
+                    file.worktree_status.replace('.', " ")
+                ),
             })
             .collect();
-
-        let commits_output = run_git_command(
-            &root,
-            &["log", "--pretty=format:%h%x09%an%x09%ar%x09%s", "-n", "20"],
-        )
-        .map_err(|message| format!("git_log_failed::{message}"))?;
-        let commits = commits_output
-            .lines()
-            .filter_map(|line| {
-                let parts: Vec<&str> = line.splitn(4, '\t').collect();
-                if parts.len() < 4 {
-                    return None;
-                }
-                Some(WorkspaceGitCommitDto {
-                    hash: parts[0].to_string(),
-                    author: parts[1].to_string(),
-                    relative_time: parts[2].to_string(),
-                    subject: parts[3].to_string(),
-                })
+        let commits = crate::integration::git::history_page(&root, 0, vec![])?
+            .commits
+            .into_iter()
+            .take(20)
+            .map(|commit| WorkspaceGitCommitDto {
+                hash: commit.hash,
+                author: commit.author,
+                relative_time: commit.date,
+                subject: commit.subject,
             })
             .collect();
 
@@ -1804,6 +1839,298 @@ pub async fn get_workspace_git_snapshot(
             ApiResponse::err(code, message)
         }
         Err(error) => ApiResponse::err("git_failed", &error.to_string()),
+    }
+}
+
+fn validate_workspace_relative_path(relative_path: &str) -> Result<(), String> {
+    let trimmed = relative_path.trim();
+    if trimmed.is_empty() {
+        return Err("relative path is required".to_string());
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return Err("absolute paths are not allowed".to_string());
+    }
+    for component in path.components() {
+        if matches!(
+            component,
+            Component::ParentDir | Component::RootDir | Component::Prefix(_)
+        ) {
+            return Err("relative path must stay within workspace".to_string());
+        }
+    }
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stage_workspace_git_file(
+    request: WorkspaceGitFileActionRequestDto,
+) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_relative_path(&request.relative_path)?;
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_stage_failed::{error}"))?;
+        let root =
+            crate::integration::git::repository_root(root.to_str().ok_or("Non-UTF-8 workspace")?)?;
+        let _lease = crate::integration::git::mutation_lock(&root)?;
+        crate::integration::git::mutate(
+            &root,
+            crate::integration::git::Mutation::Stage {
+                paths: vec![request.relative_path],
+            },
+        )?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_stage_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_stage_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn unstage_workspace_git_file(
+    request: WorkspaceGitFileActionRequestDto,
+) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        validate_workspace_relative_path(&request.relative_path)?;
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_unstage_failed::{error}"))?;
+        let root =
+            crate::integration::git::repository_root(root.to_str().ok_or("Non-UTF-8 workspace")?)?;
+        let _lease = crate::integration::git::mutation_lock(&root)?;
+        crate::integration::git::mutate(
+            &root,
+            crate::integration::git::Mutation::Unstage {
+                paths: vec![request.relative_path],
+            },
+        )?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_unstage_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_unstage_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn commit_workspace_git_changes(
+    request: WorkspaceGitCommitRequestDto,
+) -> ApiResponse<()> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let commit_message = request.message.trim().to_string();
+        if commit_message.is_empty() {
+            return Err("git_commit_failed::commit message is required".to_string());
+        }
+        let root = resolve_workspace_root(&request.workspace_root)
+            .map_err(|error| format!("git_commit_failed::{error}"))?;
+        let root =
+            crate::integration::git::repository_root(root.to_str().ok_or("Non-UTF-8 workspace")?)?;
+        let _lease = crate::integration::git::mutation_lock(&root)?;
+        crate::integration::git::mutate(
+            &root,
+            crate::integration::git::Mutation::Commit {
+                message: commit_message,
+            },
+        )?;
+        Ok::<(), String>(())
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(message)) => ApiResponse::err("git_commit_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_commit_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_commit_detail(
+    workspace_root: String,
+    hash: String,
+) -> ApiResponse<WorkspaceGitCommitDetailDto> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let commit_hash = hash.trim().to_string();
+        if commit_hash.is_empty() {
+            return Err("git_commit_detail_failed::commit hash is required".to_string());
+        }
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_commit_detail_failed::{error}"))?;
+
+        let header = git_output(
+            &root,
+            &[
+                "show",
+                "-s",
+                "--format=%H%x09%h%x09%P%x09%an%x09%ae%x09%ar%x09%aI%x09%s%x09%b",
+                &commit_hash,
+            ],
+        )?;
+        let header_parts: Vec<&str> = header.splitn(9, '\t').collect();
+        if header_parts.len() < 9 {
+            return Err("git_commit_detail_failed::unable to parse commit metadata".to_string());
+        }
+        let parents = header_parts[2]
+            .split_whitespace()
+            .map(ToString::to_string)
+            .collect::<Vec<String>>();
+
+        let numstat = git_output(&root, &["show", "--numstat", "--format=", &commit_hash])?;
+        let mut files: Vec<WorkspaceGitCommitFileStatDto> = Vec::new();
+        let mut total_additions = 0usize;
+        let mut total_deletions = 0usize;
+        for line in numstat.lines() {
+            let parts: Vec<&str> = line.splitn(3, '\t').collect();
+            if parts.len() < 3 {
+                continue;
+            }
+            let additions = parts[0].parse::<usize>().unwrap_or(0);
+            let deletions = parts[1].parse::<usize>().unwrap_or(0);
+            let path = parts[2].trim().replace('\\', "/");
+            total_additions += additions;
+            total_deletions += deletions;
+            files.push(WorkspaceGitCommitFileStatDto {
+                path,
+                additions,
+                deletions,
+            });
+        }
+
+        let patch = git_output(&root, &["show", "--format=", "--unified=0", &commit_hash])?;
+        let patch_preview = patch.lines().take(60).collect::<Vec<&str>>().join("\n");
+
+        Ok::<WorkspaceGitCommitDetailDto, String>(WorkspaceGitCommitDetailDto {
+            hash: header_parts[0].to_string(),
+            short_hash: header_parts[1].to_string(),
+            parents,
+            author: header_parts[3].to_string(),
+            email: header_parts[4].to_string(),
+            relative_time: header_parts[5].to_string(),
+            date_iso: header_parts[6].to_string(),
+            subject: header_parts[7].to_string(),
+            body: header_parts[8].trim().to_string(),
+            files_changed: files.len(),
+            insertions: total_additions,
+            deletions: total_deletions,
+            files,
+            patch_preview,
+        })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(detail)) => ApiResponse::ok(detail),
+        Ok(Err(message)) => {
+            ApiResponse::err("git_commit_detail_failed", strip_error_prefix(&message))
+        }
+        Err(error) => ApiResponse::err("git_commit_detail_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_git_graph(
+    workspace_root: String,
+) -> ApiResponse<Vec<WorkspaceGitGraphEntryDto>> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_graph_failed::{error}"))?;
+        let output = git_output(
+            &root,
+            &[
+                "log",
+                "--graph",
+                "--decorate",
+                "--oneline",
+                "--all",
+                "-n",
+                "80",
+            ],
+        )?;
+        let lines = output
+            .lines()
+            .map(|line| WorkspaceGitGraphEntryDto {
+                line: line.to_string(),
+            })
+            .collect::<Vec<WorkspaceGitGraphEntryDto>>();
+        Ok::<Vec<WorkspaceGitGraphEntryDto>, String>(lines)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(lines)) => ApiResponse::ok(lines),
+        Ok(Err(message)) => ApiResponse::err("git_graph_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_graph_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub async fn get_workspace_git_graph_commits(
+    workspace_root: String,
+) -> ApiResponse<Vec<WorkspaceGitGraphCommitDto>> {
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let root = resolve_workspace_root(&workspace_root)
+            .map_err(|error| format!("git_graph_failed::{error}"))?;
+        let output = git_output(
+            &root,
+            &[
+                "log",
+                "--graph",
+                "--decorate",
+                "-n",
+                "250",
+                "--pretty=format:%x1f%H%x1f%h%x1f%P%x1f%an%x1f%ae%x1f%aI%x1f%ar%x1f%d%x1f%s",
+                "--all",
+            ],
+        )?;
+        let commits = output
+            .lines()
+            .filter_map(|line| {
+                let mut parts = line.split('\u{001f}');
+                let graph_prefix = parts.next()?.to_string();
+                let hash = parts.next()?.to_string();
+                if hash.trim().is_empty() {
+                    return None;
+                }
+                let short_hash = parts.next().unwrap_or_default().to_string();
+                let parent_raw = parts.next().unwrap_or_default().to_string();
+                let parents = parent_raw
+                    .split_whitespace()
+                    .map(ToString::to_string)
+                    .collect::<Vec<String>>();
+                let author = parts.next().unwrap_or_default().to_string();
+                let email = parts.next().unwrap_or_default().to_string();
+                let date_iso = parts.next().unwrap_or_default().to_string();
+                let relative_time = parts.next().unwrap_or_default().to_string();
+                let refs = parts.next().unwrap_or_default().to_string();
+                let subject = parts.next().unwrap_or_default().to_string();
+
+                Some(WorkspaceGitGraphCommitDto {
+                    graph_prefix,
+                    hash,
+                    short_hash,
+                    parents,
+                    author,
+                    email,
+                    date_iso,
+                    relative_time,
+                    refs,
+                    subject,
+                })
+            })
+            .collect::<Vec<WorkspaceGitGraphCommitDto>>();
+        Ok::<Vec<WorkspaceGitGraphCommitDto>, String>(commits)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(commits)) => ApiResponse::ok(commits),
+        Ok(Err(message)) => ApiResponse::err("git_graph_failed", strip_error_prefix(&message)),
+        Err(error) => ApiResponse::err("git_graph_failed", &error.to_string()),
     }
 }
 
@@ -1836,7 +2163,7 @@ fn parse_changed_files_summary(status_output: &str) -> Vec<WorkspaceGitChangedFi
             if line.len() < 4 {
                 return None;
             }
-            let status = line[..2].trim().to_string();
+            let status = line[..2].to_string();
             let path = line[3..].trim().replace('\\', "/");
             if path.is_empty() {
                 return None;
@@ -1974,7 +2301,30 @@ where
 }
 
 fn build_workspace_branch_snapshot(root: &Path) -> Result<WorkspaceBranchSnapshotDto, String> {
-    build_workspace_branch_snapshot_with_git_runner(root, git_output)
+    let status = crate::integration::git::repository_status(root)?;
+    let mut snapshot = build_workspace_branch_snapshot_with_git_runner(root, |root, args| {
+        if args == ["rev-parse", "--abbrev-ref", "HEAD"] {
+            return Ok(status.branch.clone().unwrap_or_else(|| "HEAD".into()));
+        }
+        if args == ["status", "--porcelain"] {
+            return Ok(String::new());
+        }
+        git_output(root, args)
+    })?;
+    snapshot.changed_files_summary = status
+        .files
+        .into_iter()
+        .map(|file| WorkspaceGitChangedFileSummaryDto {
+            path: file.path,
+            status: format!(
+                "{}{}",
+                file.index_status.replace('.', " "),
+                file.worktree_status.replace('.', " ")
+            ),
+        })
+        .collect();
+    snapshot.has_uncommitted_changes = !snapshot.changed_files_summary.is_empty();
+    Ok(snapshot)
 }
 
 #[tauri::command]
@@ -2011,7 +2361,9 @@ pub async fn deactivate_deep_trace() -> ApiResponse<()> {
     };
 
     if let Some(session) = existing_session {
-        stop_dap_session(session).await;
+        if let Err(error) = stop_dap_session(session).await {
+            return ApiResponse::err("debug_stop_failed", &error);
+        }
     }
 
     let signals_handle = get_runtime_signals_handle();
@@ -2154,6 +2506,7 @@ pub async fn switch_workspace_branch(
         let root = resolve_workspace_root(&request.workspace_root)
             .map_err(|error| format!("git_branch_switch_failed::{error}"))?;
         let _git_operation = crate::integration::git::mutation_lock(&root)?;
+        crate::integration::git::repository_root(root.to_str().ok_or("Non-UTF-8 workspace")?)?;
         execute_branch_switch(&root, request)?;
         build_workspace_branch_snapshot(&root)
             .map_err(|error| format!("git_branch_switch_failed::{error}"))
@@ -2369,6 +2722,10 @@ pub async fn ensure_shell_session<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: EnsureShellSessionRequestDto,
 ) -> ApiResponse<EnsureShellSessionResponseDto> {
+    let _registration = match crate::integration::lifecycle::gate().operation().await {
+        Ok(guard) => guard,
+        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
+    };
     match ensure_shell_session_inner(
         app,
         get_shell_sessions_handle(),

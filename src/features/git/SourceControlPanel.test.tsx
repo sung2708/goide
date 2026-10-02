@@ -2,10 +2,11 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourceControlPanel from "./SourceControlPanel";
 import type { GitRepositoryStatus } from "../../lib/ipc/git";
-const { status, diff, mutate, history } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn() }));
-vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history }));
+const { status, diff, mutate, history, cancel } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn() }));
+vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel }));
 const data: GitRepositoryStatus = {
   root: "C:/repo", gitDir: "C:/repo/.git", gitVersion: "git version 2.50", branch: "main", head: "abc", upstream: "origin/main", ahead: 2, behind: 1, operation: null,
+  remotes: ["origin"],
   files: [
     { path: "both.go", originalPath: null, indexStatus: "M", worktreeStatus: "M", conflicted: false, submodule: false },
     { path: "untracked Ω.go", originalPath: null, indexStatus: "?", worktreeStatus: "?", conflicted: false, submodule: false },
@@ -16,6 +17,7 @@ const props = { workspacePath: "C:/repo", snapshot: null, transaction };
 describe("Source Control vertical slice", () => {
   beforeEach(() => {
     vi.clearAllMocks(); status.mockResolvedValue({ ok: true, data }); mutate.mockResolvedValue({ ok: true });
+    cancel.mockResolvedValue({ ok: true, data: true });
     diff.mockResolvedValue({ ok: true, data: { path: "both.go", originalPath: null, patch: "@@ -1 +1 @@\n-old\n+new\n", binary: false, limited: false } });
     history.mockResolvedValue({ ok: true, data: { commits: [], tips: [], hasMore: false } });
     transaction.mockImplementation(async (operation) => { await operation(); return true; });
@@ -42,14 +44,14 @@ describe("Source Control vertical slice", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" })); });
     expect(message).toHaveValue("");
   });
-  it("opens Git-generated staged/worktree diff with navigation and no destructive actions", async () => {
+  it("opens Git-generated staged/worktree diff with navigation without mutating the repository", async () => {
     render(<SourceControlPanel {...props} />);
     await screen.findByRole("list", { name: "Changes" });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open changes both.go staged" })); });
     expect(diff).toHaveBeenCalledWith("C:/repo", "both.go", true);
     expect(screen.getByRole("region", { name: "Git diff" })).toHaveTextContent("+new");
     expect(screen.getByRole("button", { name: "Next change" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: /discard/i })).not.toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled();
   });
   it("detects conflict states and keeps mutation controls disabled", async () => {
     status.mockResolvedValue({ ok: true, data: { ...data, operation: "merge", files: [{ ...data.files[0], conflicted: true, indexStatus: "U", worktreeStatus: "U" }] } });
@@ -68,5 +70,18 @@ describe("Source Control vertical slice", () => {
     await screen.findByText("next");
     await act(async () => { finish({ ok: true, data }); });
     expect(screen.getByText("next")).toBeInTheDocument(); expect(screen.queryByText("main")).not.toBeInTheDocument();
+  });
+  it("requests cancellation without automatically retrying or clearing a rejected commit", async () => {
+    let finish!: (value: unknown) => void;
+    mutate.mockImplementationOnce(() => new Promise((resolve) => { finish = resolve; }));
+    render(<SourceControlPanel {...props} />);
+    const message = await screen.findByLabelText("Commit message");
+    fireEvent.change(message, { target: { value: "valuable message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Git operation" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("C:/repo"));
+    await act(async () => { finish({ ok: false, error: { message: "Git operation cancelled. Refresh before retrying." } }); });
+    expect(message).toHaveValue("valuable message"); expect(mutate).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("alert")).toHaveTextContent("Git operation cancelled");
   });
 });

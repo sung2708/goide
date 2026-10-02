@@ -204,6 +204,13 @@ pub fn delete_entry(workspace_root: &str, relative_path: &str) -> Result<()> {
     Ok(())
 }
 
+/// File-only deletion never recursively removes a directory substituted after confirmation.
+pub fn delete_file_only(workspace_root: &str, relative_path: &str) -> Result<()> {
+    let root = canonicalize_root(workspace_root)?;
+    let target = resolve_scoped_entry(&root, relative_path)?;
+    fs::remove_file(&target).with_context(|| format!("failed to delete file: {}", target.display()))
+}
+
 pub fn rename_entry(workspace_root: &str, relative_path: &str, new_name: &str) -> Result<String> {
     if relative_path.trim().is_empty() {
         return Err(anyhow!("relative path is required"));
