@@ -12,6 +12,7 @@ pub mod lsp_manager;
 pub mod organize_imports;
 pub mod output;
 pub mod owned_sync_process;
+pub mod owned_tool_output;
 pub mod process;
 pub mod process_job;
 pub mod rename_symbol;
