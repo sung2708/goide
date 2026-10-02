@@ -328,3 +328,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: keyboard/palette chooser populated by actual gopls actions, captured unsaved overlays and diagnostic context, cancellable requests, fresh server selection checks, reviewed direct edits and edit-only ApplyFix resolution.
 - Delivered: bounded cross-file capture followed by re-query against immutable overlays; atomic editor application preserves dirty state and original save baselines.
 - Remaining: selected-range refactorings, other edit-aware lazy commands, interactive actions, resource operations and command workflows. This checkpoint does not complete the feature addendum or authorize a release/tag.
+
+## Terminal transition completion checkpoint (2026-10-03)
+
+- Delivered: failed old-workspace shell cleanup remains visible and retryable; no replacement terminal connects while cleanup is incomplete.
+- Delivered: pending shell creation is retained until its response arrives, including workspace changes and actual unmount; stale successful setup is disposed rather than abandoned.
+- Delivered: serialized latest-root teardown handles returning to the original workspace during disposal; inactive successful exits clear stale session tracking.
+- Remaining: complete cross-platform process-tree acceptance, Windows spawn-to-job assignment gaps, Unix PTY descendant containment, and the other unfinished addendum/source-control gates. No release/tag is authorized.

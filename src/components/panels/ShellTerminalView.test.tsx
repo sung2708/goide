@@ -1,7 +1,7 @@
-import { render, screen, waitFor, act } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, act } from "@testing-library/react";
 import { useEffect, useRef } from "react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock IPC client functions
 const ensureShellSessionMock = vi.fn();
@@ -98,6 +98,7 @@ vi.mock("@tauri-apps/api/event", () => ({
 import ShellTerminalView from "./ShellTerminalView";
 
 describe("ShellTerminalView", () => {
+  afterEach(async () => { cleanup(); await act(async () => { await Promise.resolve(); }); });
   beforeEach(() => {
     capturedOnData = null;
     capturedOnResize = null;
@@ -626,6 +627,71 @@ describe("ShellTerminalView", () => {
   });
 
   // ---- workspace-level disposal ----
+  it("forgets a successfully exited inactive session without disconnecting the active surface", async () => {
+    const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="first" />);
+    await waitFor(() => expect(screen.getByTestId("terminal-surface")).toHaveAttribute("data-readonly", "false"));
+    ensureShellSessionMock.mockResolvedValue({ ok: true, data: { shellSessionId: "second-session", reused: false } });
+    view.rerender(<ShellTerminalView workspacePath="/old" surfaceKey="second" />);
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(2));
+    await act(async () => { await Promise.resolve(); shellExitListener?.({ payload: { shellSessionId: "session-abc", shellHealth: "exit" } }); });
+    expect(screen.queryByText("Shell session ended unexpectedly.")).not.toBeInTheDocument();
+    view.rerender(<ShellTerminalView workspacePath="/new" surfaceKey="terminal" />);
+    await waitFor(() => expect(disposeShellSessionMock).toHaveBeenCalledWith({ shellSessionId: "second-session" }));
+    expect(disposeShellSessionMock).not.toHaveBeenCalledWith({ shellSessionId: "session-abc" });
+  });
+  it("disposes an in-flight setup result that arrives after unmount", async () => {
+    let resolve!: (value: unknown) => void;
+    ensureShellSessionMock.mockImplementationOnce(() => new Promise(complete => { resolve = complete; }));
+    const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="terminal" />);
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(1)); view.unmount();
+    await act(async () => { resolve({ ok: true, data: { shellSessionId: "late-unmounted", reused: false } }); });
+    await waitFor(() => expect(disposeShellSessionMock).toHaveBeenCalledWith({ shellSessionId: "late-unmounted" }));
+  });
+  it("retains failed workspace cleanup and blocks new sessions until retry succeeds", async () => {
+    const user = userEvent.setup(); const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="terminal" />);
+    await waitFor(() => expect(screen.getByTestId("terminal-surface")).toHaveAttribute("data-readonly", "false"));
+    disposeShellSessionMock.mockResolvedValueOnce({ ok: false, error: { message: "stop denied" } });
+    ensureShellSessionMock.mockResolvedValue({ ok: true, data: { shellSessionId: "new-session", reused: false } });
+    view.rerender(<ShellTerminalView workspacePath="/new" surfaceKey="terminal" />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("previous workspace sessions remain owned"); expect(screen.getByRole("alert")).toHaveTextContent("stop denied");
+    expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Retry terminal cleanup" }));
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: "/new" })));
+    expect(disposeShellSessionMock).toHaveBeenCalledTimes(2);
+  });
+  it("waits for a late old-workspace session and disposes it before connecting the new workspace", async () => {
+    let resolve!: (value: unknown) => void;
+    ensureShellSessionMock.mockImplementationOnce(() => new Promise(complete => { resolve = complete; }));
+    const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="terminal" />);
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(1));
+    view.rerender(<ShellTerminalView workspacePath="/new" surfaceKey="terminal" />);
+    await act(async () => { await Promise.resolve(); }); expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve({ ok: true, data: { shellSessionId: "late-old", reused: false } }); });
+    await waitFor(() => expect(disposeShellSessionMock).toHaveBeenCalledWith({ shellSessionId: "late-old" }));
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: "/new" })));
+    expect(disposeShellSessionMock.mock.invocationCallOrder[0]).toBeLessThan(ensureShellSessionMock.mock.invocationCallOrder[1]);
+  });
+  it("keeps cleanup failure actionable after the workspace closes", async () => {
+    const user = userEvent.setup(); const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="terminal" />);
+    await waitFor(() => expect(screen.getByTestId("terminal-surface")).toHaveAttribute("data-readonly", "false"));
+    disposeShellSessionMock.mockResolvedValueOnce({ ok: false, error: { message: "reader still stopping" } });
+    view.rerender(<ShellTerminalView workspacePath={null} surfaceKey={null} />);
+    expect(await screen.findByRole("alert")).toHaveTextContent("reader still stopping");
+    await user.click(screen.getByRole("button", { name: "Retry terminal cleanup" }));
+    expect(await screen.findByText("Open a workspace to start a shell session.")).toBeInTheDocument(); expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
+  });
+  it("finishes cleanup when the user returns to the original root during disposal", async () => {
+    const view = render(<ShellTerminalView workspacePath="/first" surfaceKey="terminal" />);
+    await waitFor(() => expect(screen.getByTestId("terminal-surface")).toHaveAttribute("data-readonly", "false"));
+    let resolve!: (value: unknown) => void; disposeShellSessionMock.mockImplementationOnce(() => new Promise(complete => { resolve = complete; }));
+    view.rerender(<ShellTerminalView workspacePath="/second" surfaceKey="terminal" />);
+    await waitFor(() => expect(disposeShellSessionMock).toHaveBeenCalledTimes(1));
+    view.rerender(<ShellTerminalView workspacePath="/first" surfaceKey="terminal" />);
+    await act(async () => { resolve({ ok: true }); });
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText("Switching workspace shell...")).not.toBeInTheDocument();
+  });
+
 
   it("disposes all tracked sessions when workspacePath changes", async () => {
     const { rerender } = render(

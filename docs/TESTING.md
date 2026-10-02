@@ -189,3 +189,9 @@ Three native signature tests passed including a real installed-gopls query that 
 Frontend checks cover captured overlays/diagnostics, actual action selection, unsupported reasons, cancellation on close/unmount/context changes, honest native errors, editor-only atomic application, and the `Mod+.` command through EditorShell followed by baseline-preserving Save. Native checks cover bounded real action descriptions, stale/ambiguous selections, UTF-16 diagnostic ranges, duplicate workspace edits/resource-operation rejection, and the edit-only lazy-resolution allowlist.
 
 Explicit opt-in tests use installed Go/gopls to obtain Organize Imports and lazy Fill Struct actions, resolve/preview actual edits, and verify that the original disk files remain unchanged. Run `scripts/cargo_test_msvc.cmd integration::code_actions -- --include-ignored --test-threads=1` on Windows. These checks do not substitute for the unfinished release/platform acceptance matrix.
+
+## Terminal workspace cleanup validation (2026-10-03)
+
+Regression tests cover failed disposal retention and selective retry, pending creation followed by retired-child disposal, changing roots during serialized cleanup, failed setup without phantom sessions, visible errors after closing a workspace, blocking replacement sessions until acknowledgement, late setup after unmount, inactive successful exits, and preserving sessions/scrollback across file switches. Existing editor terminal and safe-close checks also pass. The lifecycle owner is tested independently of React, and the terminal output hook retains frame batching/cancellation coverage.
+
+These frontend checks complement the previously tested native PTY stop/reap/reader-join workflow. They do not establish Unix descendant containment or close the full platform release matrix.
