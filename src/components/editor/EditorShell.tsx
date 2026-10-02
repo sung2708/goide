@@ -1,4 +1,6 @@
 import { open } from "@tauri-apps/plugin-dialog";
+import WelcomeScreen from "./WelcomeScreen";
+import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
 import type { VisibleLineRange } from "../../features/concurrency/signalDensity";
@@ -13,7 +15,6 @@ import {
   writeWorkspaceFile,
   runWorkspaceFile,
   runWorkspaceFileWithRace,
-  switchWorkspaceBranch,
   getDebuggerState,
   debuggerContinue,
   debuggerPause,
@@ -31,7 +32,6 @@ import type {
   DeepTraceConstructKind,
   DebugFailure,
   RuntimeSignal,
-  WorkspaceGitBranch,
   DebuggerState,
   FsEntry,
 } from "../../lib/ipc/types";
@@ -62,6 +62,10 @@ import {
 import { useWorkspaceFsSync } from "./useWorkspaceFsSync";
 import { useToolchainStatus } from "./useToolchainStatus";
 import { useWorkspaceGitState } from "./useWorkspaceGitState";
+import { useBranchTransition } from "./useBranchTransition";
+import { useGitDocumentTransaction } from "../../features/git/useGitDocumentTransaction";
+import { useExternalFileState } from "./useExternalFileState";
+import ExternalFileConflict from "./ExternalFileConflict";
 import { useRuntimeTopology } from "./useRuntimeTopology";
 import { useDiagnosticsState } from "./useDiagnosticsState";
 import { useCompletionState } from "./useCompletionState";
@@ -265,6 +269,7 @@ function EditorShell() {
   const [activeFilePath, setActiveFilePath] = useState<string | null>(null);
   const [activeFileContent, setActiveFileContent] = useState<string | null>(null);
   const [fileError, setFileError] = useState<string | null>(null);
+  const [fsSyncError, setFsSyncError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
   const [hasLoadedBottomPanel, setHasLoadedBottomPanel] = useState(false);
@@ -301,10 +306,6 @@ function EditorShell() {
   } = useWorkspaceGitState(workspacePath);
   const [isBranchPickerOpen, setIsBranchPickerOpen] = useState(false);
   const [branchQuery, setBranchQuery] = useState("");
-  const [pendingTargetBranch, setPendingTargetBranch] = useState<WorkspaceGitBranch | null>(null);
-  const [isBranchDialogOpen, setIsBranchDialogOpen] = useState(false);
-  const [branchSwitchLoading, setBranchSwitchLoading] = useState(false);
-  const [branchSwitchError, setBranchSwitchError] = useState<string | null>(null);
 
   useEffect(() => {
     if (isBottomPanelOpen) {
@@ -349,6 +350,7 @@ function EditorShell() {
   } = useWorkspaceSearchState(workspacePath);
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const [explorerRevision, setExplorerRevision] = useState(0);
+  const [gitOperationBusy, setGitOperationBusy] = useState(false);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
@@ -374,6 +376,16 @@ function EditorShell() {
   workspacePathRef.current = workspacePath;
   const activeFilePathRef = useRef(activeFilePath);
   activeFilePathRef.current = activeFilePath;
+  const documentTransitionRef = useRef(false);
+  const externalFile = useExternalFileState({
+    root: workspacePath, path: activeFilePath, revision: explorerRevision,
+    saved: savedContentRef, buffer: latestEditorContentRef, busy: documentTransitionRef, saving: isSavingRef,
+    apply: (content) => {
+      if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
+      savedContentRef.current = content; latestEditorContentRef.current = content;
+      setActiveFileContent(content); setIsDirty(false); setAnalysisRevision((revision) => revision + 1); setFileError(null);
+    }, onError: setFileError,
+  });
   const {
     diagnostics,
     diagnosticsByFile,
@@ -406,6 +418,8 @@ function EditorShell() {
   const runtimeSignalPendingRequestCountRef = useRef(0);
   const debugStopInFlightRef = useRef(false);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const branchMutationRef = useRef(false);
+  const editorMountedRef = useRef(true);
   const [deepTraceScope, setDeepTraceScope] = useState<{
     workspacePath: string;
     filePath: string;
@@ -471,7 +485,9 @@ function EditorShell() {
 
   // Clear editor timers on unmount to prevent setState on unmounted component
   useEffect(() => {
+    editorMountedRef.current = true;
     return () => {
+      editorMountedRef.current = false;
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
       }
@@ -752,6 +768,7 @@ function EditorShell() {
     workspacePath,
     workspacePathRef,
     onWorkspaceChanged: handleWorkspaceFsChanged,
+    onSyncError: setFsSyncError,
   });
 
   const fileDecorations = useMemo(() => {
@@ -1097,18 +1114,21 @@ function EditorShell() {
   ]);
 
   const persistActiveFileContent = useCallback(
-    async (content: string) => {
+    async (content: string): Promise<boolean> => {
       const currentPath = activeFilePath;
       if (!workspacePath || !currentPath) {
         return false;
       }
       // Guard: ignore concurrent save requests
-      if (isSavingRef.current) {
+      if (isSavingRef.current || branchMutationRef.current) {
         return false;
       }
 
       isSavingRef.current = true;
-      latestEditorContentRef.current = content;
+      if (autoSaveDebounceRef.current !== null) {
+        clearTimeout(autoSaveDebounceRef.current);
+        autoSaveDebounceRef.current = null;
+      }
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
         saveStatusTimerRef.current = null;
@@ -1116,17 +1136,21 @@ function EditorShell() {
 
       const saveWorkspacePath = workspacePath;
       const saveFilePath = currentPath;
+      let didWrite = false;
 
       setSaveStatus("saving");
       try {
-        const response = await writeWorkspaceFile(workspacePath, currentPath, content);
+        const response = await writeWorkspaceFile(workspacePath, currentPath, content, savedContentRef.current ?? undefined);
         if (
+          !editorMountedRef.current ||
           workspacePathRef.current !== saveWorkspacePath ||
           activeFilePathRef.current !== saveFilePath
         ) {
           return false;
         }
         if (response.ok) {
+          didWrite = true;
+          setFileError(null);
           savedContentRef.current = content;
           const hasNewerEdits = latestEditorContentRef.current !== content;
           if (!hasNewerEdits) {
@@ -1140,40 +1164,102 @@ function EditorShell() {
             saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
           }
           await refreshDiagnosticsForFile(saveWorkspacePath, saveFilePath);
-          setAnalysisRevision((current) => current + 1);
+          if (
+            editorMountedRef.current &&
+            workspacePathRef.current === saveWorkspacePath &&
+            activeFilePathRef.current === saveFilePath
+          ) {
+            setAnalysisRevision((current) => current + 1);
+          }
           return true;
         } else {
+          if (response.error?.code === "external_file_conflict") {
+            // Recheck after the save guard is released; do not schedule another write.
+            setTimeout(() => void externalFile.check(), 0);
+          }
+          setFileError(response.error?.message ?? "Unable to save the current file.");
           setSaveStatus("error");
           saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
           return false;
         }
       } catch (error) {
         if (
+          !editorMountedRef.current ||
           workspacePathRef.current !== saveWorkspacePath ||
           activeFilePathRef.current !== saveFilePath
         ) {
           return false;
         }
         setSaveStatus("error");
+        setFileError(error instanceof Error ? error.message : "Unable to save the current file.");
         saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 5000);
         console.error("Failed to save file:", error);
         return false;
       } finally {
         isSavingRef.current = false;
+        const newerContent = latestEditorContentRef.current;
+        if (
+          editorMountedRef.current && didWrite && newerContent !== null && newerContent !== content &&
+          autoSaveDebounceRef.current === null &&
+          workspacePathRef.current === saveWorkspacePath &&
+          activeFilePathRef.current === saveFilePath
+        ) {
+          // A debounce may have fired while this write was pending. Retain the
+          // newer buffer and schedule its save after the successful write.
+          autoSaveDebounceRef.current = setTimeout(() => {
+            autoSaveDebounceRef.current = null;
+            if (
+              workspacePathRef.current === saveWorkspacePath &&
+              activeFilePathRef.current === saveFilePath &&
+              latestEditorContentRef.current === newerContent &&
+              savedContentRef.current !== newerContent
+            ) {
+              void persistActiveFileContent(newerContent);
+            }
+          }, 2500);
+        }
       }
     },
-    [workspacePath, activeFilePath, refreshDiagnosticsForFile]
+    [workspacePath, activeFilePath, refreshDiagnosticsForFile, externalFile.check]
   );
 
   const handleSaveFile = useCallback(
     async (content: string) => {
+      if (branchMutationRef.current) return;
+      // The explicit save command carries the editor's current buffer.
+      latestEditorContentRef.current = content;
       await persistActiveFileContent(content);
     },
     [persistActiveFileContent]
   );
 
+  const preserveActiveDocument = useCallback(async () => {
+    if (autoSaveDebounceRef.current !== null) {
+      clearTimeout(autoSaveDebounceRef.current);
+      autoSaveDebounceRef.current = null;
+    }
+    if (isSavingRef.current) {
+      setFileError("Saving is still in progress. Wait for it to finish before switching.");
+      return false;
+    }
+    const content = latestEditorContentRef.current;
+    if (content === null || content === savedContentRef.current) {
+      return true;
+    }
+    const saved = await persistActiveFileContent(content);
+    if (!saved) {
+      setFileError((current) => `Save the current file before switching. Your unsaved edits are still open. ${current ?? "Retry after saving completes."}`);
+      return false;
+    }
+    if (latestEditorContentRef.current !== savedContentRef.current) {
+      setFileError("The current file changed while saving. Your unsaved edits are still open; save again before switching.");
+      return false;
+    }
+    return true;
+  }, [persistActiveFileContent]);
+
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
-    if (debugUiState === "starting") {
+    if (documentTransitionRef.current || debugUiState === "starting") {
       return;
     }
     if (!workspacePath || !activeFilePath) return;
@@ -1267,7 +1353,7 @@ function EditorShell() {
   }, [handleRunFile]);
 
   const handleStartDebug = useCallback(async () => {
-    if (debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
+    if (documentTransitionRef.current || debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
       return;
     }
     if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
@@ -1607,6 +1693,7 @@ function EditorShell() {
   }, [clearPendingRunOutputBuffer]);
 
   const handleEditorChange = useCallback((value: string) => {
+    if (branchMutationRef.current) return;
     latestEditorContentRef.current = value;
     setActiveFileContent(value);
     setIsDirty(value !== savedContentRef.current);
@@ -1617,8 +1704,17 @@ function EditorShell() {
     if (autoSaveDebounceRef.current) {
       clearTimeout(autoSaveDebounceRef.current);
     }
+    const expectedWorkspace = workspacePath;
+    const expectedFile = activeFilePath;
     autoSaveDebounceRef.current = setTimeout(() => {
-      if (workspacePathRef.current && activeFilePathRef.current) {
+      autoSaveDebounceRef.current = null;
+      if (
+        expectedWorkspace && expectedFile &&
+        workspacePathRef.current === expectedWorkspace &&
+        activeFilePathRef.current === expectedFile &&
+        latestEditorContentRef.current === value &&
+        savedContentRef.current !== value
+      ) {
         void persistActiveFileContent(value);
       }
     }, 2500);
@@ -1688,10 +1784,11 @@ function EditorShell() {
   );
 
   const handleOpenWorkspace = useCallback(async () => {
-    if (isOpening) {
+    if (isOpening || documentTransitionRef.current) {
       return;
     }
 
+    documentTransitionRef.current = true;
     setIsOpening(true);
     try {
       const selected = await open({
@@ -1706,14 +1803,23 @@ function EditorShell() {
 
       const resolvedPath = Array.isArray(selected) ? selected[0] : selected;
       if (typeof resolvedPath === "string") {
+        if (!(await preserveActiveDocument())) {
+          return;
+        }
         setMode("quick-insight");
         setRuntimeAvailability("unavailable");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
         setRaceSignals([]);
         setWorkspacePath(resolvedPath);
+        workspacePathRef.current = resolvedPath;
         setActiveFilePath(null);
+        activeFilePathRef.current = null;
         setActiveFileContent(null);
+        savedContentRef.current = null;
+        latestEditorContentRef.current = null;
+        setIsDirty(false);
+        setSaveStatus("idle");
         resetWorkspaceSearch();
         resetDiagnosticsState();
         invalidateCompletionRequests();
@@ -1725,16 +1831,18 @@ function EditorShell() {
     } catch (error) {
       console.error("Failed to open workspace dialog:", error);
     } finally {
+      documentTransitionRef.current = false;
       setIsOpening(false);
     }
-  }, [isOpening, resetDiagnosticsState, resetWorkspaceSearch]);
+  }, [isOpening, preserveActiveDocument, resetDiagnosticsState, resetWorkspaceSearch]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string) => {
-      if (!workspacePath || isReading) {
+      if (!workspacePath || isReading || documentTransitionRef.current) {
         return;
       }
 
+      documentTransitionRef.current = true;
       const startingPath = workspacePath;
       const readFileWithRetry = async (workspaceRoot: string, path: string) => {
         let lastResponse = await readWorkspaceFile(workspaceRoot, path);
@@ -1753,34 +1861,42 @@ function EditorShell() {
       setFileError(null);
       setSelectedLine(null);
       setInteractionAnchor(null);
-      invalidateDiagnosticsRequests();
-      invalidateCompletionRequests();
-      clearActiveDiagnostics();
-      resetCompletionAvailability();
-
       try {
+        if (!(await preserveActiveDocument())) {
+          return;
+        }
+        const contentBeforeRead = latestEditorContentRef.current;
         const response = await readFileWithRetry(workspacePath, relativePath);
 
         // If the workspace changed while we were reading, ignore the result
         if (workspacePathRef.current !== startingPath) {
           return;
         }
+        if (latestEditorContentRef.current !== contentBeforeRead) {
+          setFileError("The current file changed while opening another file. Your edits are still open; retry switching when ready.");
+          return;
+        }
 
         if (!response.ok || response.data === undefined) {
-          setActiveFilePath(relativePath);
-          activeFilePathRef.current = relativePath;
-          setActiveFileContent(null);
-          setMode("quick-insight");
-          setRuntimeAvailability("unavailable");
-          setDeepTraceScope(null);
-          setActiveBlockedSignal(null);
           setFileError(response.error?.message ?? "Unable to open file");
           return;
         }
 
+        if (autoSaveDebounceRef.current !== null) {
+          clearTimeout(autoSaveDebounceRef.current);
+          autoSaveDebounceRef.current = null;
+        }
+        invalidateDiagnosticsRequests();
+        invalidateCompletionRequests();
+        clearActiveDiagnostics();
+        resetCompletionAvailability();
         setActiveFilePath(relativePath);
         activeFilePathRef.current = relativePath;
         setActiveFileContent(response.data);
+        savedContentRef.current = response.data;
+        latestEditorContentRef.current = response.data;
+        setIsDirty(false);
+        setSaveStatus("idle");
         setMode("quick-insight");
         setDeepTraceScope(null);
         setActiveBlockedSignal(null);
@@ -1789,123 +1905,123 @@ function EditorShell() {
           runtimeCheckRequestIdRef.current += 1;
           const requestId = runtimeCheckRequestIdRef.current;
           setRuntimeAvailability("unavailable");
-          try {
-            const availabilityResponse = await getRuntimeAvailability();
-            if (
-              requestId === runtimeCheckRequestIdRef.current &&
-              workspacePathRef.current === startingPath &&
-              activeFilePathRef.current === relativePath
-            ) {
-              setRuntimeAvailability(
-                availabilityResponse.ok &&
-                  availabilityResponse.data?.runtimeAvailability === "available"
-                  ? "available"
-                  : "unavailable"
-              );
+          // Toolchain health is independent of loading the document. A slow
+          // probe must not hold the file/workspace transition lock.
+          const checkRuntimeAvailability = async () => {
+            try {
+              const availabilityResponse = await getRuntimeAvailability();
+              if (
+                editorMountedRef.current &&
+                requestId === runtimeCheckRequestIdRef.current &&
+                workspacePathRef.current === startingPath &&
+                activeFilePathRef.current === relativePath
+              ) {
+                setRuntimeAvailability(
+                  availabilityResponse.ok &&
+                    availabilityResponse.data?.runtimeAvailability === "available"
+                    ? "available"
+                    : "unavailable"
+                );
+              }
+            } catch (_error) {
+              if (
+                editorMountedRef.current &&
+                requestId === runtimeCheckRequestIdRef.current &&
+                workspacePathRef.current === startingPath &&
+                activeFilePathRef.current === relativePath
+              ) {
+                setRuntimeAvailability("unavailable");
+              }
             }
-          } catch (_error) {
-            if (
-              requestId === runtimeCheckRequestIdRef.current &&
-              workspacePathRef.current === startingPath &&
-              activeFilePathRef.current === relativePath
-            ) {
-              setRuntimeAvailability("unavailable");
-            }
-          }
+          };
+          void checkRuntimeAvailability();
         } else {
           setRuntimeAvailability("unavailable");
         }
-        savedContentRef.current = response.data;
-        latestEditorContentRef.current = response.data;
-        setIsDirty(false);
-        setSaveStatus("idle");
         if (!isGoFile(relativePath)) {
           clearActiveDiagnostics();
           resetCompletionAvailability();
         }
       } catch (error) {
         if (workspacePathRef.current === startingPath) {
-          setMode("quick-insight");
-          setRuntimeAvailability("unavailable");
-          setDeepTraceScope(null);
-          setActiveBlockedSignal(null);
           setFileError("An unexpected error occurred while loading the file.");
         }
       } finally {
+        documentTransitionRef.current = false;
         setIsReading(false);
       }
     },
-    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, refreshDiagnosticsForFile, workspacePath]
+    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, preserveActiveDocument, refreshDiagnosticsForFile, workspacePath]
   );
 
+  // Git has already preserved the buffer before entering this callback. Never
+  // route reload through handleOpenFile: its save targets the *new* branch.
   const reloadWorkspaceState = useCallback(async () => {
-    if (!workspacePathRef.current) return;
-
-    await reloadGitState(workspacePathRef.current);
-
+    const root = workspacePathRef.current;
+    const path = activeFilePathRef.current;
+    if (!root) return;
+    invalidateDiagnosticsRequests();
+    invalidateCompletionRequests();
+    runtimeCheckRequestIdRef.current += 1;
     clearDiagnostics();
     setDebuggerState(null);
     clearPendingRunOutputBuffer();
     setRunOutput([]);
     resetWorkspaceSearch();
-
-    // Explicitly refresh the Explorer tree so branch-switched file layout is reflected.
     setExplorerRevision((prev) => prev + 1);
-
-    if (activeFilePathRef.current) {
-      await handleOpenFile(activeFilePathRef.current);
+    setMode("quick-insight");
+    setDeepTraceScope(null);
+    setActiveBlockedSignal(null);
+    setRaceSignals([]);
+    setBreakpoints([]);
+    setSelectedLine(null);
+    setInteractionAnchor(null);
+    setFileError(null);
+    if (autoSaveDebounceRef.current !== null) {
+      clearTimeout(autoSaveDebounceRef.current);
+      autoSaveDebounceRef.current = null;
     }
-  }, [clearDiagnostics, handleOpenFile, reloadGitState, resetWorkspaceSearch]);
-
-  const handleBranchSelect = useCallback(async (branch: WorkspaceGitBranch) => {
-    if (!workspacePathRef.current || !branchSnapshot) return;
-    if (branch.name === branchSnapshot.currentBranch) {
-      setIsBranchPickerOpen(false);
-      setBranchQuery("");
-      return;
-    }
-
-    const latestBranchSnapshot = await refreshBranchSnapshot(workspacePathRef.current);
-
-    setIsBranchPickerOpen(false);
-    setBranchQuery("");
-
-    if (!latestBranchSnapshot) {
-      setBranchSnapshot(null);
-      setBranchSwitchError("Branch data unavailable");
-      return;
-    }
-
-    setBranchSnapshot(latestBranchSnapshot);
-
-    if (branch.name === latestBranchSnapshot.currentBranch) {
-      return;
-    }
-    if (latestBranchSnapshot.hasUncommittedChanges) {
-      setPendingTargetBranch(branch);
-      setIsBranchDialogOpen(true);
-    } else {
-      setPendingTargetBranch(branch);
-      setBranchSwitchError(null);
-      setBranchSwitchLoading(true);
-      void switchWorkspaceBranch({
-        workspaceRoot: workspacePathRef.current,
-        targetBranch: branch.name,
-        remoteRef: branch.remoteRef ?? null,
-        preSwitchAction: "none",
-      }).then((res) => {
-        setBranchSwitchLoading(false);
-        if (res.ok && res.data) {
-          setBranchSnapshot(res.data);
-          setPendingTargetBranch(null);
-          void reloadWorkspaceState();
+    // Retire the previous branch's document even if the destination lacks it.
+    activeFilePathRef.current = null;
+    savedContentRef.current = null;
+    latestEditorContentRef.current = null;
+    setActiveFilePath(null);
+    setActiveFileContent(null);
+    setIsDirty(false);
+    setSaveStatus("idle");
+    if (path) {
+      try {
+        const response = await readWorkspaceFile(root, path);
+        if (!editorMountedRef.current || workspacePathRef.current !== root) return;
+        if (response.ok && response.data !== undefined) {
+          activeFilePathRef.current = path;
+          savedContentRef.current = response.data;
+          latestEditorContentRef.current = response.data;
+          setActiveFilePath(path);
+          setActiveFileContent(response.data);
+          void refreshDiagnosticsForFile(root, path);
         } else {
-          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
+          setFileError(response.error?.message ?? "The active file is unavailable after the Git operation. Select another file.");
         }
-      });
+      } catch (error) {
+        setFileError(error instanceof Error ? error.message : "Unable to reload the file after the Git operation.");
+      }
     }
-  }, [branchSnapshot, refreshBranchSnapshot, reloadWorkspaceState]);
+    await reloadGitState(root);
+  }, [clearDiagnostics, refreshDiagnosticsForFile, reloadGitState, resetWorkspaceSearch, invalidateDiagnosticsRequests, invalidateCompletionRequests]);
 
+  const {
+    pendingTargetBranch, isBranchDialogOpen, branchSwitchLoading, branchSwitchError,
+    isBranchMutationInProgress, handleBranchSelect, handleBranchSwitchConfirm, cancelBranchSwitch,
+  } = useBranchTransition({
+    workspacePathRef, documentTransitionRef, branchMutationRef,
+    branchSnapshot, setBranchSnapshot, refreshBranchSnapshot,
+    preserveActiveDocument, reloadWorkspaceState,
+    isDocumentPreserved: () => !isSavingRef.current && latestEditorContentRef.current === savedContentRef.current,
+    closePicker: () => { setIsBranchPickerOpen(false); setBranchQuery(""); },
+    getBlockReason: () => runStatus === "running" || ["starting", "running", "paused", "stopping"].includes(debugUiState)
+      ? "Stop the active run or debug session before switching branches." : null,
+  });
   const handleQuickOpenSelect = useCallback(
     (relativePath: string) => {
       setIsQuickOpenOpen(false);
@@ -1916,31 +2032,12 @@ function EditorShell() {
     [handleOpenFile]
   );
 
-  const handleBranchSwitchConfirm = useCallback(
-    (payload: { action: "commit" | "stash" | "discard"; commitMessage?: string }) => {
-      if (!pendingTargetBranch || !workspacePathRef.current) return;
-      setIsBranchDialogOpen(false);
-      setBranchSwitchError(null);
-      setBranchSwitchLoading(true);
-      void switchWorkspaceBranch({
-        workspaceRoot: workspacePathRef.current,
-        targetBranch: pendingTargetBranch.name,
-        remoteRef: pendingTargetBranch.remoteRef ?? null,
-        preSwitchAction: payload.action,
-        commitMessage: payload.commitMessage ?? null,
-      }).then((res) => {
-        setBranchSwitchLoading(false);
-        if (res.ok && res.data) {
-          setBranchSnapshot(res.data);
-          setPendingTargetBranch(null);
-          void reloadWorkspaceState();
-        } else {
-          setBranchSwitchError(res.error?.message ?? "Branch switch failed");
-        }
-      });
-    },
-    [pendingTargetBranch, reloadWorkspaceState]
-  );
+  const gitDocumentTransaction = useGitDocumentTransaction({
+    root: workspacePathRef, lock: documentTransitionRef, mutation: branchMutationRef,
+    preserve: preserveActiveDocument,
+    isPreserved: () => !isSavingRef.current && latestEditorContentRef.current === savedContentRef.current,
+    setBusy: setGitOperationBusy,
+  });
 
   const editorTitle = useMemo(() => {
     if (!activeFilePath) {
@@ -1967,8 +2064,24 @@ function EditorShell() {
 
   return (
     <div
-      className="relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
+      className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
+      <div className="workspace-titlebar">
+        <span className="workspace-brand"><img src="/brand/icon-small.svg" alt="" width="20" height="20" />GoIDE</span>
+        <button
+          type="button"
+          className="workspace-search"
+          aria-label="Find workspace files"
+          title="Find a file (Ctrl+P)"
+          disabled={!workspacePath}
+          onClick={() => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); }}
+        >
+          <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
+          <span>{workspacePath ? workspacePath.split(/[\\/]/).pop() : "Your next workspace"}</span>
+          <kbd>Ctrl P</kbd>
+        </button>
+        <ThemeSwitcher />
+      </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ActivityBar
           activeTab={activeTab}
@@ -1985,7 +2098,7 @@ function EditorShell() {
           maxSize={2000}
           onResize={handleLeftPaneResize}
           primary={
-            <aside className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
+            <aside inert={branchSwitchLoading} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
               {activeTab === "explorer" && (
                 <Explorer
                   workspacePath={workspacePath}
@@ -2018,6 +2131,13 @@ function EditorShell() {
               )}
               {activeTab === "git" && (
                 <GitPanel
+                  key={workspacePath}
+                  workspacePath={workspacePath}
+                  revision={explorerRevision + analysisRevision}
+                  transaction={gitDocumentTransaction}
+                  onChanged={() => { setExplorerRevision((current) => current + 1); if (workspacePath) void reloadGitState(workspacePath); }}
+                  onOpenFile={handleOpenFile}
+                  onOpenTerminal={() => { setBottomPanelTab("shell"); setIsBottomPanelOpen(true); }}
                   loading={!gitSnapshot && Boolean(workspacePath)}
                   snapshot={gitSnapshot}
                   branchSnapshot={branchSnapshot}
@@ -2183,9 +2303,9 @@ function EditorShell() {
               data-testid="editor-workbench"
               className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-(--border-subtle) bg-(--crust)"
             >
-              <header className="flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1.5 md:px-4">
+              <header className="editor-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1.5 md:px-4">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-[12px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
+                  <span className="editor-file-tab text-[12px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
                 </div>
                 
                 <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
@@ -2261,42 +2381,21 @@ function EditorShell() {
 
               <div
                 data-testid="editor-content-region"
-                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-(--crust) p-3 sm:p-4 md:p-5"
+                className="flex min-h-0 flex-1 flex-col overflow-hidden bg-(--crust)"
               >
-                {!workspacePath && (
-                  <div className="flex flex-1 flex-col items-center justify-center">
-                    <div className="max-w-md text-center">
-                      <div className="mb-6 flex justify-center">
-                        <div className="rounded-full border border-[rgba(113,125,144,0.3)] bg-[rgba(42,48,61,0.5)] p-4 text-[var(--blue)]">
-                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                        </div>
-                      </div>
-                      <h2 className="text-sm font-semibold text-[var(--subtext1)] text-balance">GoIDE</h2>
-                      <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
-                        Open a workspace folder to begin concurrency-first development. 
-                        Your code will stay responsive and fluid.
-                      </p>
-                      <button
-                        className="mt-8 cursor-pointer rounded border border-[rgba(126,162,220,0.4)] bg-[rgba(126,162,220,0.16)] px-6 py-2.5 text-[11px] font-semibold text-[var(--flamingo)] transition-colors duration-150 ease-out hover:bg-[rgba(126,162,220,0.24)]"
-                        onClick={handleOpenWorkspace}
-                        type="button"
-                        title="Choose a Go workspace folder."
-                        disabled={isOpening}
-                      >
-                        Open Workspace
-                      </button>
-                    </div>
-                  </div>
+                {workspacePath && fsSyncError && (
+                  <p role="status" className="px-3 py-2 text-xs text-[var(--yellow)]">{fsSyncError}</p>
                 )}
-                {workspacePath && !activeFilePath && (
-                  <div className="flex flex-1 flex-col items-center justify-center">
-                    <div className="max-w-md text-center">
-                      <p className="text-[11px] font-semibold text-[var(--overlay1)] text-balance">Workspace Active</p>
-                      <p className="mt-4 text-sm text-[var(--subtext0)] leading-relaxed">
-                        Select a target file from the explorer to activate the concurrency lens.
-                      </p>
-                    </div>
-                  </div>
+                {(!workspacePath || !activeFilePath) && (
+                  <WelcomeScreen
+                    workspacePath={workspacePath}
+                    isOpening={isOpening}
+                    onOpenWorkspace={handleOpenWorkspace}
+                    onQuickOpen={() => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); }}
+                    onSearch={() => { setActiveTab("search"); setSearchFocusTrigger((n) => n + 1); }}
+                    onTerminal={() => { setBottomPanelTab("shell"); setIsBottomPanelOpen(true); }}
+                    error={fileError}
+                  />
                 )}
                 {workspacePath && activeFilePath && (
                   <div
@@ -2308,6 +2407,25 @@ function EditorShell() {
                         {fileError}
                       </div>
                     )}
+                    {externalFile.conflict && <ExternalFileConflict exists={externalFile.conflict.exists} disk={externalFile.conflict.content} editor={latestEditorContentRef.current ?? ""}
+                      onReload={() => {
+                        if (!window.confirm("Discard your editor edits and reload the reviewed disk version?")) return;
+                        const content = externalFile.conflict?.content;
+                        if (content == null || documentTransitionRef.current || isSavingRef.current) return;
+                        if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
+                        savedContentRef.current = content; latestEditorContentRef.current = content;
+                        setActiveFileContent(content); setIsDirty(false); externalFile.clear(); setFileError(null);
+                        void externalFile.check();
+                      }}
+                      onKeep={() => {
+                        if (!window.confirm("Replace the reviewed disk version with your editor text?")) return;
+                        const disk = externalFile.conflict?.content;
+                        const editor = latestEditorContentRef.current;
+                        if (disk == null || editor == null || documentTransitionRef.current || isSavingRef.current) return;
+                        savedContentRef.current = disk;
+                        void persistActiveFileContent(editor).then((saved) => { if (saved) externalFile.clear(); });
+                      }}
+                      onCopy={() => void navigator.clipboard.writeText(latestEditorContentRef.current ?? "").catch(() => setFileError("Unable to copy editor text."))} />}
                     <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--crust)]">
                       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
                       <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1">
@@ -2376,6 +2494,7 @@ function EditorShell() {
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor
+                            editable={!isBranchMutationInProgress && !gitOperationBusy}
                             value={activeFileContent}
                             filePath={activeFilePath}
                             executionLine={debuggerState?.activeLine ?? null}
@@ -2553,11 +2672,7 @@ function EditorShell() {
               targetBranch={pendingTargetBranch.name}
               changedFiles={branchSnapshot.changedFilesSummary}
               onConfirm={handleBranchSwitchConfirm}
-              onCancel={() => {
-                setIsBranchDialogOpen(false);
-                setPendingTargetBranch(null);
-                setBranchSwitchError(null);
-              }}
+              onCancel={cancelBranchSwitch}
             />
           </div>
         </div>
@@ -2570,7 +2685,7 @@ function EditorShell() {
       )}
 
       {branchSwitchError && (
-        <div className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--red)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--red)]">
+        <div role="alert" className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--red)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--red)]">
           {branchSwitchError}
         </div>
       )}
@@ -2594,4 +2709,3 @@ function EditorShell() {
 }
 
 export default EditorShell;
-

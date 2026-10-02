@@ -4,6 +4,7 @@ import type { RuntimeSignal } from "../../lib/ipc/types";
 import {
   extractGoFileLineReferences,
   mapGitStatus,
+  normalizeWorkspaceRoot,
   normalizeRelativePath,
   pathsReferToSameFile,
   pathsReferToSameRunTarget,
@@ -38,6 +39,12 @@ describe("editorShellUtils", () => {
 
   it("normalizes Windows path separators without changing case", () => {
     expect(normalizeRelativePath(" pkg\\Main.go ")).toBe("pkg/Main.go");
+  });
+
+  it("matches Windows canonical and UNC roots while preserving Unix root case", () => {
+    expect(normalizeWorkspaceRoot("//?/D:/Workspace/")).toBe("d:/workspace");
+    expect(normalizeWorkspaceRoot("//?/UNC/Server/Share/")).toBe("//server/share");
+    expect(normalizeWorkspaceRoot("/home/Project")).not.toBe(normalizeWorkspaceRoot("/home/project"));
   });
 
   it("matches equivalent relative and absolute file suffixes but avoids basename-only collisions", () => {

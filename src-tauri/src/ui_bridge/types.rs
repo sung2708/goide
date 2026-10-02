@@ -55,6 +55,7 @@ pub enum WorkspaceFsSyncModeDto {
 #[serde(rename_all = "camelCase")]
 pub struct StartWorkspaceFsWatchResponseDto {
     pub workspace_root: String,
+    pub watch_id: String,
     pub mode: WorkspaceFsSyncModeDto,
 }
 

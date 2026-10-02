@@ -1,0 +1,110 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate version synchronization
+        run: node scripts/version-manager.mjs check
+
+      - name: Verify Windows installer version conversion
+        run: node --test scripts/windows-installer-version.node-test.mjs
+
+      - name: Validate documentation links
+        run: npm run docs:check
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      - name: Run frontend tests
+        run: npm test
+
+      - name: Build frontend production bundle
+        run: npm run build
+
+  rust-checks:
+    name: Rust Backend Verification (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cargo fmt check
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml -- --check
+
+      - name: Cargo clippy check
+        if: runner.os != 'Windows'
+        run: cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings
+
+      - name: Cargo clippy check (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_clippy_msvc.cmd --locked --all-targets
+
+      - name: Cargo check
+        if: runner.os != 'Windows'
+        run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo check (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_check_msvc.cmd --locked
+
+      - name: Cargo test
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Cargo test (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_test_msvc.cmd --locked

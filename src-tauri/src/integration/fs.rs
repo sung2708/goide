@@ -136,7 +136,7 @@ pub fn create_file(workspace_root: &str, relative_path: &str, content: &str) -> 
 
     let root = canonicalize_root(workspace_root)?;
     let target = resolve_scoped_create_target(&root, relative_path)?;
-    if target.exists() {
+    if entry_exists(&target)? {
         return Err(anyhow!("path already exists"));
     }
 
@@ -165,7 +165,7 @@ pub fn create_folder(workspace_root: &str, relative_path: &str) -> Result<()> {
 
     let root = canonicalize_root(workspace_root)?;
     let target = resolve_scoped_create_target(&root, relative_path)?;
-    if target.exists() {
+    if entry_exists(&target)? {
         return Err(anyhow!("path already exists"));
     }
 
@@ -180,10 +180,20 @@ pub fn delete_entry(workspace_root: &str, relative_path: &str) -> Result<()> {
     }
 
     let root = canonicalize_root(workspace_root)?;
-    let target = resolve_scoped_path(&root, Some(relative_path))?;
+    let target = resolve_scoped_entry(&root, relative_path)?;
     let metadata = fs::symlink_metadata(&target)
         .with_context(|| format!("failed to read metadata: {}", target.display()))?;
 
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::FileTypeExt;
+        if metadata.file_type().is_symlink_dir() {
+            fs::remove_dir(&target).with_context(|| {
+                format!("failed to remove directory link: {}", target.display())
+            })?;
+            return Ok(());
+        }
+    }
     if metadata.is_dir() {
         fs::remove_dir_all(&target)
             .with_context(|| format!("failed to remove folder: {}", target.display()))?;
@@ -209,14 +219,22 @@ pub fn rename_entry(workspace_root: &str, relative_path: &str, new_name: &str) -
     if trimmed_name == "." || trimmed_name == ".." {
         return Err(anyhow!("invalid new name"));
     }
+    if Path::new(trimmed_name)
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(anyhow!(
+            "new name must be a single filename without a drive prefix"
+        ));
+    }
 
     let root = canonicalize_root(workspace_root)?;
-    let source = resolve_scoped_path(&root, Some(relative_path))?;
+    let source = resolve_scoped_entry(&root, relative_path)?;
     let parent = source
         .parent()
         .ok_or_else(|| anyhow!("source has no parent directory"))?;
     let destination = parent.join(trimmed_name);
-    if destination.exists() {
+    if entry_exists(&destination)? {
         return Err(anyhow!("destination already exists"));
     }
 
@@ -246,9 +264,9 @@ pub fn move_entry(
     }
 
     let root = canonicalize_root(workspace_root)?;
-    let source = resolve_scoped_path(&root, Some(relative_path))?;
+    let source = resolve_scoped_entry(&root, relative_path)?;
     let destination = resolve_scoped_create_target(&root, destination_relative_path)?;
-    if destination.exists() {
+    if entry_exists(&destination)? {
         return Err(anyhow!("destination already exists"));
     }
 
@@ -292,6 +310,16 @@ fn canonicalize_root(root: &str) -> Result<PathBuf> {
     Ok(canonical)
 }
 
+fn entry_exists(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(false),
+        Err(error) => {
+            Err(error).with_context(|| format!("failed to inspect entry: {}", path.display()))
+        }
+    }
+}
+
 fn resolve_scoped_path(root: &Path, relative_path: Option<&str>) -> Result<PathBuf> {
     let target = match relative_path {
         Some(path) if !path.trim().is_empty() => root.join(path),
@@ -307,6 +335,40 @@ fn resolve_scoped_path(root: &Path, relative_path: Option<&str>) -> Result<PathB
     }
 
     Ok(canonical_target)
+}
+
+// Mutations operate on the directory entry itself, never a symlink's referent.
+// Resolving only its parent also prevents aliases of the workspace root from
+// being deleted or renamed, while retaining support for removing broken links.
+fn resolve_scoped_entry(root: &Path, relative_path: &str) -> Result<PathBuf> {
+    let candidate = Path::new(relative_path);
+    if candidate.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::ParentDir
+                | std::path::Component::RootDir
+                | std::path::Component::Prefix(_)
+        )
+    }) {
+        return Err(anyhow!("path escapes workspace root"));
+    }
+    let raw_target = root.join(candidate);
+    let name = candidate
+        .file_name()
+        .ok_or_else(|| anyhow!("cannot modify workspace root"))?;
+    let parent = raw_target
+        .parent()
+        .ok_or_else(|| anyhow!("path has no parent directory"))?
+        .canonicalize()
+        .with_context(|| "failed to resolve entry parent directory")?;
+    if !parent.starts_with(root) {
+        return Err(anyhow!("path escapes workspace root"));
+    }
+    let target = parent.join(name);
+    if target == root {
+        return Err(anyhow!("cannot modify workspace root"));
+    }
+    Ok(target)
 }
 
 fn resolve_scoped_create_target(root: &Path, relative_path: &str) -> Result<PathBuf> {
@@ -517,6 +579,152 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+
+    struct MutationWorkspace(PathBuf);
+
+    impl MutationWorkspace {
+        fn new() -> Self {
+            let sandbox =
+                std::env::temp_dir().join(format!("goide-fs-safety-{}", uuid::Uuid::new_v4()));
+            fs::create_dir_all(sandbox.join("workspace/nested")).unwrap();
+            fs::write(sandbox.join("workspace/sentinel.go"), "keep me").unwrap();
+            Self(sandbox)
+        }
+
+        fn root(&self) -> String {
+            self.0.join("workspace").to_string_lossy().into_owned()
+        }
+    }
+
+    impl Drop for MutationWorkspace {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+
+    #[test]
+    fn mutations_reject_workspace_root_and_traversal_aliases() {
+        for path in [".", "nested/..", "nested/../."] {
+            let workspace = MutationWorkspace::new();
+            assert!(delete_entry(&workspace.root(), path).is_err());
+            assert!(rename_entry(&workspace.root(), path, "renamed").is_err());
+            assert!(move_entry(&workspace.root(), path, "moved").is_err());
+            assert_eq!(
+                fs::read_to_string(workspace.0.join("workspace/sentinel.go")).unwrap(),
+                "keep me"
+            );
+        }
+    }
+
+    #[test]
+    fn mutations_reject_absolute_workspace_paths() {
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        assert!(delete_entry(&root, &root).is_err());
+        assert!(rename_entry(&root, &root, "renamed").is_err());
+        assert!(move_entry(&root, &root, "moved").is_err());
+        assert!(workspace.0.join("workspace/sentinel.go").exists());
+    }
+
+    #[test]
+    fn normal_entry_mutations_preserve_the_workspace() {
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        assert_eq!(
+            rename_entry(&root, "sentinel.go", "renamed.go").unwrap(),
+            "renamed.go"
+        );
+        assert_eq!(
+            move_entry(&root, "renamed.go", "nested/moved.go").unwrap(),
+            "nested/moved.go"
+        );
+        delete_entry(&root, "nested/moved.go").unwrap();
+        assert!(Path::new(&root).is_dir());
+        assert!(!Path::new(&root).join("nested/moved.go").exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_junction_mutations_preserve_the_referent() {
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        let outside = workspace.0.join("outside");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("sentinel.go"), "keep outside").unwrap();
+        let link = Path::new(&root).join("junction");
+        let output = std::process::Command::new("cmd.exe")
+            .args(["/d", "/c", "mklink", "/J"])
+            .arg(&link)
+            .arg(&outside)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "junction setup failed: {output:?}");
+        rename_entry(&root, "junction", "renamed").unwrap();
+        move_entry(&root, "renamed", "nested/junction").unwrap();
+        delete_entry(&root, "nested/junction").unwrap();
+        assert_eq!(
+            fs::read_to_string(outside.join("sentinel.go")).unwrap(),
+            "keep outside"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn rename_rejects_drive_relative_destination_names() {
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        for name in ["C:escaped.go", "D:escaped.go"] {
+            // A missing source prevents writes outside the fixture even if the
+            // validation regresses. The error must come from name validation.
+            let error = rename_entry(&root, "missing.go", name).unwrap_err();
+            assert!(error.to_string().contains("drive prefix"));
+            assert_eq!(
+                fs::read_to_string(Path::new(&root).join("sentinel.go")).unwrap(),
+                "keep me"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn entry_mutations_do_not_follow_symlinks() {
+        use std::os::unix::fs::symlink;
+        let workspace = MutationWorkspace::new();
+        let outside = workspace.0.join("outside.go");
+        fs::write(&outside, "keep outside").unwrap();
+        let root = workspace.root();
+        symlink(&outside, Path::new(&root).join("link.go")).unwrap();
+        rename_entry(&root, "link.go", "renamed.go").unwrap();
+        assert!(fs::symlink_metadata(Path::new(&root).join("renamed.go"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        move_entry(&root, "renamed.go", "nested/link.go").unwrap();
+        delete_entry(&root, "nested/link.go").unwrap();
+        assert_eq!(fs::read_to_string(outside).unwrap(), "keep outside");
+        symlink(Path::new(&root), Path::new(&root).join("root-link")).unwrap();
+        delete_entry(&root, "root-link").unwrap();
+        assert!(Path::new(&root).join("sentinel.go").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn mutations_do_not_overwrite_dangling_destination_links() {
+        use std::os::unix::fs::symlink;
+        let workspace = MutationWorkspace::new();
+        let root = workspace.root();
+        let link = Path::new(&root).join("dangling.go");
+        symlink("missing.go", &link).unwrap();
+        assert!(rename_entry(&root, "sentinel.go", "dangling.go").is_err());
+        assert!(move_entry(&root, "sentinel.go", "dangling.go").is_err());
+        assert!(create_file(&root, "dangling.go", "new").is_err());
+        assert!(create_folder(&root, "dangling.go").is_err());
+        assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+        assert_eq!(
+            fs::read_to_string(Path::new(&root).join("sentinel.go")).unwrap(),
+            "keep me"
+        );
+    }
 
     #[test]
     fn rejects_path_escape() {

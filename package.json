@@ -1,7 +1,7 @@
 {
   "name": "goide",
   "private": true,
-  "version": "1.0.2",
+  "version": "0.2.0-alpha.1",
   "description": "A desktop IDE for Go editing, runtime inspection, and concurrency workflows.",
   "license": "MIT",
   "homepage": "https://github.com/sung2708/goide",
@@ -20,12 +20,17 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
     "preview": "vite preview",
     "tauri": "node scripts/tauri-wrapper.mjs",
     "tauri:dev:msvc": "set CC=cl&& set CXX=cl&& npm run tauri -- dev",
     "cargo:check:msvc": "set CC=cl&& set CXX=cl&& set HOST_CC=cl&& set HOST_CXX=cl&& cargo check --manifest-path src-tauri/Cargo.toml",
     "cargo:test:msvc": "set CC=cl&& set CXX=cl&& set HOST_CC=cl&& set HOST_CXX=cl&& cargo test --manifest-path src-tauri/Cargo.toml",
-    "test": "vitest run"
+    "test": "vitest run",
+    "version:check": "node scripts/version-manager.mjs check",
+    "version:set": "node scripts/version-manager.mjs set",
+    "docs:check": "node scripts/validate-docs.mjs",
+    "changelog:generate": "node scripts/generate-changelog.mjs"
   },
   "dependencies": {
     "@codemirror/lang-go": "^6.0.1",
@@ -60,7 +65,7 @@
     "jsdom": "^29.0.2",
     "tailwindcss": "^4.1.0",
     "typescript": "~5.8.3",
-    "vite": "^7.0.4",
-    "vitest": "^3.2.4"
+    "vite": "^7.3.6",
+    "vitest": "^3.2.7"
   }
 }

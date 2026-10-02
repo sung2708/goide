@@ -61,7 +61,9 @@ vi.mock("@tauri-apps/api/event", () => ({
       runOutputListener = callback;
     }
     return () => {
-      runOutputListener = null;
+      if (eventName === "run-output" && runOutputListener === callback) {
+        runOutputListener = null;
+      }
     };
   },
 }));

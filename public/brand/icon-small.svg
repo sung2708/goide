@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <title>GoIDE runtime gopher</title>
+  <desc>GoIDE adaptation of Renee French's Go gopher, CC BY 4.0.</desc>
+  <rect width="32" height="32" rx="7" fill="#10232F"/>
+  <g fill="none" stroke="#35CDBE" stroke-width="2.5" stroke-linecap="round">
+    <path d="M20 13q4 0 4-3h4M20 18h8M20 23q4 0 4 3h4"/>
+  </g>
+  <g fill="#35CDBE"><circle cx="5" cy="10" r="3"/><circle cx="21" cy="10" r="3"/><path d="M5 13q0-8 8-8t8 8l1 10q0 5-9 5t-9-5Z"/></g>
+  <g fill="#EFF9F8"><ellipse cx="9" cy="12" rx="4" ry="4.5"/><ellipse cx="17" cy="12" rx="4" ry="4.5"/><path d="M11 20h4v4h-4z"/></g>
+  <path fill="#10232F" d="M9 11h2v3H9zm6 0h2v3h-2zm-4 6h4v3h-4z"/>
+  <rect x="7" y="24" width="12" height="3" rx="1" fill="#10232F"/>
+  <path d="M11 25.5h5" stroke="#EFF9F8"/>
+  <circle cx="9" cy="25.5" r=".7" fill="#F4B45F"/>
+</svg>

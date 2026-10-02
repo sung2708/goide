@@ -1,0 +1,234 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  validate-and-plan:
+    name: Validate Tag & Prepare Notes
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.parse_tag.outputs.tag }}
+      version: ${{ steps.parse_tag.outputs.version }}
+      is_prerelease: ${{ steps.parse_tag.outputs.is_prerelease }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify Windows installer version conversion
+        run: node --test scripts/windows-installer-version.node-test.mjs
+
+      - name: Parse tag and validate version synchronization
+        id: parse_tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          echo "Tag: $TAG"
+          
+          # Validate tag format vX.Y.Z[-prerelease]
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' is not a valid semantic version tag (must match vX.Y.Z or vX.Y.Z-prerelease)"
+            exit 1
+          fi
+
+          # Validate version matches package.json, tauri.conf.json, and Cargo.toml
+          node scripts/version-manager.mjs check --tag "$TAG"
+
+          VERSION="${TAG#v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          if [[ "$TAG" =~ -(alpha|beta|rc) ]]; then
+            echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_prerelease=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Generate Release Notes
+        run: |
+          node scripts/generate-changelog.mjs --tag "${{ steps.parse_tag.outputs.tag }}" --output release-notes.md
+
+      - name: Upload Release Notes artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          retention-days: 1
+
+  build-artifacts:
+    name: Build (${{ matrix.platform.platform_id }}-${{ matrix.platform.arch_id }})
+    needs: validate-and-plan
+    runs-on: ${{ matrix.platform.os }}
+    strategy:
+      fail-fast: true
+      matrix:
+        platform:
+          - os: windows-latest
+            platform_id: windows
+            arch_id: x86_64
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            platform_id: macos
+            arch_id: aarch64
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            platform_id: macos
+            arch_id: x86_64
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            platform_id: linux
+            arch_id: x86_64
+            target: x86_64-unknown-linux-gnu
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform.target }}
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run verification tests
+        run: npm test
+
+      - name: Run Rust tests
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+      - name: Run Rust tests (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_test_msvc.cmd --locked
+
+      - name: Build Tauri Application
+        if: runner.os != 'Windows'
+        run: npm run tauri -- build --target ${{ matrix.platform.target }} --ci
+
+      - name: Build Tauri Application (MSVC)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\tauri_build_msvc.cmd --target ${{ matrix.platform.target }} --ci
+
+      - name: Package and normalize release artifacts
+        shell: bash
+        run: |
+          node scripts/package-artifacts.mjs \
+            --tag "${{ needs.validate-and-plan.outputs.tag }}" \
+            --platform "${{ matrix.platform.platform_id }}" \
+            --arch "${{ matrix.platform.arch_id }}" \
+            --output-dir "dist-release"
+
+      - name: Upload platform artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.platform.platform_id }}-${{ matrix.platform.arch_id }}
+          path: dist-release/*
+          retention-days: 2
+
+  publish:
+    name: Publish GitHub Release
+    needs: [validate-and-plan, build-artifacts]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download release notes
+        uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: artifacts-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Aggregate checksums
+        run: |
+          cd release-assets
+          cat *.sha256 | sort -u -k2 > SHA256SUMS.txt
+          rm -f *.sha256
+          cd ..
+
+      - name: Validate all release assets before publishing
+        run: |
+          node scripts/validate-release-assets.mjs \
+            --tag "${{ needs.validate-and-plan.outputs.tag }}" \
+            --assets-dir release-assets
+
+      - name: Append verification instructions to release notes
+        run: |
+          cat << 'EOF' >> release-notes.md
+
+          ### Artifact Verification
+          Verify artifact integrity using the published `SHA256SUMS.txt`:
+          ```bash
+          # Linux
+          sha256sum -c SHA256SUMS.txt --ignore-missing
+
+          # macOS
+          shasum -a 256 -c SHA256SUMS.txt --ignore-missing
+
+          # Windows PowerShell
+          Get-FileHash <artifact> -Algorithm SHA256
+          ```
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate-and-plan.outputs.tag }}
+          name: GoIDE ${{ needs.validate-and-plan.outputs.tag }}
+          body_path: release-notes.md
+          prerelease: ${{ needs.validate-and-plan.outputs.is_prerelease == 'true' }}
+          draft: false
+          files: release-assets/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

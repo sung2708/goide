@@ -17,15 +17,42 @@ const DEFAULT_OPTIONS: TerminalCtorOptions = {
   fontFamily:
     '"JetBrainsMono Nerd Font", "Cascadia Code PL", "Cascadia Mono", "Cascadia Code", "Fira Code", monospace',
   theme: {
-    background: "#2e3440",
-    foreground: "#d8dee9",
-    cursor: "#88c0d0",
-    selectionBackground: "#3a4355",
+    background: "#101113",
+    foreground: "#f4f5f7",
+    cursor: "#f4f5f7",
+    selectionBackground: "#303641",
   },
   cols: 120,
   rows: 40,
   scrollback: 10000,
 };
+
+function workspaceTerminalTheme(): ITerminalOptions["theme"] {
+  const styles = getComputedStyle(document.documentElement);
+  const color = (token: string, fallback: string) => styles.getPropertyValue(token).trim() || fallback;
+  return {
+    background: color("--terminal-background", color("--crust", "#101113")),
+    foreground: color("--text", "#f4f5f7"),
+    cursor: color("--text", "#f4f5f7"),
+    selectionBackground: color("--terminal-selection", "#303641"),
+    red: color("--red", "#ed9292"),
+    green: color("--terminal-green", color("--green", "#b8cfaa")),
+    yellow: color("--yellow", "#dfc58f"),
+    blue: color("--blue", "#b6c9e2"),
+    magenta: color("--mauve", "#c5b3df"),
+    cyan: color("--sky", "#a5c7d5"),
+    black: color("--terminal-black", color("--overlay0", "#80838d")),
+    white: color("--terminal-white", color("--text", "#f4f5f7")),
+    brightBlack: color("--overlay1", "#92949e"),
+    brightRed: color("--red", "#ed9292"),
+    brightGreen: color("--terminal-green", color("--green", "#b8cfaa")),
+    brightYellow: color("--yellow", "#dfc58f"),
+    brightBlue: color("--blue", "#b6c9e2"),
+    brightMagenta: color("--mauve", "#c5b3df"),
+    brightCyan: color("--sky", "#a5c7d5"),
+    brightWhite: color("--terminal-white", color("--text", "#f4f5f7")),
+  };
+}
 
 export type TerminalFocusOwner = "editor" | "terminal";
 
@@ -102,6 +129,7 @@ function TerminalSurface({
     let fitAddon: FitAddon | null = null;
     let dataDisposable: { dispose: () => void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
+    let themeObserver: MutationObserver | null = null;
     let resizeFrameHandle: number | null = null;
 
     try {
@@ -110,6 +138,7 @@ function TerminalSurface({
         disableStdin: readOnly,
         cursorBlink: !readOnly,
         ...options,
+        theme: { ...workspaceTerminalTheme(), ...options?.theme },
       };
 
       terminal = new Terminal(resolvedOptions);
@@ -120,6 +149,14 @@ function TerminalSurface({
 
       terminalRef.current = terminal;
       fitAddonRef.current = fitAddon;
+
+      // Update the renderer in place so switching themes preserves shell sessions and output.
+      themeObserver = new MutationObserver(() => {
+        if (terminal) {
+          terminal.options.theme = { ...workspaceTerminalTheme(), ...options?.theme };
+        }
+      });
+      themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
       // Forward user input unless read-only
       if (!readOnly && onData) {
@@ -172,11 +209,13 @@ function TerminalSurface({
       }
       terminalRef.current = null;
       fitAddonRef.current = null;
+      themeObserver?.disconnect();
     }
 
     return () => {
       dataDisposable?.dispose();
       resizeObserver?.disconnect();
+      themeObserver?.disconnect();
       if (resizeFrameHandle !== null) {
         window.cancelAnimationFrame(resizeFrameHandle);
         resizeFrameHandle = null;

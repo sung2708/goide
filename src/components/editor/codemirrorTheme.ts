@@ -25,7 +25,7 @@ const editorTheme = EditorView.theme(
   {
     "&": {
       height: "100%",
-      backgroundColor: "var(--crust) !important",
+      backgroundColor: "var(--bg-editor) !important",
       color: "var(--text) !important",
     },
     "&.cm-focused": {
@@ -99,7 +99,7 @@ const editorTheme = EditorView.theme(
       borderColor: "var(--yellow)",
     },
     ".cm-gutters": {
-      backgroundColor: "var(--crust) !important",
+      backgroundColor: "var(--bg-editor) !important",
       color: "var(--overlay0)",
       borderRight: "1px solid var(--border-subtle)",
       padding: "0",
@@ -151,7 +151,7 @@ const editorTheme = EditorView.theme(
     ".cm-tooltip": {
       backgroundColor: "var(--mantle)",
       border: "1px solid var(--border-muted)",
-      borderRadius: "10px",
+      borderRadius: "6px",
       boxShadow: "0 18px 48px rgba(0, 0, 0, 0.42)",
       color: "var(--text)",
       overflow: "hidden",
@@ -170,7 +170,7 @@ const editorTheme = EditorView.theme(
       padding: "8px 10px",
       borderRadius: "6px",
       border: "1px solid var(--border-subtle)",
-      backgroundColor: "rgba(59,66,82,0.72)",
+      backgroundColor: "var(--mantle)",
     },
     ".cm-search label": {
       color: "var(--overlay1)",
@@ -190,7 +190,7 @@ const editorTheme = EditorView.theme(
     ".cm-search input": {
       border: "1px solid var(--border-subtle)",
       borderRadius: "6px",
-      backgroundColor: "rgba(46,52,64,0.9)",
+      backgroundColor: "var(--crust)",
       color: "var(--text)",
       fontFamily:
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
@@ -208,9 +208,9 @@ const editorTheme = EditorView.theme(
       maxWidth: "220px",
     },
     ".cm-search input:focus": {
-      outline: "1px solid rgba(186,187,241,0.22)",
+      outline: "1px solid var(--focus-ring)",
       outlineOffset: "0",
-      backgroundColor: "rgba(81,87,109,0.9)",
+      backgroundColor: "var(--surface0)",
     },
     ".cm-search button": {
       border: "1px solid var(--border-subtle)",
@@ -379,30 +379,32 @@ const editorTheme = EditorView.theme(
 );
 
 const syntaxStyle = HighlightStyle.define([
-  { tag: tags.docComment, color: "var(--overlay1)", fontStyle: "italic" },
-  { tag: tags.comment, color: "var(--overlay1)", fontStyle: "italic" },
-  { tag: tags.moduleKeyword, color: "var(--lavender)", fontWeight: "700" },
-  { tag: tags.controlKeyword, color: "var(--mauve)", fontWeight: "700" },
-  { tag: tags.definitionKeyword, color: "var(--red)", fontWeight: "700" },
+  { tag: tags.docComment, color: "var(--syntax-comment)", fontStyle: "italic" },
+  { tag: tags.comment, color: "var(--syntax-comment)", fontStyle: "italic" },
+  { tag: tags.moduleKeyword, color: "var(--syntax-module)", fontWeight: "700" },
+  { tag: tags.controlKeyword, color: "var(--syntax-keyword)", fontWeight: "700" },
+  { tag: tags.definitionKeyword, color: "var(--syntax-definition)", fontWeight: "700" },
   { tag: tags.operatorKeyword, color: "var(--sky)", fontWeight: "600" },
-  { tag: tags.keyword, color: "var(--mauve)", fontWeight: "600" },
+  { tag: tags.keyword, color: "var(--syntax-keyword)", fontWeight: "600" },
   { tag: [tags.special(tags.name), tags.name], color: "var(--subtext1)" },
   { tag: [tags.string, tags.character], color: "var(--green)" },
   { tag: tags.escape, color: "var(--pink)", fontWeight: "600" },
-  { tag: tags.regexp, color: "var(--teal)" },
+  { tag: tags.regexp, color: "var(--syntax-regexp)" },
   { tag: [tags.number, tags.bool, tags.null], color: "var(--peach)" },
-  { tag: [tags.typeName, tags.className], color: "var(--yellow)", fontWeight: "600" },
+  { tag: [tags.typeName, tags.className], color: "var(--syntax-type)", fontWeight: "600" },
   { tag: tags.namespace, color: "var(--teal)" },
   { tag: tags.function(tags.variableName), color: "var(--blue)", fontWeight: "600" },
-  { tag: tags.function(tags.propertyName), color: "var(--sapphire)", fontWeight: "600" },
-  { tag: tags.definition(tags.variableName), color: "var(--text)", fontWeight: "600" },
+  { tag: tags.function(tags.propertyName), color: "var(--syntax-method)", fontWeight: "600" },
+  { tag: tags.definition(tags.variableName), color: "var(--syntax-variable)", fontWeight: "600" },
   { tag: tags.definition(tags.function(tags.variableName)), color: "var(--blue)", fontWeight: "700" },
-  { tag: tags.standard(tags.variableName), color: "var(--sapphire)" },
-  { tag: tags.operator, color: "var(--teal)" },
+  { tag: tags.standard(tags.variableName), color: "var(--syntax-builtin)" },
+  { tag: tags.operator, color: "var(--syntax-operator)" },
   { tag: [tags.punctuation, tags.separator], color: "var(--overlay2)" },
   { tag: tags.bracket, color: "var(--subtext0)" },
-  { tag: tags.variableName, color: "var(--text)" },
+  { tag: tags.variableName, color: "var(--syntax-variable)" },
   { tag: tags.propertyName, color: "var(--sky)", fontWeight: "500" },
+  { tag: tags.definition(tags.propertyName), color: "var(--syntax-property-key)" },
+  { tag: tags.self, color: "var(--red)" },
   { tag: tags.labelName, color: "var(--peach)" },
   { tag: tags.atom, color: "var(--maroon)" },
   { tag: tags.invalid, color: "var(--red)", textDecoration: "underline wavy var(--red)" },

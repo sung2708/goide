@@ -26,7 +26,14 @@ export function normalizeRelativePath(path: string): string {
 }
 
 export function normalizeWorkspaceRoot(path: string): string {
-  return normalizeRelativePath(path).toLowerCase();
+  const normalized = normalizeRelativePath(path)
+    .replace(/^\/\/\?\/UNC\//i, "//")
+    .replace(/^\/\/\?\//, "")
+    .replace(/\/+$/, "");
+  // Windows roots are case-insensitive; preserve case for Unix roots.
+  return /^[a-z]:\//i.test(normalized) || normalized.startsWith("//")
+    ? normalized.toLowerCase()
+    : normalized;
 }
 
 export function pathsReferToSameFile(pathA: string, pathB: string): boolean {

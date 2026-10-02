@@ -1,0 +1,30 @@
+name: Security Audit
+
+on:
+  schedule:
+    - cron: "0 0 * * 1" # Weekly on Monday
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "package-lock.json"
+      - "src-tauri/Cargo.lock"
+
+permissions:
+  contents: read
+
+jobs:
+  audit-npm:
+    name: NPM Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+
+      - name: Run npm audit
+        run: npm audit --audit-level=high
