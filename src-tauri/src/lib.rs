@@ -22,6 +22,7 @@ pub fn run() {
             ui_bridge::search_commands::preview_workspace_replacement,
             ui_bridge::git_commands::git_conflict_content,
             ui_bridge::git_commands::git_history_page,
+            ui_bridge::git_commands::git_search_history,
             ui_bridge::git_commands::git_commit_details,
             ui_bridge::git_commands::git_historical_diff,
             ui_bridge::document_commands::get_workspace_file_state,

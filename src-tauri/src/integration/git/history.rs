@@ -91,6 +91,9 @@ pub fn history_page(
     let mut args = vec![
         "log",
         "--topo-order",
+        "--no-color",
+        "--no-decorate",
+        "--no-show-signature",
         "-z",
         "--max-count=101",
         &skip,
@@ -106,11 +109,28 @@ pub fn history_page(
             has_more: false,
         });
     }
-    let fields: Vec<_> = raw.strip_suffix('\0').unwrap_or(&raw).split('\0').collect();
+    let mut commits = parse_records(&raw, &mut refs)?;
+    let has_more = commits.len() > 100;
+    commits.truncate(100);
+    Ok(HistoryPage {
+        commits,
+        tips,
+        has_more,
+    })
+}
+
+pub(super) fn parse_records(
+    raw: &str,
+    refs: &mut HashMap<String, Vec<String>>,
+) -> Result<Vec<HistoryCommit>, String> {
+    if raw.is_empty() {
+        return Ok(vec![]);
+    }
+    let fields: Vec<_> = raw.strip_suffix('\0').unwrap_or(raw).split('\0').collect();
     if fields.len() % 5 != 0 {
         return Err("Malformed Git history record".into());
     }
-    let mut commits: Vec<_> = fields
+    let commits: Vec<_> = fields
         .as_chunks::<5>()
         .0
         .iter()
@@ -123,11 +143,5 @@ pub fn history_page(
             refs: refs.remove(f[0]).unwrap_or_default(),
         })
         .collect();
-    let has_more = commits.len() > 100;
-    commits.truncate(100);
-    Ok(HistoryPage {
-        commits,
-        tips,
-        has_more,
-    })
+    Ok(commits)
 }

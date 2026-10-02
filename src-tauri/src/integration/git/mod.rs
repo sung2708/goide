@@ -2,6 +2,7 @@ mod commit;
 mod conflict;
 mod diff;
 mod history;
+mod history_search;
 mod operations;
 mod runner;
 mod status;
@@ -12,6 +13,9 @@ pub use commit::{details as commit_details, historical_diff, CommitDetails};
 pub use conflict::{content as conflict_content, ConflictContent};
 pub use diff::{file_diff, FileDiff};
 pub use history::{history_page, HistoryPage};
+#[cfg(test)]
+use history_search::SearchField as HistorySearchField;
+pub use history_search::{search as search_history, SearchRequest as HistorySearchRequest};
 pub use operations::{mutate, Mutation};
 pub use runner::text as command_text;
 pub fn shutdown() -> Result<(), String> {
