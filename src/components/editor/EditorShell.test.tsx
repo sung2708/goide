@@ -114,6 +114,17 @@ describe("EditorShell panels", () => {
     expect(screen.queryByTestId("command-palette")).toBeNull();
     expect(screen.queryByRole("button", { name: /show command palette/i })).toBeNull();
   });
+  it("opens honest toolchain inspection from the status bar and command registry", async () => {
+    render(<EditorShell />);
+    fireEvent.click(screen.getByRole("button", { name: "Inspect Go toolchain" }));
+    expect(await screen.findByRole("dialog", { name: "Go Toolchain" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("requires the desktop app");
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
+    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    fireEvent.change(input, { target: { value: "Go: Inspect Toolchain" } }); fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Go Toolchain" })).toBeInTheDocument();
+  });
 
   it("opens the shared command palette with Ctrl+Shift+P and executes a searched command", async () => {
     render(<EditorShell />);

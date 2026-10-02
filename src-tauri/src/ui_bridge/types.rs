@@ -161,12 +161,7 @@ pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub struct ToolAvailabilityDto {
-    pub available: bool,
-    pub version: Option<String>,
-}
+pub use crate::integration::toolchain::ToolAvailability as ToolAvailabilityDto;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
