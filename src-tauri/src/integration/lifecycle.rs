@@ -55,4 +55,20 @@ mod tests {
         assert!(gate.operation().await.is_err());
         drop(gate.shutdown().await);
     }
+
+    #[tokio::test]
+    async fn timed_out_shutdown_keeps_the_start_gate_closed_and_allows_cleanup_retry() {
+        let gate = LifecycleGate::default();
+        let registration = gate.operation().await.unwrap();
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), gate.shutdown())
+                .await
+                .is_err()
+        );
+        assert!(gate.is_closing());
+        drop(registration);
+        assert!(gate.operation().await.is_err());
+        drop(gate.shutdown().await);
+        assert!(gate.operation().await.is_err());
+    }
 }

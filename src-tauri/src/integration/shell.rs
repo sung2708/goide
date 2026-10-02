@@ -9,6 +9,8 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use crate::ui_bridge::types::{ShellExitPayloadDto, ShellHealthDto, ShellOutputPayloadDto};
+mod lifecycle;
+pub use lifecycle::dispose_shell_session_inner;
 
 /// Maximum number of bytes retained in a session's scrollback buffer.
 /// 256 KiB is more than enough to fill a typical terminal viewport many times.
@@ -60,11 +62,29 @@ pub struct ShellSessionHandle {
 
 impl ShellSessionHandle {
     /// Terminate the child process and abort the reader task.
-    pub fn terminate(mut self) {
+    pub fn terminate(&mut self) -> Result<()> {
+        if self
+            .child
+            .try_wait()
+            .context("failed to inspect shell process")?
+            .is_none()
+        {
+            if let Err(error) = self.child.kill() {
+                // A natural exit can race with kill. Only an observed exit
+                // permits treating that error as an already-completed stop.
+                if self
+                    .child
+                    .try_wait()
+                    .context("failed to inspect shell after stop failure")?
+                    .is_none()
+                {
+                    return Err(error).context("failed to terminate shell process");
+                }
+            }
+        }
+        self.child.wait().context("failed to reap shell process")?;
         self.reader_task.abort();
-        // Best-effort kill; ignore errors (process may have already exited).
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        Ok(())
     }
 }
 
@@ -419,22 +439,6 @@ pub async fn resize_shell_session_inner(
         pixel_height: 0,
     })
     .context("failed to resize shell")?;
-    Ok(())
-}
-
-/// Remove a session from the store and cleanly terminate the child process and
-/// reader task.
-pub async fn dispose_shell_session_inner(
-    store: ShellSessionStore,
-    shell_session_id: &str,
-) -> Result<()> {
-    let mut guard = store.lock().await;
-    guard.surface_to_shell.retain(|_, v| v != shell_session_id);
-    if let Some(handle) = guard.sessions.remove(shell_session_id) {
-        // Release the store lock before running potentially-blocking cleanup.
-        drop(guard);
-        handle.terminate();
-    }
     Ok(())
 }
 
