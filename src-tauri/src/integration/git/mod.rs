@@ -1,4 +1,5 @@
 mod commit;
+mod conflict;
 mod diff;
 mod history;
 mod operations;
@@ -8,10 +9,14 @@ mod status;
 mod tests;
 
 pub use commit::{details as commit_details, historical_diff, CommitDetails};
+pub use conflict::{content as conflict_content, ConflictContent};
 pub use diff::{file_diff, FileDiff};
 pub use history::{history_page, HistoryPage};
 pub use operations::{mutate, Mutation};
 pub use runner::text as command_text;
+pub fn shutdown() -> Result<(), String> {
+    runner::wait_for_shutdown()
+}
 pub use status::{repository_status, FileStatus, RepositoryStatus};
 
 use std::collections::HashMap;

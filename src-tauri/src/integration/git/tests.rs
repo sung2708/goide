@@ -221,6 +221,65 @@ fn real_conflict_detected_from_index_and_mutations_refused() {
     )
     .is_err());
     assert_eq!(fs::read(repo.0.join("a.go")).unwrap(), before);
+    let content = conflict_content(&repo.0, "a.go").unwrap();
+    assert_eq!(content.base.as_deref(), Some("base\n"));
+    assert_eq!(content.current.as_deref(), Some("main\n"));
+    assert_eq!(content.incoming.as_deref(), Some("feature\n"));
+    mutate(
+        &repo.0,
+        Mutation::SaveConflict {
+            path: "a.go".into(),
+            expected_index: content.index_signature.clone(),
+            expected_disk: content.result.clone(),
+            result: "reviewed merge\n".into(),
+        },
+    )
+    .unwrap();
+    assert!(repository_status(&repo.0).unwrap().files[0].conflicted);
+    assert!(mutate(
+        &repo.0,
+        Mutation::StageResolved {
+            path: "a.go".into(),
+            expected_index: content.index_signature.clone(),
+            expected_disk: content.result,
+        }
+    )
+    .is_err());
+    repo.write("a.go", b"external edit\n");
+    assert!(mutate(
+        &repo.0,
+        Mutation::SaveConflict {
+            path: "a.go".into(),
+            expected_index: content.index_signature.clone(),
+            expected_disk: "reviewed merge\n".into(),
+            result: "overwrite forbidden\n".into(),
+        }
+    )
+    .is_err());
+    assert_eq!(fs::read(repo.0.join("a.go")).unwrap(), b"external edit\n");
+    mutate(
+        &repo.0,
+        Mutation::StageResolved {
+            path: "a.go".into(),
+            expected_index: content.index_signature.clone(),
+            expected_disk: "external edit\n".into(),
+        },
+    )
+    .unwrap();
+    assert!(!repository_status(&repo.0).unwrap().files[0].conflicted);
+    assert!(mutate(
+        &repo.0,
+        Mutation::SaveConflict {
+            path: "a.go".into(),
+            expected_index: content.index_signature,
+            expected_disk: "external edit\n".into(),
+            result: "stale editor\n".into(),
+        }
+    )
+    .is_err());
+    repo.commit("resolve merge explicitly");
+    assert!(repository_status(&repo.0).unwrap().operation.is_none());
+    assert_eq!(repo.git(&["show", "HEAD:a.go"]), "external edit\n");
 }
 
 #[test]
@@ -259,6 +318,64 @@ fn hostile_paths_ignored_files_empty_commits_and_parent_repositories_rejected() 
     assert_eq!(discovered, repo.0);
     repo.git(&["switch", "--detach"]);
     assert!(repository_status(&repo.0).unwrap().branch.is_none());
+}
+
+#[test]
+fn creating_branches_validates_refs_and_preserves_worktree_and_current_branch() {
+    let repo = Repo::new();
+    repo.write("main.go", b"base\n");
+    repo.stage(&["main.go"]);
+    repo.commit("base");
+    let head = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.write("main.go", b"valuable working edit\n");
+    mutate(
+        &repo.0,
+        Mutation::CreateBranch {
+            name: "feature/Ω,$literal".into(),
+            start: Some(head.clone()),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        repo.git(&["rev-parse", "refs/heads/feature/Ω,$literal"])
+            .trim(),
+        head
+    );
+    assert_eq!(
+        repository_status(&repo.0).unwrap().branch.as_deref(),
+        Some("main")
+    );
+    assert_eq!(
+        fs::read(repo.0.join("main.go")).unwrap(),
+        b"valuable working edit\n"
+    );
+    for name in ["--force", "bad..ref", "with space", "refs/../escape"] {
+        assert!(mutate(
+            &repo.0,
+            Mutation::CreateBranch {
+                name: name.into(),
+                start: None
+            }
+        )
+        .is_err());
+    }
+    assert!(mutate(
+        &repo.0,
+        Mutation::CreateBranch {
+            name: "option-target".into(),
+            start: Some("--all".into())
+        }
+    )
+    .is_err());
+    assert!(mutate(
+        &repo.0,
+        Mutation::CreateBranch {
+            name: "feature/Ω,$literal".into(),
+            start: None
+        }
+    )
+    .is_err());
+    assert_eq!(repo.git(&["rev-parse", "HEAD"]).trim(), head);
 }
 
 #[test]

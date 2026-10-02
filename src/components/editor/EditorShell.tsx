@@ -48,6 +48,8 @@ import CodeEditor, { type JumpRequest } from "./CodeEditor";
 import DocumentOutline, { type DocumentOutlineItem } from "./DocumentOutline";
 import SearchPanel from "../panels/SearchPanel";
 import GitPanel from "../panels/GitPanel";
+import { useReplacementReview } from "./useReplacementReview";
+import { hasConflictDrafts, saveConflictDrafts } from "../../features/git/conflictDrafts";
 import BranchPicker from "../panels/BranchPicker";
 import BranchSwitchDialog from "../panels/BranchSwitchDialog";
 import ResizableSplit from "../layout/ResizableSplit";
@@ -342,14 +344,22 @@ function EditorShell() {
   const quickOpenRequestIdRef = useRef(0);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
+  const replacementReview = useReplacementReview(workspacePath);
   const {
     searchLoading,
+    searchError,
+    searchWarning,
+    cancelSearch,
     workspaceSearchResults,
     resetWorkspaceSearch,
     handleWorkspaceSearch,
     replaceMatch: handleReplaceMatch,
     replaceAllMatches: handleReplaceAllMatches,
-  } = useWorkspaceSearchState(workspacePath);
+  } = useWorkspaceSearchState(workspacePath, {
+    review: replacementReview.review,
+    transaction: (operation) => gitDocumentTransaction(operation, true, true),
+    onChanged: () => setExplorerRevision((revision) => revision + 1),
+  });
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const [explorerRevision, setExplorerRevision] = useState(0);
   const [gitOperationBusy, setGitOperationBusy] = useState(false);
@@ -1263,10 +1273,19 @@ function EditorShell() {
     return true;
   }, [persistActiveFileContent]);
 
+  const preserveAllDocuments = useCallback(async () => {
+    if (!(await preserveActiveDocument())) return false;
+    if (workspacePathRef.current && hasConflictDrafts(workspacePathRef.current)) {
+      try { await saveConflictDrafts(workspacePathRef.current); }
+      catch (error) { setFileError(error instanceof Error ? error.message : "Cannot save retained conflict results."); return false; }
+    }
+    return true;
+  }, [preserveActiveDocument]);
+
   const safeCloseDialog = useSafeWindowClose({
-    dirty: () => latestEditorContentRef.current !== null && latestEditorContentRef.current !== savedContentRef.current,
+    dirty: () => hasConflictDrafts(workspacePathRef.current) || (latestEditorContentRef.current !== null && latestEditorContentRef.current !== savedContentRef.current),
     busy: () => documentTransitionRef.current || isSavingRef.current,
-    save: preserveActiveDocument,
+    save: preserveAllDocuments,
     cancelAutosave: () => { if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; } },
     onError: setFileError,
   });
@@ -1822,7 +1841,7 @@ function EditorShell() {
 
       const resolvedPath = Array.isArray(selected) ? selected[0] : selected;
       if (typeof resolvedPath === "string") {
-        if (!(await preserveActiveDocument())) {
+        if (!(await preserveAllDocuments())) {
           return;
         }
         setMode("quick-insight");
@@ -1853,7 +1872,7 @@ function EditorShell() {
       documentTransitionRef.current = false;
       setIsOpening(false);
     }
-  }, [isOpening, preserveActiveDocument, resetDiagnosticsState, resetWorkspaceSearch]);
+  }, [isOpening, preserveAllDocuments, resetDiagnosticsState, resetWorkspaceSearch]);
 
   const handleOpenFile = useCallback(
     async (relativePath: string) => {
@@ -2150,6 +2169,9 @@ function EditorShell() {
                 <SearchPanel
                   results={workspaceSearchResults}
                   loading={searchLoading}
+                  error={searchError}
+                  warning={searchWarning}
+                  onCancel={() => void cancelSearch()}
                   onSearch={handleWorkspaceSearch}
                   onOpenResult={(file, line, query) => {
                     setEditorHighlightQuery(query);
@@ -2743,6 +2765,7 @@ function EditorShell() {
         </Suspense>
       ) : null}
       {safeCloseDialog}
+      {replacementReview.dialog}
     </div>
   );
 }

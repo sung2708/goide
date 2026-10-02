@@ -1,4 +1,20 @@
-use super::types::ApiResponse;
+use super::types::{
+    ApiResponse, GitCommitDetailsDto, GitConflictContentDto, GitFileDiffDto, GitHistoryPageDto,
+    GitMutationDto, GitRepositoryStatusDto,
+};
+#[tauri::command]
+pub async fn git_conflict_content(
+    workspace_root: String,
+    path: String,
+) -> ApiResponse<GitConflictContentDto> {
+    respond(
+        tauri::async_runtime::spawn_blocking(move || {
+            let root = git::repository_root(&workspace_root)?;
+            git::conflict_content(&root, &path)
+        })
+        .await,
+    )
+}
 #[tauri::command]
 pub async fn git_cancel(workspace_root: String) -> ApiResponse<bool> {
     respond(
@@ -13,7 +29,7 @@ pub async fn git_commit_details(
     workspace_root: String,
     hash: String,
     parent: Option<String>,
-) -> ApiResponse<git::CommitDetails> {
+) -> ApiResponse<GitCommitDetailsDto> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;
@@ -28,7 +44,7 @@ pub async fn git_historical_diff(
     hash: String,
     parent: Option<String>,
     path: String,
-) -> ApiResponse<git::FileDiff> {
+) -> ApiResponse<GitFileDiffDto> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;
@@ -44,7 +60,7 @@ pub async fn git_history_page(
     workspace_root: String,
     offset: usize,
     tips: Vec<String>,
-) -> ApiResponse<git::HistoryPage> {
+) -> ApiResponse<GitHistoryPageDto> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;
@@ -55,7 +71,7 @@ pub async fn git_history_page(
 }
 
 #[tauri::command]
-pub async fn git_repository_status(workspace_root: String) -> ApiResponse<git::RepositoryStatus> {
+pub async fn git_repository_status(workspace_root: String) -> ApiResponse<GitRepositoryStatusDto> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;
@@ -70,7 +86,7 @@ pub async fn git_file_diff(
     workspace_root: String,
     path: String,
     staged: bool,
-) -> ApiResponse<git::FileDiff> {
+) -> ApiResponse<GitFileDiffDto> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;
@@ -81,7 +97,7 @@ pub async fn git_file_diff(
 }
 
 #[tauri::command]
-pub async fn git_mutate(workspace_root: String, mutation: git::Mutation) -> ApiResponse<()> {
+pub async fn git_mutate(workspace_root: String, mutation: GitMutationDto) -> ApiResponse<()> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
             let root = git::repository_root(&workspace_root)?;

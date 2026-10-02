@@ -3,6 +3,7 @@ import type { GitFileStatus } from "../../lib/ipc/git";
 import type { WorkspaceBranchSnapshot, WorkspaceGitSnapshot } from "../../lib/ipc/types";
 import GitDiffView from "./GitDiffView";
 import GitGraph from "./GitGraph";
+import ConflictEditor from "./ConflictEditor";
 import { useSourceControl, type GitTransaction } from "./useSourceControl";
 
 type Props = {
@@ -20,6 +21,9 @@ export default function SourceControlPanel(props: Props) {
   const [message, setMessage] = useState("");
   const [view, setView] = useState<"changes" | "graph">("changes");
   const [chosenRemote, setChosenRemote] = useState("");
+  const [conflictPath, setConflictPath] = useState<string | null>(null);
+  const [branchName, setBranchName] = useState("");
+  const [creatingBranch, setCreatingBranch] = useState(false);
   const remotes = git.status?.remotes ?? [];
   const remote = remotes.includes(chosenRemote) ? chosenRemote : remotes[0] ?? "";
   const targetBranch = git.status?.upstream?.startsWith(`${remote}/`) ? git.status.upstream.slice(remote.length + 1) : git.status?.branch;
@@ -29,6 +33,7 @@ export default function SourceControlPanel(props: Props) {
   const untracked = files.filter((f) => f.indexStatus === "?");
   const conflicts = files.filter((f) => f.conflicted);
   const disabled = git.busy || !props.transaction || Boolean(git.status?.operation) || conflicts.length > 0;
+  const commitDisabled = git.busy || !props.transaction || conflicts.length > 0 || Boolean(git.status?.operation && git.status.operation !== "merge");
   const section = (title: string, items: GitFileStatus[], stagedView: boolean, untrackedView = false) =>
     <details open className="border-b border-(--border-subtle)" key={title}>
       <summary className="cursor-pointer px-3 py-2 text-[11px] font-semibold uppercase tracking-wide">{title} <span className="text-(--overlay1)">{items.length}</span></summary>
@@ -37,6 +42,7 @@ export default function SourceControlPanel(props: Props) {
         <span title={names[stagedView ? file.indexStatus : file.worktreeStatus] ?? "Git status"} className="w-4 shrink-0 text-center font-mono text-(--blue)">{file.conflicted ? "!" : untrackedView ? "U" : stagedView ? file.indexStatus : file.worktreeStatus}</span>
         <button className={`${button} min-w-0 flex-1 truncate text-left`} title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} aria-label={`${untrackedView || file.conflicted ? "Open file" : "Open changes"} ${file.path}${stagedView ? " staged" : ""}`} onClick={() => untrackedView || file.conflicted ? props.onOpenFile?.(file.path) : void git.openDiff(file.path, stagedView)}>{file.path}</button>
         {!untrackedView && <button className={button} aria-label={`Open file ${file.path}${stagedView ? " staged" : ""}`} onClick={() => props.onOpenFile?.(file.path)}>↗</button>}
+        {file.conflicted && <button className={button} disabled={git.busy || !props.transaction} onClick={() => setConflictPath(file.path)}>Resolve conflict</button>}
         {!file.conflicted && <button className={button} disabled={disabled || file.submodule} aria-label={`${stagedView ? "Unstage" : "Stage"} ${file.path}`} onClick={() => void git.mutate({ kind: stagedView ? "unstage" : "stage", paths: [file.path] })}>{stagedView ? "−" : "+"}</button>}
         {!file.conflicted && !stagedView && <button className={button} disabled={disabled || file.submodule} aria-label={`${untrackedView ? "Delete untracked" : "Discard changes"} ${file.path}`} onClick={() => {
           if (window.confirm(untrackedView ? `Permanently delete untracked file ${file.path}, including editor changes? This cannot be undone by Git.` : `Discard working-tree changes to ${file.path}, including editor edits? Staged content is retained.`)) void git.mutate({ kind: untrackedView ? "deleteUntracked" : "discard", path: file.path });
@@ -53,13 +59,18 @@ export default function SourceControlPanel(props: Props) {
         <button className={button} disabled={disabled || !targetBranch} onClick={() => { if (targetBranch && window.confirm(`Fast-forward current branch from ${remote}/${targetBranch}? Your buffer will be saved first.`)) void git.mutate({ kind: "pull", remote, branch: targetBranch }); }}>Pull (FF only)</button>
         <button className={button} disabled={disabled || !targetBranch || !git.status?.head} onClick={() => { if (targetBranch && window.confirm(`Push current HEAD to ${remote}/${targetBranch}${git.status?.upstream ? "" : " and set upstream"}?`)) void git.mutate({ kind: "push", remote, branch: targetBranch, setUpstream: !git.status?.upstream }); }}>Push</button>
       </div>}
+      <button className={button} disabled={disabled || !git.status?.head} onClick={() => setCreatingBranch(!creatingBranch)}>Create branch</button>
+      {creatingBranch && <form className="mt-2 flex flex-wrap gap-1" onSubmit={async (event) => { event.preventDefault(); if (await git.mutate({ kind: "createBranch", name: branchName, start: null })) { setBranchName(""); setCreatingBranch(false); } }}>
+        <input aria-label="New branch name" value={branchName} disabled={git.busy} onChange={(event) => setBranchName(event.target.value)} className="min-w-0 flex-1 border border-(--border-muted) bg-(--crust) px-2 text-xs" />
+        <button className={button} disabled={disabled || !branchName}>Create from HEAD (stay here)</button>
+      </form>}
     </header>
     {props.workspacePath && <div className="flex gap-2 border-b border-(--border-muted) px-3 py-1"><button className={button} aria-pressed={view === "changes"} onClick={() => setView("changes")}>Changes</button><button className={button} aria-pressed={view === "graph"} onClick={() => setView("graph")}>Git Graph</button></div>}
     {view === "graph" && props.workspacePath ? <GitGraph root={props.workspacePath} /> : <>
     {git.status && <div className="border-b border-(--border-subtle) p-2">
       <label className="sr-only" htmlFor="git-commit-message">Commit message</label>
       <textarea id="git-commit-message" value={message} onChange={(event) => setMessage(event.target.value)} disabled={git.busy} rows={3} placeholder="Message for staged changes" className="w-full resize-y rounded border border-(--border-muted) bg-(--crust) px-2 py-1.5 text-xs outline-none focus:border-(--border-active)" />
-      <button className={`${button} mt-1 w-full border border-(--border-muted)`} disabled={disabled || !staged.length || !message.trim()} onClick={async () => { if (await git.mutate({ kind: "commit", message })) setMessage(""); }}>Commit staged ({staged.length})</button>
+      <button className={`${button} mt-1 w-full border border-(--border-muted)`} disabled={commitDisabled || !staged.length || !message.trim()} onClick={async () => { if (await git.mutate({ kind: "commit", message })) setMessage(""); }}>{git.status?.operation === "merge" ? "Commit merge" : "Commit staged"} ({staged.length})</button>
       {!staged.length && <p className="mt-1 text-[11px] text-(--overlay1)">Stage files explicitly before committing.</p>}
     </div>}
     {(git.error ?? (!props.workspacePath ? props.error : null)) && <p role="alert" className="break-words px-3 py-2 text-xs text-(--red)">{git.error ?? props.error}</p>}
@@ -68,6 +79,7 @@ export default function SourceControlPanel(props: Props) {
     <div className="min-h-0 flex-1 overflow-auto">{git.status && (files.length ? <>{conflicts.length > 0 && section("Merge changes / conflicts", conflicts, false)}{section("Staged changes", staged, true)}{section("Changes", changed, false)}{section("Untracked", untracked, false, true)}</> : <p className="p-3 text-xs text-(--overlay1)">Working tree clean.</p>)}{!props.workspacePath && <p className="p-3 text-xs text-(--overlay1)">Open a repository root to inspect Source Control.</p>}</div>
     {git.diffLoading && <p role="status" className="p-2 text-xs">Loading diff…</p>}
     {git.diff && <GitDiffView diff={git.diff} onClose={git.closeDiff} />}
+    {conflictPath && props.workspacePath && <ConflictEditor key={`${props.workspacePath}:${conflictPath}`} root={props.workspacePath} path={conflictPath} busy={git.busy} transaction={props.transaction} mutate={git.mutate} onClose={() => setConflictPath(null)} />}
     {git.output.length > 0 && <details className="max-h-32 overflow-auto border-t border-(--border-muted) text-xs"><summary className="px-3 py-2">Git output</summary><pre className="whitespace-pre-wrap break-words px-3 pb-2">{git.output.join("\n")}</pre></details>}
     </>}
   </div>;

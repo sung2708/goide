@@ -14,10 +14,10 @@ describe("ipc client searchWorkspaceText", () => {
     delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
   });
 
-  it("returns an empty successful response when tauri internals are unavailable", async () => {
+  it("reports native search unavailable in browser preview", async () => {
     await expect(searchWorkspaceText("C:/workspace", "needle")).resolves.toEqual({
-      ok: true,
-      data: [],
+      ok: false,
+      error: { code: "search_native_required", message: "Workspace search requires the desktop app." },
     });
     expect(invokeMock).not.toHaveBeenCalled();
   });
@@ -26,16 +26,21 @@ describe("ipc client searchWorkspaceText", () => {
     (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
     invokeMock.mockResolvedValue({
       ok: true,
-      data: [{ relativePath: "main.go", matches: [{ line: 1, preview: "needle" }] }],
+      data: { files: [{ relativePath: "main.go", matches: [{ line: 1, preview: "needle" }] }], limited: true, reason: "Result budget", scannedFiles: 200 },
     });
 
     await expect(searchWorkspaceText("C:/workspace", "needle")).resolves.toEqual({
       ok: true,
       data: [{ relativePath: "main.go", matches: [{ line: 1, preview: "needle" }] }],
+      error: undefined,
+      limited: true,
+      reason: "Result budget",
     });
-    expect(invokeMock).toHaveBeenCalledWith("search_workspace_text", {
+    expect(invokeMock).toHaveBeenCalledWith("search_workspace_text_v2", {
       workspaceRoot: "C:/workspace",
       query: "needle",
+      options: { matchCase: false, wholeWord: false, useRegex: false, include: [], exclude: [] },
+      requestId: expect.any(String),
     });
   });
 });

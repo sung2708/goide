@@ -77,7 +77,7 @@ export function useSourceControl(root: string | null, revision: number, transact
         const response = await mutateGit(root, mutation);
         if (!response.ok) throw new Error(response.error?.message ?? "Git operation failed.");
         succeeded = true;
-      }, ["stage", "pull", "discard", "deleteUntracked"].includes(mutation.kind), ["pull", "discard", "deleteUntracked"].includes(mutation.kind));
+      }, ["stage", "pull", "discard", "deleteUntracked", "saveConflict"].includes(mutation.kind), ["pull", "discard", "deleteUntracked", "saveConflict"].includes(mutation.kind));
       if (currentRoot.current !== root || epoch.current !== session) return false;
       if (succeeded) {
         diffGeneration.current++; setDiff(null);

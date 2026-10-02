@@ -11,6 +11,9 @@ pub struct LifecycleGate {
     lock: Arc<Mutex<()>>,
 }
 impl LifecycleGate {
+    pub fn is_closing(&self) -> bool {
+        self.closing.load(Ordering::Acquire)
+    }
     pub async fn operation(&self) -> Result<OwnedMutexGuard<()>, String> {
         let guard = self.lock.clone().lock_owned().await;
         if self.closing.load(Ordering::Acquire) {

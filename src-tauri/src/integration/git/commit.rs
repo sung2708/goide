@@ -22,7 +22,7 @@ pub struct CommitDetails {
     pub selected_parent: Option<String>,
 }
 
-fn verify_commit(root: &Path, hash: &str) -> Result<(), String> {
+pub(super) fn verify_commit(root: &Path, hash: &str) -> Result<(), String> {
     if !matches!(hash.len(), 40 | 64) || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("Select a full commit object ID.".into());
     }

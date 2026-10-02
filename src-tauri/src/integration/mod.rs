@@ -8,4 +8,7 @@ pub mod gopls;
 pub mod lifecycle;
 pub mod lsp_manager;
 pub mod process;
+pub mod process_job;
+pub mod replacement;
+pub mod search;
 pub mod shell;

@@ -4,6 +4,10 @@ mod ui_bridge;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Err(error) = integration::process_job::install() {
+        eprintln!("Unable to establish owned process boundary: {error}");
+        return;
+    }
     tauri::Builder::default()
         .manage(integration::fs_watch::FsWatchService::new())
         .plugin(tauri_plugin_dialog::init())
@@ -13,6 +17,10 @@ pub fn run() {
             ui_bridge::git_commands::git_file_diff,
             ui_bridge::git_commands::git_mutate,
             ui_bridge::git_commands::git_cancel,
+            ui_bridge::search_commands::search_workspace_text_v2,
+            ui_bridge::search_commands::cancel_workspace_search,
+            ui_bridge::search_commands::preview_workspace_replacement,
+            ui_bridge::git_commands::git_conflict_content,
             ui_bridge::git_commands::git_history_page,
             ui_bridge::git_commands::git_commit_details,
             ui_bridge::git_commands::git_historical_diff,
