@@ -5,7 +5,8 @@ import { useLanguageEditReview } from "./useLanguageEditReview";
 import LanguageEditReview from "./LanguageEditReview";
 const formatMock = vi.hoisted(() => vi.fn());
 const importsMock = vi.hoisted(() => vi.fn());
-vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock, organizeWorkspaceImports: importsMock }));
+const renameMock = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: formatMock, organizeWorkspaceImports: importsMock, previewWorkspaceRename: renameMock }));
 
 it("requires review before editing and retains the original save baseline", async () => {
   const session = new DocumentSession(); session.reset("repo"); const doc = session.open("main.go", "disk"); session.edit(doc.id, "unsaved");
@@ -48,4 +49,35 @@ it("uses the Organize Imports endpoint and the same reviewed baseline protection
   expect(importsMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go" }));
   expect(hook.result.current.state?.operation).toBe("imports"); expect(session.active?.text).toBe("source without import");
   act(() => hook.result.current.apply()); expect(session.active?.text).toBe("source with import"); expect(session.active?.baseline).toBe("source without import");
+});
+
+it("captures the rename cursor and invalidates a preview when its new name changes", async () => {
+  const session = new DocumentSession(); session.reset("repo"); session.open("main.go", "var Old = 1\n");
+  renameMock.mockResolvedValue({ ok: true, data: { rename: { oldName: "Old", newName: "New" }, files: [{ path: "main.go", before: "var Old = 1\n", after: "var New = 1\n", readOnly: false }, { path: "helper.go", before: "var Use = Old\n", after: "var Use = New\n", readOnly: false }] } });
+  const hook = renderHook(({ cursor }) => useLanguageEditReview(session, session.snapshot(), vi.fn(), cursor), { initialProps: { cursor: 5 as number | null } });
+  act(() => hook.result.current.beginRename()); act(() => hook.result.current.setRenameName("New"));
+  hook.rerender({ cursor: null });
+  await act(() => hook.result.current.previewRename());
+  expect(renameMock).toHaveBeenCalledWith(expect.objectContaining({ newName: "New", query: expect.objectContaining({ line: 1, column: 6 }) }));
+  expect(session.active?.text).toBe("var Old = 1\n");
+  act(() => hook.result.current.setRenameName("Other")); expect(hook.result.current.state?.plan).toBeNull();
+  act(() => hook.result.current.setRenameName("New")); await act(() => hook.result.current.previewRename());
+  act(() => hook.result.current.apply());
+  expect(session.snapshot().documents.map(document => [document.path, document.text, document.baseline])).toEqual([["main.go", "var New = 1\n", "var Old = 1\n"], ["helper.go", "var Use = New\n", "var Use = Old\n"]]);
+});
+
+it("rejects rename errors and discards late previews after a source edit", async () => {
+  const session = new DocumentSession(); session.reset("repo"); const doc = session.open("main.go", "var Old = 1\n");
+  const hook = renderHook(({ snapshot }) => useLanguageEditReview(session, snapshot, vi.fn(), 5), { initialProps: { snapshot: session.snapshot() } });
+  renameMock.mockResolvedValue({ ok: false, error: { code: "rename_failed", message: "New conflicts with existing declaration" } });
+  act(() => hook.result.current.beginRename()); act(() => hook.result.current.setRenameName("New"));
+  await act(() => hook.result.current.previewRename());
+  expect(hook.result.current.state?.error).toBe("New conflicts with existing declaration");
+  act(() => hook.result.current.apply()); expect(session.active?.text).toBe("var Old = 1\n");
+  let resolve!: (value: unknown) => void;
+  renameMock.mockImplementation(() => new Promise(complete => { resolve = complete; }));
+  let pending!: Promise<void>; act(() => { pending = hook.result.current.previewRename(); });
+  session.edit(doc.id, "var Old = 2\n"); hook.rerender({ snapshot: session.snapshot() });
+  await act(async () => { resolve({ ok: true, data: { files: [{ path: "main.go", before: "var Old = 1\n", after: "var New = 1\n", readOnly: false }] } }); await pending; });
+  expect(hook.result.current.state).toBeNull(); expect(session.active?.text).toBe("var Old = 2\n");
 });

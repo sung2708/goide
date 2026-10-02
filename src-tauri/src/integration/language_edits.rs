@@ -3,6 +3,7 @@ use super::{fs, language, lsp_manager};
 use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use std::collections::{BTreeSet, HashMap};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,40 +92,144 @@ fn offset(text: &str, position: &Value) -> Result<usize> {
     ))
 }
 
+pub fn text_in_range<'a>(text: &'a str, range: &Value) -> Result<&'a str> {
+    let from = offset(text, &range["start"])?;
+    let to = offset(text, &range["end"])?;
+    if from > to {
+        return Err(anyhow!("Language edit range is reversed."));
+    }
+    Ok(&text[from..to])
+}
+
+pub struct ValidatedEdit<'a> {
+    pub from: usize,
+    pub to: usize,
+    pub insert: &'a str,
+}
+
+fn position(value: &Value) -> Result<(usize, usize)> {
+    let integer = |axis: &str| {
+        value[axis]
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| anyhow!("Invalid LSP edit position."))
+    };
+    Ok((integer("line")?, integer("character")?))
+}
+
+/// Resolve only the requested UTF-16 positions in one pass through each line.
+fn indexed_offsets(
+    text: &str,
+    positions: BTreeSet<(usize, usize)>,
+) -> Result<HashMap<(usize, usize), usize>> {
+    let mut pending = positions.into_iter().peekable();
+    let mut offsets = HashMap::new();
+    let mut start = 0;
+    for (line, raw) in text.split('\n').enumerate() {
+        if pending.peek().is_none() {
+            break;
+        }
+        if pending.peek().is_some_and(|point| point.0 == line) {
+            let content = raw.trim_end_matches('\r');
+            let mut column = 0;
+            for (byte, scalar) in content.char_indices() {
+                if pending.peek() == Some(&(line, column)) {
+                    offsets.insert(pending.next().unwrap(), start + byte);
+                }
+                column += scalar.len_utf16();
+                if pending
+                    .peek()
+                    .is_some_and(|point| point.0 == line && point.1 < column)
+                {
+                    return Err(anyhow!("LSP edit splits a Unicode character."));
+                }
+            }
+            while pending.peek().is_some_and(|point| point.0 == line) {
+                let point = pending.next().unwrap();
+                if point.1 != column {
+                    return Err(anyhow!("LSP edit column is outside the document."));
+                }
+                offsets.insert(point, start + content.len());
+            }
+        }
+        start += raw.len() + 1;
+    }
+    if pending.peek().is_some() {
+        return Err(anyhow!("LSP edit line is outside the document."));
+    }
+    Ok(offsets)
+}
+
 pub fn apply_text_edits(before: &str, result: &Value) -> Result<String> {
+    apply_validated_edits(before, &parse_text_edits(before, result)?)
+}
+
+pub fn parse_text_edits<'a>(before: &str, result: &'a Value) -> Result<Vec<ValidatedEdit<'a>>> {
     let values = result
         .as_array()
         .ok_or_else(|| anyhow!("Language server returned an invalid edit list."))?;
     if values.len() > 10_000 {
         return Err(anyhow!("Language edit exceeds 10000 edits."));
     }
+    let mut positions = BTreeSet::new();
+    for value in values {
+        positions.insert(position(&value["range"]["start"])?);
+        positions.insert(position(&value["range"]["end"])?);
+    }
+    let offsets = indexed_offsets(before, positions)?;
     let mut edits = Vec::new();
     for value in values {
-        let from = offset(before, &value["range"]["start"])?;
-        let to = offset(before, &value["range"]["end"])?;
+        let from = offsets[&position(&value["range"]["start"])?];
+        let to = offsets[&position(&value["range"]["end"])?];
         let insert = value["newText"]
             .as_str()
             .ok_or_else(|| anyhow!("Language edit text is invalid."))?;
         if from > to {
             return Err(anyhow!("Language edit range is reversed."));
         }
-        edits.push((from, to, insert));
+        edits.push(ValidatedEdit { from, to, insert });
     }
-    edits.sort_by_key(|edit| (edit.0, edit.1));
+    edits.sort_by_key(|edit| (edit.from, edit.to));
     for pair in edits.windows(2) {
-        if pair[1].0 < pair[0].1 || pair[0].0 == pair[1].0 {
+        if pair[1].from < pair[0].to || pair[0].from == pair[1].from {
             return Err(anyhow!(
                 "Language edit ranges overlap or have ambiguous insert order."
             ));
         }
     }
-    let mut after = before.to_string();
-    for (from, to, insert) in edits.into_iter().rev() {
-        if after.len() - (to - from) + insert.len() > 4 * 1024 * 1024 {
-            return Err(anyhow!("Language edit result exceeds 4 MiB."));
+    Ok(edits)
+}
+
+pub fn apply_validated_edits(before: &str, edits: &[ValidatedEdit<'_>]) -> Result<String> {
+    let mut boundary = 0;
+    for edit in edits {
+        if edit.from < boundary
+            || edit.from > edit.to
+            || edit.to > before.len()
+            || !before.is_char_boundary(edit.from)
+            || !before.is_char_boundary(edit.to)
+        {
+            return Err(anyhow!("Language edit range is invalid."));
         }
-        after.replace_range(from..to, insert);
+        boundary = edit.to;
     }
+    let length = edits.iter().try_fold(before.len(), |length, edit| {
+        length
+            .checked_sub(edit.to - edit.from)
+            .and_then(|length| length.checked_add(edit.insert.len()))
+            .ok_or_else(|| anyhow!("Language edit size is invalid."))
+    })?;
+    if length > 4 * 1024 * 1024 {
+        return Err(anyhow!("Language edit result exceeds 4 MiB."));
+    }
+    let mut after = String::with_capacity(length);
+    let mut cursor = 0;
+    for edit in edits {
+        after.push_str(&before[cursor..edit.from]);
+        after.push_str(edit.insert);
+        cursor = edit.to;
+    }
+    after.push_str(&before[cursor..]);
     Ok(after)
 }
 
@@ -163,6 +268,18 @@ mod tests {
             assert!(apply_text_edits("😀x\r\nabc", &values).is_err());
         }
         assert!(apply_text_edits("text", &Value::Null).is_err());
+    }
+    #[test]
+    fn bulk_edits_resolve_the_original_positions_without_repeated_whole_document_replacement() {
+        let before = "Foo ".repeat(10_000);
+        let changes: Vec<_> = (0..10_000)
+            .rev()
+            .map(|index| edit(0, index * 4, 0, index * 4 + 3, "Bar"))
+            .collect();
+        assert_eq!(
+            apply_text_edits(&before, &Value::Array(changes)).unwrap(),
+            "Bar ".repeat(10_000)
+        );
     }
     #[test]
     #[ignore = "requires installed Go and gopls; run explicitly with --include-ignored"]

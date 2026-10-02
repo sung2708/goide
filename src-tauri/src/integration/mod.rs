@@ -14,6 +14,7 @@ pub mod output;
 pub mod owned_sync_process;
 pub mod process;
 pub mod process_job;
+pub mod rename_symbol;
 pub mod replacement;
 pub mod search;
 pub mod shell;

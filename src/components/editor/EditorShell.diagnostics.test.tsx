@@ -12,6 +12,7 @@ const getRuntimeAvailabilityMock = vi.fn();
 const queryWorkspaceLanguageMock = vi.fn();
 const formatWorkspaceDocumentMock = vi.fn();
 const organizeWorkspaceImportsMock = vi.fn();
+const previewWorkspaceRenameMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -30,6 +31,7 @@ vi.mock("../../lib/ipc/client", async () => {
     queryWorkspaceLanguage: (...args: unknown[]) => queryWorkspaceLanguageMock(...args),
     formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
     organizeWorkspaceImports: (...args: unknown[]) => organizeWorkspaceImportsMock(...args),
+    previewWorkspaceRename: (...args: unknown[]) => previewWorkspaceRenameMock(...args),
   };
 });
 
@@ -197,6 +199,37 @@ describe("EditorShell diagnostics", () => {
     const second = await invoke(); await user.click(within(second).getByRole("button", { name: "Apply to Editor" }));
     expect(screen.getByTestId("editor-value").textContent).toBe(after);
     expect(organizeWorkspaceImportsMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go" }));
+  });
+
+  it("reviews F2 rename across open and closed files then saves each original baseline", async () => {
+    const user = userEvent.setup();
+    const before = "var Greeting = 1\n", after = "var Renamed = 1\n";
+    const helperBefore = "var Use = Greeting\n", helperAfter = "var Use = Renamed\n";
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: before });
+    writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    previewWorkspaceRenameMock.mockResolvedValue({ ok: true, data: { rename: { oldName: "Greeting", newName: "Renamed" }, files: [
+      { path: "main.go", before, after, readOnly: false },
+      { path: "helper.go", before: helperBefore, after: helperAfter, readOnly: false },
+    ] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    await user.click(screen.getByRole("button", { name: "Place Cursor" }));
+    fireEvent.keyDown(window, { key: "F2" });
+    const review = await screen.findByRole("dialog", { name: "Review Rename Symbol" });
+    await user.type(within(review).getByRole("textbox", { name: "New symbol name" }), "Renamed");
+    await user.click(within(review).getByRole("button", { name: "Preview Rename" }));
+    await within(review).findByText("Greeting → Renamed · 2 files");
+    expect(previewWorkspaceRenameMock).toHaveBeenCalledWith(expect.objectContaining({ newName: "Renamed", query: expect.objectContaining({ relativePath: "main.go", line: 1, column: 9 }) }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(before);
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+    await user.click(within(review).getByRole("button", { name: "Apply to Editor" }));
+    expect(screen.getByRole("tab", { name: /helper.go/ })).toBeInTheDocument();
+    expect(screen.getByTestId("editor-value").textContent).toBe(after);
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true, altKey: true });
+    await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go", helperAfter, helperBefore));
+    expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before);
   });
 
   it("fetches diagnostics after successful save", async () => {

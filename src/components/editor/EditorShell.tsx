@@ -391,7 +391,7 @@ function EditorShell() {
     resetCompletionAvailability();
     setSaveStatus("idle");
     setAnalysisRevision(revision => revision + 1);
-  });
+  }, cursorOffset);
   const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
@@ -2003,6 +2003,7 @@ function EditorShell() {
     ...(["definition", "references", "hover"] as const).map(kind => ({ id: `language.${kind}`, title: kind === "definition" ? "Go to Definition" : kind === "references" ? "Find References" : "Show Symbol Information", shortcut: kind === "definition" ? "F12" : kind === "references" ? "Shift+F12" : undefined, disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => language.query(kind) })),
     { id: "language.format", title: "Format Document", shortcut: "Shift+Alt+f", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.format },
     { id: "language.imports", title: "Organize Imports", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.organizeImports },
+    { id: "language.rename", title: "Rename Symbol", shortcut: "F2", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: languageEdits.beginRename },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
     { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
@@ -2025,7 +2026,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
-        <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} />
+        <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
           const root = workspacePath;
           language.close();

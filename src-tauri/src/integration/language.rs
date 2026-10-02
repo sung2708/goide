@@ -174,7 +174,7 @@ pub fn with_documents<T>(
     result
 }
 
-fn synchronize_documents(
+pub fn synchronize_documents(
     session: &mut lsp_manager::LspSession,
     buffers: &[(std::path::PathBuf, String)],
 ) -> Result<()> {
