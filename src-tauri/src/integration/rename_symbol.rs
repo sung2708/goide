@@ -274,8 +274,7 @@ pub fn preview(request: RenameRequest) -> Result<RenamePlan> {
                 let values = Value::Array(group.edits);
                 let edits = language_edits::parse_text_edits(&source.before, &values)?;
                 if edits.iter().any(|edit| {
-                    source.before[edit.from..edit.to] != old_name
-                        || edit.insert != request.new_name
+                    source.before[edit.from..edit.to] != old_name || edit.insert != request.new_name
                 }) {
                     return Err(anyhow!("This rename contains broader edits that require a separate reviewed refactoring workflow."));
                 }
