@@ -101,3 +101,7 @@ Multi-document regressions exercise independent dirty tab buffers, reread avoida
 ## Problems validation
 
 Problems tests cover actual diagnostic coordinates/codes, compiler paths with Windows drives and spaces, outside-workspace/traversal rejection, race stack exclusion, severity filtering, keyboard navigation, and stale row removal. EditorShell integration verifies that located gopls errors appear in Problems and disappear immediately when their buffer changes. Existing diagnostics polling, autosave, BottomPanel, and editor navigation tests remain applicable. Workspace-wide LSP and structured test/race diagnostics are not claimed complete.
+
+## gopls teardown hardening
+
+The persistent gopls process now owns its process tree through a synchronous native owner. Teardown terminates descendants even when the root exits first, reaps the root, then joins its bounded protocol reader. Explicit application shutdown propagates teardown failures. LSP headers are bounded at 16 KiB before allocation, duplicate Content-Length headers are rejected, and bodies remain bounded at 16 MiB. Windows tests verify scoped descendant termination, an unrelated process surviving, and repeated stop calls; parser and session teardown tests pass. This is lifecycle hardening, not completion of the addendum's language features or platform release gates.
