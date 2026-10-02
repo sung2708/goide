@@ -1,6 +1,21 @@
 use super::types::{ApiResponse, LanguageQueryDto, LanguageQueryResultDto};
 
 #[tauri::command]
+pub async fn preview_workspace_rename(
+    request: super::types::LanguageRenameRequestDto,
+) -> ApiResponse<super::types::LanguageRenamePlanDto> {
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::rename_symbol::preview(request)
+    })
+    .await
+    {
+        Ok(Ok(data)) => ApiResponse::ok(data),
+        Ok(Err(error)) => ApiResponse::err("language_rename_failed", &format!("{error:#}")),
+        Err(error) => ApiResponse::err("language_rename_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn organize_workspace_imports(
     request: super::types::LanguageFormatRequestDto,
 ) -> ApiResponse<super::types::LanguageEditPlanDto> {

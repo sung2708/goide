@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type {
   LanguageQuery, LanguageQueryResult,
   LanguageFormatRequest, LanguageEditPlan,
+  LanguageRenameRequest,
   WorkspaceFileInfo,
   WorkspaceReplacementRequest,
   WorkspaceReplacementPlan,
@@ -58,6 +59,11 @@ export async function formatWorkspaceDocument(request: LanguageFormatRequest): P
 export async function organizeWorkspaceImports(request: LanguageFormatRequest): Promise<ApiResponse<LanguageEditPlan>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Organize Imports requires the desktop app and gopls." } };
   return invoke<ApiResponse<LanguageEditPlan>>("organize_workspace_imports", { request });
+}
+
+export async function previewWorkspaceRename(request: LanguageRenameRequest): Promise<ApiResponse<LanguageEditPlan>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Symbol rename requires the desktop app and gopls." } };
+  return invoke<ApiResponse<LanguageEditPlan>>("preview_workspace_rename", { request });
 }
 
 export async function listWorkspaceEntries(

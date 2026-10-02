@@ -120,7 +120,8 @@ export type LanguageLocation = { path: string; line: number; column: number; end
 export type LanguageQuery = { workspaceRoot: string; relativePath: string; line: number; column: number; kind: LanguageQueryKind; buffers: { path: string; content: string }[] };
 export type LanguageQueryResult = { locations: LanguageLocation[]; text: string | null; outsideWorkspace: number };
 export type LanguageFormatRequest = { workspaceRoot: string; relativePath: string; buffers: { path: string; content: string }[] };
-export type LanguageEditPlan = { files: { path: string; before: string; after: string; readOnly: boolean }[] };
+export type LanguageEditPlan = { files: { path: string; before: string; after: string; readOnly: boolean }[]; rename?: { oldName: string; newName: string } };
+export type LanguageRenameRequest = { query: LanguageQuery; newName: string };
 
 export type DeepTraceConstructKind =
   | "channel"
