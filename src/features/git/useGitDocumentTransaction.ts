@@ -8,10 +8,12 @@ type Params = {
   preserve: () => Promise<boolean>;
   isPreserved: () => boolean;
   setBusy: (busy: boolean) => void;
+  canChangeFiles?: () => boolean;
 };
 
 export function useGitDocumentTransaction(params: Params): GitTransaction {
-  return async (operation, saveBuffer = false) => {
+  return async (operation, saveBuffer = false, changesFiles = false) => {
+    if (changesFiles && params.canChangeFiles && !params.canChangeFiles()) throw new Error("Stop the active run/debug session before changing repository files.");
     const root = params.root.current;
     if (!root || params.lock.current) throw new Error("Wait for the current document/Git operation to finish.");
     params.lock.current = true; params.setBusy(true);

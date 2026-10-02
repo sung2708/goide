@@ -77,20 +77,49 @@ fn build_go_run_args(workspace_root: &Path, target: &Path, mode: RunMode) -> Vec
 }
 
 #[cfg(windows)]
-async fn kill_process_group(child: &mut Child) {
+pub async fn kill_process_group(child: &mut Child) -> Result<()> {
     if let Some(pid) = child.id() {
-        let _ = std::process::Command::new("taskkill")
+        let output = tokio_command("taskkill")
             .arg("/F")
             .arg("/T")
             .arg("/PID")
             .arg(pid.to_string())
-            .output();
+            .output()
+            .await
+            .context("Unable to stop the owned process tree")?;
+        if !output.status.success() && child.try_wait()?.is_none() {
+            return Err(anyhow!(
+                "Unable to stop owned process tree: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
     }
+    if child.try_wait()?.is_none() {
+        child
+            .kill()
+            .await
+            .context("Unable to terminate owned process")?;
+    }
+    child.wait().await.context("Unable to reap owned process")?;
+    Ok(())
 }
 
 #[cfg(not(windows))]
-async fn kill_process_group(child: &mut Child) {
-    let _ = child.kill().await;
+pub async fn kill_process_group(child: &mut Child) -> Result<()> {
+    if let Some(pid) = child.id() {
+        let _ = tokio_command("kill")
+            .args(["-KILL", "--", &format!("-{pid}")])
+            .output()
+            .await;
+    }
+    if child.try_wait()?.is_none() {
+        child
+            .kill()
+            .await
+            .context("Unable to terminate owned process")?;
+    }
+    child.wait().await.context("Unable to reap owned process")?;
+    Ok(())
 }
 
 /// Spawns `go run <file>` in the workspace directory.
@@ -108,11 +137,15 @@ pub async fn run_go_file<R: tauri::Runtime>(
 
     let target = resolve_run_path(&workspace_root, &relative_path)?;
 
+    let registration = crate::integration::lifecycle::gate()
+        .operation()
+        .await
+        .map_err(|e| anyhow!(e))?;
     // Kill any previously running process
     {
         let mut guard = process_handle.lock().await;
         if let Some(child) = guard.as_mut() {
-            kill_process_group(child).await;
+            kill_process_group(child).await?;
         }
         *guard = None;
     }
@@ -122,7 +155,10 @@ pub async fn run_go_file<R: tauri::Runtime>(
         .canonicalize()
         .with_context(|| format!("workspace root does not exist: {workspace_root}"))?;
     let args = build_go_run_args(&workspace_root_path, &target, mode);
-    let mut child = tokio_command("go")
+    let mut command = tokio_command("go");
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
         .args(&args)
         .current_dir(&workspace_root)
         .env("TERM", "xterm-256color")
@@ -143,6 +179,7 @@ pub async fn run_go_file<R: tauri::Runtime>(
         let mut guard = process_handle.lock().await;
         *guard = Some(child);
     }
+    drop(registration);
 
     let app_stdout = app_handle.clone();
     let app_stderr = app_handle.clone();
@@ -248,7 +285,42 @@ pub fn emit_run_failure<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::{build_go_run_args, to_package_run_target, RunMode};
+    use super::{kill_process_group, tokio_command};
     use std::path::Path;
+    use std::process::Stdio;
+    #[tokio::test]
+    async fn stopping_owned_process_reaps_it_without_stopping_an_unrelated_child() {
+        fn command() -> tokio::process::Command {
+            #[cfg(windows)]
+            {
+                let mut command = tokio_command("ping.exe");
+                command.args(["-n", "60", "127.0.0.1"]);
+                command
+            }
+            #[cfg(unix)]
+            {
+                let mut command = tokio_command("sleep");
+                command.arg("30").process_group(0);
+                command
+            }
+        }
+        let mut owned = command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let mut unrelated = command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        kill_process_group(&mut owned).await.unwrap();
+        assert!(owned.try_wait().unwrap().is_some());
+        assert!(unrelated.try_wait().unwrap().is_none());
+        kill_process_group(&mut unrelated).await.unwrap();
+    }
 
     #[test]
     fn converts_main_go_path_to_package_dir_relative_to_workspace() {

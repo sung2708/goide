@@ -66,6 +66,8 @@ import { useBranchTransition } from "./useBranchTransition";
 import { useGitDocumentTransaction } from "../../features/git/useGitDocumentTransaction";
 import { useExternalFileState } from "./useExternalFileState";
 import ExternalFileConflict from "./ExternalFileConflict";
+import { useSafeWindowClose } from "./useSafeWindowClose";
+import { useExplorerDocumentTransaction } from "./useExplorerDocumentTransaction";
 import { useRuntimeTopology } from "./useRuntimeTopology";
 import { useDiagnosticsState } from "./useDiagnosticsState";
 import { useCompletionState } from "./useCompletionState";
@@ -351,6 +353,7 @@ function EditorShell() {
   const [analysisRevision, setAnalysisRevision] = useState(0);
   const [explorerRevision, setExplorerRevision] = useState(0);
   const [gitOperationBusy, setGitOperationBusy] = useState(false);
+  const [explorerOperationBusy, setExplorerOperationBusy] = useState(false);
   const isSavingRef = useRef(false);
   const saveStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savedContentRef = useRef<string | null>(null);
@@ -384,6 +387,8 @@ function EditorShell() {
       if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
       savedContentRef.current = content; latestEditorContentRef.current = content;
       setActiveFileContent(content); setIsDirty(false); setAnalysisRevision((revision) => revision + 1); setFileError(null);
+      clearActiveDiagnostics();
+      if (workspacePath && activeFilePath) void refreshDiagnosticsForFile(workspacePath, activeFilePath);
     }, onError: setFileError,
   });
   const {
@@ -1258,6 +1263,20 @@ function EditorShell() {
     return true;
   }, [persistActiveFileContent]);
 
+  const safeCloseDialog = useSafeWindowClose({
+    dirty: () => latestEditorContentRef.current !== null && latestEditorContentRef.current !== savedContentRef.current,
+    busy: () => documentTransitionRef.current || isSavingRef.current,
+    save: preserveActiveDocument,
+    cancelAutosave: () => { if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; } },
+    onError: setFileError,
+  });
+  const explorerTransaction = useExplorerDocumentTransaction({
+    root: workspacePathRef, path: activeFilePathRef, lock: documentTransitionRef, mutation: branchMutationRef,
+    preserve: preserveActiveDocument,
+    isPreserved: () => !isSavingRef.current && latestEditorContentRef.current === savedContentRef.current,
+    setBusy: setExplorerOperationBusy, onError: setFileError,
+  });
+
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
     if (documentTransitionRef.current || debugUiState === "starting") {
       return;
@@ -2037,6 +2056,7 @@ function EditorShell() {
     preserve: preserveActiveDocument,
     isPreserved: () => !isSavingRef.current && latestEditorContentRef.current === savedContentRef.current,
     setBusy: setGitOperationBusy,
+    canChangeFiles: () => runStatus !== "running" && debugUiState !== "starting" && debugUiState !== "running" && debugUiState !== "paused" && debugUiState !== "stopping",
   });
 
   const editorTitle = useMemo(() => {
@@ -2106,6 +2126,24 @@ function EditorShell() {
                   onOpenFile={handleOpenFile}
                   fileDecorations={fileDecorations}
                   explorerRevision={explorerRevision}
+                  transaction={explorerTransaction}
+                  onEntryPathChanged={(previous, next) => {
+                    const active = activeFilePathRef.current?.replace(/\\/g, "/");
+                    const old = previous.replace(/\\/g, "/");
+                    if (active && (active === old || active.startsWith(`${old}/`))) {
+                      const remapped = next.replace(/\\/g, "/") + active.slice(old.length);
+                      activeFilePathRef.current = remapped; setActiveFilePath(remapped);
+                      clearActiveDiagnostics(); setAnalysisRevision((revision) => revision + 1);
+                    }
+                  }}
+                  onEntryDeleted={(deleted) => {
+                    const active = activeFilePathRef.current?.replace(/\\/g, "/");
+                    const path = deleted.replace(/\\/g, "/");
+                    if (active && (active === path || active.startsWith(`${path}/`))) {
+                      activeFilePathRef.current = null; savedContentRef.current = null; latestEditorContentRef.current = null;
+                      setActiveFilePath(null); setActiveFileContent(null); setIsDirty(false); clearActiveDiagnostics(); setFileError(null);
+                    }
+                  }}
                 />
               )}
               {activeTab === "search" && (
@@ -2494,7 +2532,7 @@ function EditorShell() {
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor
-                            editable={!isBranchMutationInProgress && !gitOperationBusy}
+                            editable={!isBranchMutationInProgress && !gitOperationBusy && !explorerOperationBusy}
                             value={activeFileContent}
                             filePath={activeFilePath}
                             executionLine={debuggerState?.activeLine ?? null}
@@ -2704,6 +2742,7 @@ function EditorShell() {
           />
         </Suspense>
       ) : null}
+      {safeCloseDialog}
     </div>
   );
 }

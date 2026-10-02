@@ -19,6 +19,10 @@ export default function SourceControlPanel(props: Props) {
   const git = useSourceControl(props.workspacePath ?? null, props.revision ?? 0, props.transaction, props.onChanged);
   const [message, setMessage] = useState("");
   const [view, setView] = useState<"changes" | "graph">("changes");
+  const [chosenRemote, setChosenRemote] = useState("");
+  const remotes = git.status?.remotes ?? [];
+  const remote = remotes.includes(chosenRemote) ? chosenRemote : remotes[0] ?? "";
+  const targetBranch = git.status?.upstream?.startsWith(`${remote}/`) ? git.status.upstream.slice(remote.length + 1) : git.status?.branch;
   const files = git.status?.files ?? [];
   const staged = files.filter((f) => !f.conflicted && f.indexStatus !== "." && f.indexStatus !== "?");
   const changed = files.filter((f) => !f.conflicted && f.worktreeStatus !== "." && f.worktreeStatus !== "?");
@@ -34,6 +38,9 @@ export default function SourceControlPanel(props: Props) {
         <button className={`${button} min-w-0 flex-1 truncate text-left`} title={file.originalPath ? `${file.originalPath} → ${file.path}` : file.path} aria-label={`${untrackedView || file.conflicted ? "Open file" : "Open changes"} ${file.path}${stagedView ? " staged" : ""}`} onClick={() => untrackedView || file.conflicted ? props.onOpenFile?.(file.path) : void git.openDiff(file.path, stagedView)}>{file.path}</button>
         {!untrackedView && <button className={button} aria-label={`Open file ${file.path}${stagedView ? " staged" : ""}`} onClick={() => props.onOpenFile?.(file.path)}>↗</button>}
         {!file.conflicted && <button className={button} disabled={disabled || file.submodule} aria-label={`${stagedView ? "Unstage" : "Stage"} ${file.path}`} onClick={() => void git.mutate({ kind: stagedView ? "unstage" : "stage", paths: [file.path] })}>{stagedView ? "−" : "+"}</button>}
+        {!file.conflicted && !stagedView && <button className={button} disabled={disabled || file.submodule} aria-label={`${untrackedView ? "Delete untracked" : "Discard changes"} ${file.path}`} onClick={() => {
+          if (window.confirm(untrackedView ? `Permanently delete untracked file ${file.path}, including editor changes? This cannot be undone by Git.` : `Discard working-tree changes to ${file.path}, including editor edits? Staged content is retained.`)) void git.mutate({ kind: untrackedView ? "deleteUntracked" : "discard", path: file.path });
+        }}>×</button>}
       </li>)}</ul>
     </details>;
   return <div className="flex h-full min-h-0 flex-col text-(--text)">
@@ -41,6 +48,11 @@ export default function SourceControlPanel(props: Props) {
       <div className="flex items-center justify-between"><h2 className="text-[11px] font-semibold uppercase tracking-wide">Source Control</h2><button className={button} aria-label="Refresh Source Control" disabled={git.loading || git.busy} onClick={() => void git.refresh()}>↻</button></div>
       <div className="mt-1 flex items-center justify-between gap-1 text-xs"><span className="truncate">{git.status ? git.status.branch ?? `Detached HEAD @ ${git.status.head?.slice(0, 8) ?? "unknown"}` : props.snapshot?.branch ?? "Repository unavailable"}</span>{git.status?.upstream && <span title={git.status.upstream}>↑{git.status.ahead} ↓{git.status.behind}</span>}</div>
       <div className="mt-2 flex gap-1">{props.branchSnapshot && props.onOpenBranchPicker && <button className={button} disabled={git.busy} onClick={props.onOpenBranchPicker}>Switch branch</button>}{props.onOpenTerminal && <button className={button} onClick={props.onOpenTerminal}>Open terminal</button>}</div>
+      {remotes.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1"><select aria-label="Git remote" value={remote} disabled={git.busy} onChange={(event) => setChosenRemote(event.target.value)} className="max-w-24 bg-(--mantle) text-xs">{remotes.map((name) => <option key={name}>{name}</option>)}</select>
+        <button className={button} disabled={git.busy || !props.transaction} onClick={() => void git.mutate({ kind: "fetch", remote })}>Fetch</button>
+        <button className={button} disabled={disabled || !targetBranch} onClick={() => { if (targetBranch && window.confirm(`Fast-forward current branch from ${remote}/${targetBranch}? Your buffer will be saved first.`)) void git.mutate({ kind: "pull", remote, branch: targetBranch }); }}>Pull (FF only)</button>
+        <button className={button} disabled={disabled || !targetBranch || !git.status?.head} onClick={() => { if (targetBranch && window.confirm(`Push current HEAD to ${remote}/${targetBranch}${git.status?.upstream ? "" : " and set upstream"}?`)) void git.mutate({ kind: "push", remote, branch: targetBranch, setUpstream: !git.status?.upstream }); }}>Push</button>
+      </div>}
     </header>
     {props.workspacePath && <div className="flex gap-2 border-b border-(--border-muted) px-3 py-1"><button className={button} aria-pressed={view === "changes"} onClick={() => setView("changes")}>Changes</button><button className={button} aria-pressed={view === "graph"} onClick={() => setView("graph")}>Git Graph</button></div>}
     {view === "graph" && props.workspacePath ? <GitGraph root={props.workspacePath} /> : <>
@@ -51,7 +63,7 @@ export default function SourceControlPanel(props: Props) {
       {!staged.length && <p className="mt-1 text-[11px] text-(--overlay1)">Stage files explicitly before committing.</p>}
     </div>}
     {(git.error ?? (!props.workspacePath ? props.error : null)) && <p role="alert" className="break-words px-3 py-2 text-xs text-(--red)">{git.error ?? props.error}</p>}
-    {(git.loading || git.busy) && <p role="status" className="px-3 py-1 text-xs text-(--overlay1)">{git.busy ? "Git operation in progress…" : "Refreshing Git…"}</p>}
+    {(git.loading || git.busy) && <p role="status" className="px-3 py-1 text-xs text-(--overlay1)">{git.busy ? "Git operation in progress…" : "Refreshing Git…"}{git.busy && <button className={button} onClick={() => void git.cancel()}>Cancel Git operation</button>}</p>}
     {git.status?.operation && <p role="status" className="px-3 py-2 text-xs text-(--yellow)">{git.status.operation.toUpperCase()} IN PROGRESS. Continue in the repository terminal.</p>}
     <div className="min-h-0 flex-1 overflow-auto">{git.status && (files.length ? <>{conflicts.length > 0 && section("Merge changes / conflicts", conflicts, false)}{section("Staged changes", staged, true)}{section("Changes", changed, false)}{section("Untracked", untracked, false, true)}</> : <p className="p-3 text-xs text-(--overlay1)">Working tree clean.</p>)}{!props.workspacePath && <p className="p-3 text-xs text-(--overlay1)">Open a repository root to inspect Source Control.</p>}</div>
     {git.diffLoading && <p role="status" className="p-2 text-xs">Loading diff…</p>}

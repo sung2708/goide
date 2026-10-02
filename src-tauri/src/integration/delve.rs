@@ -557,7 +557,10 @@ pub(crate) async fn spawn_dlv_dap_with(
         )
     })?;
 
-    let mut child = tokio_command(command)
+    let mut dap_command = tokio_command(command);
+    #[cfg(unix)]
+    dap_command.process_group(0);
+    let mut child = dap_command
         .args(args)
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())

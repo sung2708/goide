@@ -1,10 +1,11 @@
 pub mod command;
 pub mod delve;
+pub mod document;
 pub mod fs;
 pub mod fs_watch;
-pub mod gopls;
 pub mod git;
-pub mod document;
+pub mod gopls;
+pub mod lifecycle;
 pub mod lsp_manager;
 pub mod process;
 pub mod shell;
