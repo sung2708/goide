@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { settingsStore, SETTINGS_STORAGE_KEY, THEME_STORAGE_KEY } from "../../features/settings/SettingsStore";
 import EditorShell from "./EditorShell";
 import type { DiagnosticsResponse, EditorDiagnostic } from "../../lib/ipc/types";
 
@@ -126,6 +127,7 @@ describe("EditorShell diagnostics", () => {
   };
 
   beforeEach(() => {
+    localStorage.removeItem(SETTINGS_STORAGE_KEY); localStorage.removeItem(THEME_STORAGE_KEY); settingsStore.refresh();
     vi.clearAllMocks();
     vi.useRealTimers();
     getWorkspaceFileStateMock.mockResolvedValue({ ok: false, error: { code: "fs_state_unavailable" } });
@@ -136,6 +138,7 @@ describe("EditorShell diagnostics", () => {
   });
 
   afterEach(() => {
+    localStorage.removeItem(SETTINGS_STORAGE_KEY); localStorage.removeItem(THEME_STORAGE_KEY); settingsStore.refresh();
     vi.useRealTimers();
   });
 
@@ -228,6 +231,27 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() => expect(within(review).getByRole("button", { name: "Apply to Editor" })).toBeEnabled()); await user.click(within(review).getByRole("button", { name: "Apply to Editor" }));
     expect(screen.getByTestId("editor-value").textContent).toBe(after); fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
+  });
+  it("opens typed Settings with Mod+, and formats a save against the original baseline", async () => {
+    const user = userEvent.setup(); const before = "package main\nfunc main( ){}\n", after = "package main\n\nfunc main() {}\n";
+    openMock.mockResolvedValue("C:/workspace"); readWorkspaceFileMock.mockResolvedValue({ ok: true, data: before }); writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    formatWorkspaceDocumentMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before, after, readOnly: false }] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
+    fireEvent.keyDown(window, { key: ",", ctrlKey: true }); const preferences = await screen.findByRole("dialog", { name: "Settings" });
+    await user.click(within(preferences).getByRole("checkbox", { name: "Format on Save" }));
+    await user.click(within(preferences).getByRole("button", { name: "Close" })); fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
+    expect(formatWorkspaceDocumentMock).toHaveBeenCalledOnce(); expect(screen.getByTestId("editor-value").textContent).toBe(after);
+  });
+  it("respects Auto Save off and saves focus changes only when the chosen mode requests it", async () => {
+    const user = userEvent.setup(); openMock.mockResolvedValue("C:/workspace"); readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" }); writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
+    act(() => settingsStore.update("files.autoSave", "off")); await user.click(screen.getByRole("button", { name: /type invalid content/i }));
+    vi.useFakeTimers(); await act(async () => { await vi.advanceTimersByTimeAsync(5000); }); expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+    act(() => settingsStore.update("files.autoSave", "onFocusChange")); fireEvent(window, new Event("blur"));
+    await act(async () => { await Promise.resolve(); }); expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", "package main\nfunc main() {\n", "package main\n");
   });
   it("reviews Format Document before editing and saves the applied result against its old disk baseline", async () => {
     const user = userEvent.setup();
