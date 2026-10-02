@@ -26,6 +26,7 @@ pub fn run() {
             ui_bridge::git_commands::git_historical_diff,
             ui_bridge::document_commands::get_workspace_file_state,
             ui_bridge::document_commands::get_workspace_file_info,
+            ui_bridge::language_commands::query_workspace_language,
             ui_bridge::commands::shutdown_owned_resources,
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
