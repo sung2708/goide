@@ -6,6 +6,7 @@ import CommandPalette from "../command-palette/CommandPalette";
 import { useCommandRegistry } from "../../features/commands/useCommandRegistry";
 import type { Command } from "../../features/commands/registry";
 import { useDocumentSession } from "../../features/documents/useDocumentSession";
+import { useOpenDocumentDiskSync } from "../../features/documents/useOpenDocumentDiskSync";
 import DocumentTabs from "../../features/documents/DocumentTabs";
 import { useSaveDecision } from "../../features/documents/useSaveDecision";
 import { buildProblems, diagnosticProblems, type Problem } from "../../features/problems/model";
@@ -415,6 +416,13 @@ function EditorShell() {
       clearActiveDiagnostics();
       if (workspacePath && activeFilePath) void refreshDiagnosticsForFile(workspacePath, activeFilePath);
     }, onError: setFileError,
+  });
+  const inactiveDiskConflicts = useOpenDocumentDiskSync({
+    documents, snapshot: documentSnapshot, revision: explorerRevision,
+    blocked: gitOperationBusy || explorerOperationBusy || isReading || isSavingRef.current,
+    busy: () => documentTransitionRef.current || isSavingRef.current || gitOperationBusy || explorerOperationBusy,
+    onReload: (path) => { forgetDiagnostics(path); setProblemRun(null); setAnalysisRevision(revision => revision + 1); },
+    onError: setFileError,
   });
   const {
     knownDiagnostics, forgetDiagnostics,
@@ -2383,6 +2391,10 @@ function EditorShell() {
                 {workspacePath && fsSyncError && (
                   <p role="status" className="px-3 py-2 text-xs text-[var(--yellow)]">{fsSyncError}</p>
                 )}
+                {inactiveDiskConflicts.length > 0 && <div role="status" aria-label="External changes in open tabs" className="flex flex-wrap gap-2 border-b border-(--border) px-3 py-2 text-xs text-(--yellow)">
+                  <span>Open tabs changed on disk:</span>
+                  {inactiveDiskConflicts.map(conflict => <button key={conflict.id} type="button" disabled={gitOperationBusy || explorerOperationBusy || isReading || documents.saving} onClick={() => void handleOpenFile(conflict.path)} className="underline">Review {conflict.path}{conflict.exists ? "" : " (deleted)"}</button>)}
+                </div>}
                 {(!workspacePath || !activeFilePath) && (
                   <WelcomeScreen
                     workspacePath={workspacePath}
