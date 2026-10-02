@@ -10,6 +10,7 @@ const writeWorkspaceFileMock = vi.fn();
 const fetchWorkspaceDiagnosticsMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const queryWorkspaceLanguageMock = vi.fn();
+const formatWorkspaceDocumentMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -26,6 +27,7 @@ vi.mock("../../lib/ipc/client", async () => {
     getRuntimeAvailability: (...args: unknown[]) =>
       getRuntimeAvailabilityMock(...args),
     queryWorkspaceLanguage: (...args: unknown[]) => queryWorkspaceLanguageMock(...args),
+    formatWorkspaceDocument: (...args: unknown[]) => formatWorkspaceDocumentMock(...args),
   };
 });
 
@@ -68,16 +70,19 @@ vi.mock("./CodeEditor", () => ({
     onChange,
     onCursorOffsetChange,
     jumpRequest,
+    value,
   }: {
     diagnostics?: EditorDiagnostic[];
     onSave?: (content: string) => void;
     onChange?: (content: string) => void;
     onCursorOffsetChange?: (offset: number) => void;
     jumpRequest?: { line: number; column?: number } | null;
+    value: string;
   }) => (
     <div data-testid="mock-code-editor">
       <button onClick={() => onCursorOffsetChange?.(8)}>Place Cursor</button>
       <output data-testid="jump-position">{jumpRequest ? `${jumpRequest.line}:${jumpRequest.column}` : "none"}</output>
+      <output data-testid="editor-value">{value}</output>
       <button type="button" onClick={() => onSave?.("package main\nfunc main() {}\n")}>
         Save File
       </button>
@@ -149,6 +154,27 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() => expect(screen.getByTestId("jump-position")).toHaveTextContent("2:7"));
     expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go");
     expect(screen.getByRole("tab", { name: /helper.go/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("reviews Format Document before editing and saves the applied result against its old disk baseline", async () => {
+    const user = userEvent.setup();
+    const before = "package main\nfunc main( ){}\n", after = "package main\n\nfunc main() {}\n";
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: before });
+    writeWorkspaceFileMock.mockResolvedValue({ ok: true });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    formatWorkspaceDocumentMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before, after, readOnly: false }] } });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    fireEvent.keyDown(window, { key: "f", shiftKey: true, altKey: true });
+    const review = await screen.findByRole("dialog", { name: "Review Format Document" });
+    expect(screen.getByTestId("editor-value").textContent).toBe(before);
+    expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
+    await user.click(within(review).getByRole("button", { name: "Apply to Editor" }));
+    expect(screen.getByTestId("editor-value").textContent).toBe(after);
+    fireEvent.keyDown(window, { key: "s", ctrlKey: true });
+    await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
   });
 
   it("fetches diagnostics after successful save", async () => {

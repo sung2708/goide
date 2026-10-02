@@ -2,6 +2,9 @@ pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
 pub use crate::integration::language::{
     Query as LanguageQueryDto, QueryResult as LanguageQueryResultDto,
 };
+pub use crate::integration::language_edits::{
+    EditPlan as LanguageEditPlanDto, FormatRequest as LanguageFormatRequestDto,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

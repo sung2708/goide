@@ -7,6 +7,7 @@ export type OpenDocument = Readonly<{
   readOnly: boolean; view: Readonly<DocumentView>;
 }>;
 export type DocumentSnapshot = { root: string | null; activeId: number | null; documents: readonly OpenDocument[] };
+export type ReviewedDocumentEdit = { path: string; before: string; after: string; readOnly?: boolean };
 type Writer = (root: string, path: string, text: string, baseline: string) => Promise<ApiResponse<unknown>>;
 export const isDocumentDirty = (document: OpenDocument) => document.text !== document.baseline;
 
@@ -57,6 +58,31 @@ export class DocumentSession {
     if (document.text === text) return;
     if (document.readOnly) throw new Error("Document is read only.");
     this.update(id, current => ({ ...current, text, version: current.version + 1 }));
+  }
+  /** Validate the complete review before publishing any changed buffers. Disk
+   * writes remain explicit Save/Save All operations with the original baseline. */
+  applyReviewedEdits(expected: DocumentSnapshot, changes: readonly ReviewedDocumentEdit[]) {
+    if (!this.state.root || this.state !== expected) throw new Error("Documents changed after this edit was prepared. Request a new preview.");
+    if (this.saving) throw new Error("Wait for document saves before applying workspace edits.");
+    const unique = new Map<string, ReviewedDocumentEdit>();
+    for (const change of changes) {
+      if (!change.path || change.path.startsWith("/") || /^[A-Za-z]:/.test(change.path) || change.path.includes("\\") || change.path.split("/").some(part => !part || part === "." || part === "..")) throw new Error("Workspace edit contains an invalid relative path.");
+      if (unique.has(change.path)) throw new Error("Workspace edit contains a duplicate file.");
+      const document = this.state.documents.find(document => document.path === change.path);
+      if (change.readOnly || document?.readOnly) throw new Error(`Cannot edit read-only file: ${change.path}`);
+      if (document && document.text !== change.before) throw new Error(`Document changed after preview: ${change.path}`);
+      unique.set(change.path, change);
+    }
+    const unopened = changes.filter(change => !this.state.documents.some(document => document.path === change.path));
+    if (this.state.documents.length + unopened.length > 100) throw new Error("Workspace edit exceeds the 100 document limit.");
+    const documents = this.state.documents.map(document => {
+      const change = unique.get(document.path);
+      return !change || change.after === document.text ? document : { ...document, text: change.after, version: document.version + 1 };
+    });
+    for (const change of unopened) {
+      documents.push({ id: ++this.nextId, path: change.path, text: change.after, baseline: change.before, version: 1, readOnly: false, view: { anchor: 0, head: 0, scrollTop: 0, scrollLeft: 0 } });
+    }
+    this.publish({ ...this.state, documents });
   }
   view(id: number, view: DocumentView) {
     this.update(id, document => ({ ...document, view: { anchor: Math.max(0, Math.min(view.anchor, document.text.length)), head: Math.max(0, Math.min(view.head, document.text.length)), scrollTop: Math.max(0, view.scrollTop), scrollLeft: Math.max(0, view.scrollLeft) } }));

@@ -11,6 +11,8 @@ import { useSaveDecision } from "../../features/documents/useSaveDecision";
 import { buildProblems, diagnosticProblems, type Problem } from "../../features/problems/model";
 import { useLanguageQueries } from "../../features/language/useLanguageQueries";
 import LanguageResults from "../../features/language/LanguageResults";
+import { useLanguageEditReview } from "../../features/language/useLanguageEditReview";
+import LanguageEditReview from "../../features/language/LanguageEditReview";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -381,6 +383,15 @@ function EditorShell() {
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
   const language = useLanguageQueries(documentSnapshot, cursorOffset);
+  const languageEdits = useLanguageEditReview(documents, documentSnapshot, () => {
+    if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
+    setProblemRun(null);
+    resetDiagnosticsState();
+    invalidateCompletionRequests();
+    resetCompletionAvailability();
+    setSaveStatus("idle");
+    setAnalysisRevision(revision => revision + 1);
+  });
   const workspaceLayout = useWorkspaceLayout(workspacePath);
   const [interactionAnchor, setInteractionAnchor] = useState<{
     top: number;
@@ -1990,6 +2001,7 @@ function EditorShell() {
     { id: "workspace.search", title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
     { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
     ...(["definition", "references", "hover"] as const).map(kind => ({ id: `language.${kind}`, title: kind === "definition" ? "Go to Definition" : kind === "references" ? "Find References" : "Show Symbol Information", shortcut: kind === "definition" ? "F12" : kind === "references" ? "Shift+F12" : undefined, disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => language.query(kind) })),
+    { id: "language.format", title: "Format Document", shortcut: "Shift+Alt+f", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.format },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
     { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
@@ -2012,6 +2024,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
+        <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
           const root = workspacePath;
           language.close();

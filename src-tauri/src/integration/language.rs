@@ -79,6 +79,28 @@ fn scoped_file(root: &Path, path: &str) -> Result<std::path::PathBuf> {
 }
 
 pub fn query(request: Query) -> Result<QueryResult> {
+    let kind = request.kind.clone();
+    let line = request.line;
+    let column = request.column;
+    with_documents(request, |root, session, target, _content| {
+        let method = match kind {
+            QueryKind::Definition => "textDocument/definition",
+            QueryKind::References => "textDocument/references",
+            QueryKind::Hover => "textDocument/hover",
+        };
+        let mut params = json!({"textDocument": {"uri": lsp_manager::path_to_file_uri(target)?}, "position": {"line": line - 1, "character": column - 1}});
+        if matches!(kind, QueryKind::References) {
+            params["context"] = json!({"includeDeclaration": true});
+        }
+        let result = request_method(session, method, params)?;
+        parse_result(root, &kind, &result)
+    })
+}
+
+pub fn with_documents<T>(
+    request: Query,
+    action: impl FnOnce(&Path, &mut lsp_manager::LspSession, &Path, &str) -> Result<T>,
+) -> Result<T> {
     if request.buffers.len() > 100
         || request
             .buffers
@@ -143,20 +165,19 @@ pub fn query(request: Query) -> Result<QueryResult> {
     if guard.is_none() {
         lsp_manager::start_new_lsp_session(&root, &mut guard)?;
     }
-    let result = query_session(guard.as_mut().unwrap(), &root, &target, &buffers, &request);
+    let session = guard.as_mut().unwrap();
+    let result = synchronize_documents(session, &buffers)
+        .and_then(|()| action(&root, session, &target, content));
     if result.is_err() {
         *guard = None;
     }
     result
 }
 
-fn query_session(
+fn synchronize_documents(
     session: &mut lsp_manager::LspSession,
-    root: &Path,
-    target: &Path,
     buffers: &[(std::path::PathBuf, String)],
-    request: &Query,
-) -> Result<QueryResult> {
+) -> Result<()> {
     let mut current = HashSet::new();
     for (path, content) in buffers {
         let uri = lsp_manager::path_to_file_uri(path)?;
@@ -185,15 +206,14 @@ fn query_session(
         )?;
     }
     session.open_files = current;
-    let method = match request.kind {
-        QueryKind::Definition => "textDocument/definition",
-        QueryKind::References => "textDocument/references",
-        QueryKind::Hover => "textDocument/hover",
-    };
-    let mut params = json!({"textDocument": {"uri": lsp_manager::path_to_file_uri(target)?}, "position": {"line": request.line - 1, "character": request.column - 1}});
-    if matches!(request.kind, QueryKind::References) {
-        params["context"] = json!({"includeDeclaration": true});
-    }
+    Ok(())
+}
+
+pub fn request_method(
+    session: &mut lsp_manager::LspSession,
+    method: &str,
+    params: Value,
+) -> Result<Value> {
     // Cold package loading can outlive ordinary completion requests. One shared
     // deadline bounds the entire query, including any "no views" retries.
     let deadline = Instant::now() + Duration::from_secs(45);
@@ -209,7 +229,7 @@ fn query_session(
             continue;
         }
         lsp_manager::ensure_lsp_response_success_sync(response.clone())?;
-        return parse_result(root, &request.kind, &response["result"]);
+        return Ok(response["result"].clone());
     }
 }
 
