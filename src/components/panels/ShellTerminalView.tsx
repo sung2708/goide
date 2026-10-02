@@ -151,6 +151,15 @@ function ShellTerminalView({
    * Sessions are NOT removed on file/key switches — only on workspace change.
    */
   const sessionMapRef = useRef<Map<string, string>>(new Map());
+  const pendingCleanupRef = useRef(new Set<string>());
+  const cleanupSurface = useCallback(async (key: string) => {
+    const id = sessionMapRef.current.get(key);
+    if (!id || !pendingCleanupRef.current.has(id)) return;
+    const response = await disposeShellSession({ shellSessionId: id });
+    if (!response.ok) throw new Error(response.error?.message ?? "Terminal cleanup has not completed.");
+    pendingCleanupRef.current.delete(id);
+    if (sessionMapRef.current.get(key) === id) sessionMapRef.current.delete(key);
+  }, []);
 
   /**
    * Tracks the workspace path for which sessions in sessionMapRef were created.
@@ -231,39 +240,45 @@ function ShellTerminalView({
     const startSession = async () => {
       setShellError(null);
       const switchToken = workspaceSwitchTokenRef.current;
-      const response = await ensureShellSession({
-        workspaceRoot: workspacePath,
-        surfaceKey: surfaceKey,
-        cwdRelativePath: cwdRelativePathRef.current ?? undefined,
-      });
+      try {
+        await cleanupSurface(surfaceKey);
+        if (cancelled || switchToken !== workspaceSwitchTokenRef.current) return;
+        const response = await ensureShellSession({
+          workspaceRoot: workspacePath,
+          surfaceKey: surfaceKey,
+          cwdRelativePath: cwdRelativePathRef.current ?? undefined,
+        });
 
-      if (cancelled || switchToken !== workspaceSwitchTokenRef.current) {
-        return;
-      }
-
-      if (response.ok && response.data) {
-        const newSessionId = response.data.shellSessionId;
-        const replay = response.data.replay ?? "";
-        setShellSessionId(newSessionId);
-        // Record this session in the workspace-scoped map.
-        sessionMapRef.current.set(surfaceKey, newSessionId);
-
-        // Replay scrollback into the terminal surface.
-        // Two cases:
-        //   1. The terminal is already mounted (same session key reuse, rare
-        //      but possible if surfaceVersion did not increment): write immediately.
-        //   2. The terminal is not yet mounted (surfaceKey just incremented,
-        //      causing a fresh TerminalSurface mount that fires handleMount
-        //      shortly after): stash replay so handleMount can deliver it.
-        if (replay) {
-          if (terminalRef.current) {
-            enqueueTerminalWrite(replay);
-          } else {
-            pendingReplayRef.current = replay;
-          }
+        if (cancelled || switchToken !== workspaceSwitchTokenRef.current) {
+          return;
         }
-      } else {
-        setShellError(response.error?.message ?? "Failed to start shell session.");
+
+        if (response.ok && response.data) {
+          const newSessionId = response.data.shellSessionId;
+          const replay = response.data.replay ?? "";
+          setShellSessionId(newSessionId);
+          // Record this session in the workspace-scoped map.
+          sessionMapRef.current.set(surfaceKey, newSessionId);
+
+          // Replay scrollback into the terminal surface.
+          // Two cases:
+          //   1. The terminal is already mounted (same session key reuse, rare
+          //      but possible if surfaceVersion did not increment): write immediately.
+          //   2. The terminal is not yet mounted (surfaceKey just incremented,
+          //      causing a fresh TerminalSurface mount that fires handleMount
+          //      shortly after): stash replay so handleMount can deliver it.
+          if (replay) {
+            if (terminalRef.current) {
+              enqueueTerminalWrite(replay);
+            } else {
+              pendingReplayRef.current = replay;
+            }
+          }
+        } else {
+          setShellError(response.error?.message ?? "Failed to start shell session.");
+        }
+      } catch (error) {
+        if (!cancelled && switchToken === workspaceSwitchTokenRef.current) setShellError(error instanceof Error ? error.message : String(error));
       }
     };
 
@@ -277,7 +292,7 @@ function ShellTerminalView({
   // re-initialization when it changes (e.g. on file switches with a stable
   // workspace-owned surfaceKey).  The ref keeps it readable inside the effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking]);
+  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking, cleanupSurface]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -286,13 +301,18 @@ function ShellTerminalView({
     let isUnmounted = false;
 
     const setupExitListener = async () => {
-      const dispose = await listen<{ shellSessionId: string }>("shell-exit", (event) => {
+      const dispose = await listen<{ shellSessionId: string; shellHealth?: "launch" | "degraded" | "exit" }>("shell-exit", (event) => {
         if (event.payload.shellSessionId !== shellSessionIdRef.current) {
           return;
         }
-        // The backend already removed this session from its store on exit.
+        // Successful cleanup removes the session; degraded cleanup retains ownership.
         // Reflect the disconnect in the frontend so the user can retry.
         setShellSessionId(null);
+        if (event.payload.shellHealth === "degraded") {
+          pendingCleanupRef.current.add(event.payload.shellSessionId);
+          setShellError("Terminal cleanup is pending or failed. Retry cleanup before reconnecting.");
+          return;
+        }
         setShellError("Shell session ended unexpectedly.");
         // Clean up our tracking map so retry creates a fresh session.
         for (const [key, sid] of sessionMapRef.current) {
@@ -368,12 +388,16 @@ function ShellTerminalView({
     setIsRetrying(true);
     setShellError(null);
     resetLatencyTracking();
+    const switchToken = workspaceSwitchTokenRef.current;
     try {
+      await cleanupSurface(surfaceKey);
+      if (switchToken !== workspaceSwitchTokenRef.current) return;
       const response = await ensureShellSession({
         workspaceRoot: workspacePath,
         surfaceKey: surfaceKey,
         cwdRelativePath: cwdRelativePathRef.current ?? undefined,
       });
+      if (switchToken !== workspaceSwitchTokenRef.current) return;
       if (response.ok && response.data) {
         const newSessionId = response.data.shellSessionId;
         setShellSessionId(newSessionId);
@@ -382,11 +406,11 @@ function ShellTerminalView({
         setShellError(response.error?.message ?? "Failed to start shell session.");
       }
     } catch (err) {
-      setShellError(err instanceof Error ? err.message : "Failed to start shell session.");
+      if (switchToken === workspaceSwitchTokenRef.current) setShellError(err instanceof Error ? err.message : "Failed to start shell session.");
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking]);
+  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking, cleanupSurface]);
 
   // ---- Terminal callbacks ----
 
