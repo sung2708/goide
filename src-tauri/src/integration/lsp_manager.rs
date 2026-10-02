@@ -2,7 +2,7 @@ use crate::integration::command::std_command;
 use crate::integration::owned_sync_process::OwnedSyncChild;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Stdio};
@@ -16,6 +16,7 @@ pub struct LspSession {
     pub rx: mpsc::Receiver<Value>,
     pub workspace_root: PathBuf,
     pub open_files: HashSet<String>,
+    pub open_file_versions: HashMap<String, i64>,
     pub next_id: i64,
     reader_task: Option<std::thread::JoinHandle<()>>,
 }
@@ -114,6 +115,7 @@ pub fn start_new_lsp_session<'a>(
         rx,
         workspace_root: workspace_root.to_path_buf(),
         open_files: HashSet::new(),
+        open_file_versions: HashMap::new(),
         next_id: 1,
         reader_task: Some(reader_task),
     };
@@ -425,6 +427,7 @@ mod tests {
             rx,
             workspace_root: PathBuf::new(),
             open_files: HashSet::new(),
+            open_file_versions: HashMap::new(),
             next_id: 1,
             reader_task: Some(reader),
         };

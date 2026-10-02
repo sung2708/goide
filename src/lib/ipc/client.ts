@@ -55,6 +55,11 @@ export async function formatWorkspaceDocument(request: LanguageFormatRequest): P
   return invoke<ApiResponse<LanguageEditPlan>>("format_workspace_document", { request });
 }
 
+export async function organizeWorkspaceImports(request: LanguageFormatRequest): Promise<ApiResponse<LanguageEditPlan>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Organize Imports requires the desktop app and gopls." } };
+  return invoke<ApiResponse<LanguageEditPlan>>("organize_workspace_imports", { request });
+}
+
 export async function listWorkspaceEntries(
   workspaceRoot: string,
   relativePath?: string

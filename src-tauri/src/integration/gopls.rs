@@ -946,6 +946,11 @@ fn request_file_completions(
     file_content: &str,
 ) -> Result<Vec<CompletionItem>> {
     let target_uri = lsp_manager::path_to_file_uri(target_path)?;
+    let document_version = if session.open_files.contains(&target_uri) {
+        session.next_id
+    } else {
+        1
+    };
 
     if !session.open_files.contains(&target_uri) {
         lsp_manager::write_lsp_notification_sync(
@@ -968,7 +973,7 @@ fn request_file_completions(
             json!({
                 "textDocument": {
                     "uri": target_uri,
-                    "version": session.next_id,
+                    "version": document_version,
                 },
                 "contentChanges": [
                     { "text": file_content }
@@ -977,6 +982,9 @@ fn request_file_completions(
         )?;
     }
 
+    session
+        .open_file_versions
+        .insert(target_uri.clone(), document_version);
     let deadline = Instant::now() + Duration::from_secs(45);
     let completion_response = loop {
         let request_id = session.next_id;

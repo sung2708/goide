@@ -184,6 +184,7 @@ fn synchronize_documents(
         current.insert(uri.clone());
         let version = session.next_id;
         session.next_id += 1;
+        session.open_file_versions.insert(uri.clone(), version);
         if session.open_files.insert(uri.clone()) {
             lsp_manager::write_lsp_notification_sync(
                 &mut session.stdin,
@@ -205,6 +206,9 @@ fn synchronize_documents(
             json!({"textDocument": {"uri": uri}}),
         )?;
     }
+    session
+        .open_file_versions
+        .retain(|uri, _| current.contains(uri));
     session.open_files = current;
     Ok(())
 }
