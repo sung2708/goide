@@ -465,6 +465,7 @@ type InteractionAnchor = {
 
 export type JumpRequest = {
   line: number;
+  column?: number;
   requestId: number;
 };
 
@@ -1513,7 +1514,8 @@ function CodeEditor({
     }
     handledJumpRequestIdRef.current = jumpRequest.requestId;
 
-    const from = view.state.doc.line(line).from;
+    const targetLine = view.state.doc.line(line);
+    const from = targetLine.from + (jumpRequest.column === undefined ? 0 : Math.min(targetLine.to - targetLine.from, Math.max(0, jumpRequest.column - 1)));
     view.dispatch({
       selection: { anchor: from },
       effects: EditorView.scrollIntoView(from, { y: "center" }),

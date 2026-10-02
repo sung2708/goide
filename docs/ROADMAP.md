@@ -221,3 +221,9 @@ The workbench now uses one command registry for global shortcuts and a searchabl
 ### Multi-document Editing and Save All
 
 Editor tabs now retain independent dirty buffers and disk baselines. Returning to an open tab preserves edits without rereading over them. Per-tab CodeMirror undo history, selection and scroll state survive tab switches when the buffer still matches; external reloads invalidate old history. Save All (Ctrl+Alt+S) uses each dirty document's baseline, stops at the first failure and retains failed/remaining edits. Closing a dirty tab and changing workspace offer Save / Don't Save / Cancel. Native metadata marks read-only files; binary/non-UTF-8 and files beyond 4 MiB are rejected. App-close, Git and Explorer preservation now consider all open documents, while branch changes retire old branch documents. Persistent session recovery, Save As, configurable keybindings, remaining LSP/test/debug workflows and full Git requirements remain unfinished; no release tags.
+
+## Problems panel milestone
+
+The workbench now combines known gopls diagnostics with located Go compiler errors from the current Run in a dedicated Problems panel. Filter by text or severity, select a result to open its file at the reported line and column, and use the command palette or Ctrl/Cmd+Shift+M to show the panel. Alt+F8 and Alt+Shift+F8 navigate results. Counts describe known results, not a completed workspace-wide analysis.
+
+Editing invalidates the affected diagnostics and the previous compiler results. Filesystem changes invalidate cached diagnostics and schedule a fresh active-file query. Workspace/branch transitions retire prior results. Build output remains available in Logs after its Problems results become obsolete. Persistent LSP workspace diagnostics, related information, and structured test/race problem sources remain unfinished; this milestone does not meet the complete addendum or release gate.
