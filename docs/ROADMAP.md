@@ -213,3 +213,7 @@ Go Run and Delve now use explicit owned-child identities and Windows child jobs.
 ### Cached Quick Open and Retained Conflict Draft Safety
 
 Quick Open now reuses its workspace index until a filesystem revision changes, supports fuzzy filename matching and prioritizes recently opened files. Index traversal is bounded and partial failures are visible. The picker uses the shared modal dialog for keyboard focus. Explorer refuses moving/deleting paths containing retained conflict result drafts; edits arriving during conflict saves retain their buffer and advance their disk baseline for retry. Multi-document editing, Save All and the shared command registry are still pending P0 work.
+
+### Shared Workbench Command Registry
+
+The workbench now uses one command registry for global shortcuts and a searchable Command Palette (Ctrl+Shift+P or Cmd+Shift+P). Open Workspace, Quick Open, Save Active File, workspace search, terminal visibility, Run/Race/Stop, Debug controls and symbol navigation share command definitions and availability reasons. Matching uses exact platform modifiers and skips modal/composing input. Stop Run reports success only after backend confirmation; Pause/Continue UI follows observed debugger state. Multi-document Save All, configurable keybindings and the remaining addendum workflows are still pending.
