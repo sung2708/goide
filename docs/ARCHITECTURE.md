@@ -198,3 +198,7 @@ features/documents owns the single document snapshot consumed by EditorShell thr
 ## Problems result ownership
 
 The Problems feature maps typed diagnostic DTOs and located compiler stderr into source-tagged results. It does not infer errors from arbitrary terminal text. Compiler paths must remain inside the active workspace, and results are tied to the originating Run ID/root. Editing or filesystem changes permanently invalidate that run's results rather than temporarily hiding them until Save. Diagnostic caches reject stale request completions and are retired on workspace/branch changes. Navigation uses the latest document text and clamps the reported column to its line.
+
+## gopls teardown hardening
+
+The persistent gopls process now owns its process tree through a synchronous native owner. Teardown terminates descendants even when the root exits first, reaps the root, then joins its bounded protocol reader. Explicit application shutdown propagates teardown failures. LSP headers are bounded at 16 KiB before allocation, duplicate Content-Length headers are rejected, and bodies remain bounded at 16 MiB. Windows tests verify scoped descendant termination, an unrelated process surviving, and repeated stop calls; parser and session teardown tests pass. This is lifecycle hardening, not completion of the addendum's language features or platform release gates.
