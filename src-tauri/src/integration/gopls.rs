@@ -1,9 +1,9 @@
 use crate::integration::command::std_command;
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use std::io::{self, Write};
+use std::io;
 use std::path::{Path, PathBuf};
-use std::process::{Output, Stdio};
+use std::process::Output;
 use std::time::{Duration, Instant};
 
 use crate::integration::fs;
@@ -763,11 +763,14 @@ pub fn analyze_file_diagnostics(
         ));
     }
 
-    let output = std_command("gopls")
-        .arg("check")
-        .arg(relative_path)
-        .current_dir(workspace_root)
-        .output();
+    let target = checked_cli_file(workspace_root, relative_path)?;
+    let output = super::owned_tool_output::output(
+        std_command("gopls")
+            .arg("check")
+            .arg(target)
+            .current_dir(workspace_root),
+        None,
+    );
 
     let output = match output {
         Ok(out) => out,
@@ -1258,11 +1261,13 @@ fn run_gopls_completion_without_overlay(
     workspace_root: &str,
     location: &str,
 ) -> io::Result<Output> {
-    std_command("gopls")
-        .arg("completion")
-        .arg(location)
-        .current_dir(workspace_root)
-        .output()
+    super::owned_tool_output::output(
+        std_command("gopls")
+            .arg("completion")
+            .arg(location)
+            .current_dir(workspace_root),
+        None,
+    )
 }
 
 fn run_gopls_completion_with_overlay(
@@ -1270,21 +1275,14 @@ fn run_gopls_completion_with_overlay(
     location: &str,
     file_content: &str,
 ) -> io::Result<Output> {
-    let mut child = std_command("gopls")
-        .arg("completion")
-        .arg("-modified")
-        .arg(location)
-        .current_dir(workspace_root)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(file_content.as_bytes())?;
-    }
-
-    child.wait_with_output()
+    super::owned_tool_output::output(
+        std_command("gopls")
+            .arg("completion")
+            .arg("-modified")
+            .arg(location)
+            .current_dir(workspace_root),
+        Some(file_content),
+    )
 }
 
 fn is_unsupported_modified_flag(stderr: &[u8]) -> bool {
@@ -1292,12 +1290,32 @@ fn is_unsupported_modified_flag(stderr: &[u8]) -> bool {
     text.contains("flag provided but not defined: -modified")
 }
 
+fn checked_cli_file(workspace_root: &str, relative_path: &str) -> Result<PathBuf> {
+    let info = fs::file_info(workspace_root, relative_path)?;
+    if info.size_bytes > 4 * 1024 * 1024 {
+        return Err(anyhow!(
+            "Native Go analysis requires a file of at most 4 MiB."
+        ));
+    }
+    let root = normalize_platform_pathbuf(Path::new(workspace_root).canonicalize()?);
+    let target = normalize_platform_pathbuf(root.join(relative_path).canonicalize()?);
+    if !target.starts_with(&root) || !target.is_file() {
+        return Err(anyhow!(
+            "Native Go analysis target is outside the workspace or is not a file."
+        ));
+    }
+    Ok(target)
+}
+
 fn analyze_with_gopls(workspace_root: &str, relative_path: &str) -> Result<Vec<DetectedConstruct>> {
-    let output = std_command("gopls")
-        .arg("symbols")
-        .arg(relative_path)
-        .current_dir(workspace_root)
-        .output();
+    let target = checked_cli_file(workspace_root, relative_path)?;
+    let output = super::owned_tool_output::output(
+        std_command("gopls")
+            .arg("symbols")
+            .arg(target)
+            .current_dir(workspace_root),
+        None,
+    );
 
     let output = match output {
         Ok(out) => out,
@@ -2183,6 +2201,38 @@ subdir/main.go:3:1: error in subdir
             .expect_err("missing workspace should return an error")
             .to_string();
         assert!(error_text.contains("workspace root does not exist"));
+    }
+
+    #[test]
+    #[ignore = "requires installed Go and gopls; run explicitly with --include-ignored"]
+    fn bounded_cli_diagnostics_preserve_locations_and_reject_external_paths() {
+        let root = std::env::temp_dir().join(format!("goide-cli # Ω {}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(
+            root.join("go.mod"),
+            "module example.com/boundedcli\n\ngo 1.22\n",
+        )
+        .unwrap();
+        std::fs::write(
+            root.join("main.go"),
+            "package main\nfunc main() {\n var unused int\n}\n",
+        )
+        .unwrap();
+        let result = analyze_file_diagnostics(&root.to_string_lossy(), "main.go");
+        assert!(checked_cli_file(&root.to_string_lossy(), "../outside.go").is_err());
+        let _ = std::fs::remove_file(root.join("main.go"));
+        let _ = std::fs::remove_file(root.join("go.mod"));
+        let _ = std::fs::remove_dir(&root);
+        let result = result.unwrap();
+        assert_eq!(
+            result.tooling_availability,
+            DiagnosticsToolingAvailability::Available
+        );
+        assert!(result
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.message.contains("unused")
+                && diagnostic.range.start_line == 3));
     }
 
     #[test]

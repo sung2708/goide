@@ -350,6 +350,15 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
 ) -> ApiResponse<()> {
     use tauri::Manager;
     let _shutdown = crate::integration::lifecycle::gate().shutdown().await;
+    match tauri::async_runtime::spawn_blocking(
+        crate::integration::owned_tool_output::wait_for_shutdown,
+    )
+    .await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return ApiResponse::err("shutdown_failed", &error),
+        Err(error) => return ApiResponse::err("shutdown_failed", &error.to_string()),
+    }
     match tauri::async_runtime::spawn_blocking(crate::integration::git::shutdown).await {
         Ok(Ok(())) => {}
         Ok(Err(error)) => return ApiResponse::err("shutdown_failed", &error),
@@ -1017,9 +1026,10 @@ pub(crate) async fn start_debug_session_internal_for_test(
 
 #[tauri::command]
 pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityResponseDto> {
-    let result =
-        tauri::async_runtime::spawn_blocking(move || std_command("dlv").arg("version").output())
-            .await;
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::owned_tool_output::output(std_command("dlv").arg("version"), None)
+    })
+    .await;
 
     let runtime_availability = match result {
         Ok(Ok(output)) if output.status.success() => "available",
@@ -1032,7 +1042,8 @@ pub async fn get_runtime_availability() -> ApiResponse<RuntimeAvailabilityRespon
 }
 
 fn command_version(command: &str, args: &[&str]) -> ToolAvailabilityDto {
-    let output = std_command(command).args(args).output();
+    let output =
+        crate::integration::owned_tool_output::output(std_command(command).args(args), None);
     match output {
         Ok(output) if output.status.success() => {
             let stdout = String::from_utf8_lossy(&output.stdout);
