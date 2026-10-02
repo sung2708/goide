@@ -423,6 +423,8 @@ pub struct SwitchWorkspaceBranchRequestDto {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct CompletionRequestDto {
+    #[serde(default)]
+    pub request_id: Option<String>,
     pub workspace_root: String,
     pub relative_path: String,
     pub line: usize,

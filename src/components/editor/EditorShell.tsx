@@ -450,6 +450,7 @@ function EditorShell() {
     activeFilePathRef,
     activeFileContent,
     latestEditorContentRef,
+    onError: setFileError,
   });
   const deepTraceRequestIdRef = useRef(0);
   const runtimeCheckRequestIdRef = useRef(0);

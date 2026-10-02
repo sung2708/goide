@@ -303,3 +303,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - [x] Observe natural root exit independently of terminal EOF and run it through serialized cleanup.
 - [x] Close PTY resources and join readers; preserve cleanup ownership and block replacement after timeouts.
 - [ ] Verify/finalize Unix session descendants and the Windows spawn-to-registration interval before marking the entire process-ownership release gate complete.
+
+### Completion cancellation checkpoint (2026-10-03)
+
+- [x] Carry automatic completion identities into native gopls requests and cancel old requests on editor invalidation, supersession, context changes and unmount.
+- [x] Interrupt queued completion lock acquisition and LSP/CLI waits without starting a fallback after cancellation.
+- [ ] Extend explicit identities to diagnostics/symbol analysis, synchronize all unsaved completion overlays, and finish automatic hover/signature help and save preferences.

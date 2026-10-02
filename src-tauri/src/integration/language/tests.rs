@@ -56,6 +56,38 @@ fn cancelling_a_wait_keeps_the_real_gopls_session_reusable() {
 }
 
 #[test]
+fn queued_completion_cancels_without_starting_a_cli_fallback() {
+    let workspace = Workspace::new();
+    let handle = lsp_manager::get_lsp_session();
+    let guard = handle.lock().unwrap();
+    let id = uuid::Uuid::new_v4().to_string();
+    let root = workspace.0.clone();
+    let worker_id = id.clone();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    let worker = std::thread::spawn(move || {
+        let _scope = super::super::language_requests::begin(&root, Some(&worker_id)).unwrap();
+        sender
+            .send(super::super::gopls::get_file_completions(
+                &root.to_string_lossy(),
+                "main.go",
+                1,
+                1,
+                None,
+                None,
+            ))
+            .unwrap();
+    });
+    std::thread::sleep(Duration::from_millis(50));
+    super::super::language_requests::cancel(&workspace.0, &id).unwrap();
+    let result = receiver.recv_timeout(Duration::from_secs(1));
+    drop(guard);
+    worker.join().unwrap();
+    assert!(super::super::language_requests::is_stopped(
+        &result.unwrap().unwrap_err()
+    ));
+}
+
+#[test]
 fn queued_language_query_can_cancel_without_acquiring_the_server_lock() {
     let workspace = Workspace::new();
     let handle = lsp_manager::get_lsp_session();

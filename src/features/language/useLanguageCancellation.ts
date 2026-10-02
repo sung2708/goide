@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef } from "react";
 import { cancelLanguageRequest } from "../../lib/ipc/client";
 import type { LanguageCancelRequest } from "../../lib/ipc/types";
-import type { DocumentSnapshot } from "../documents/DocumentSession";
 
-export function useLanguageCancellation(snapshot: DocumentSnapshot, onError?: (message: string) => void) {
+export function useLanguageCancellation(snapshot: unknown, onError?: (message: string) => void) {
   const report = useRef(onError);
   report.current = onError;
   const active = useRef<LanguageCancelRequest | null>(null);
-  const cancel = useCallback(() => {
-    const request = active.current; active.current = null;
+  const cancel = useCallback((requestId?: string) => {
+    const request = active.current;
+    if (requestId && request?.requestId !== requestId) return;
+    active.current = null;
     if (!request) return;
     const failed = (message: string) => {
       const detail = `Unable to cancel language request in ${request.workspaceRoot}: ${message}`;
@@ -21,11 +22,11 @@ export function useLanguageCancellation(snapshot: DocumentSnapshot, onError?: (m
   }, []);
   useEffect(() => { cancel(); }, [snapshot, cancel]);
   useEffect(() => () => { cancel(); }, [cancel]);
-  const begin = (workspaceRoot: string) => {
+  const begin = useCallback((workspaceRoot: string) => {
     cancel();
     const request = { workspaceRoot, requestId: crypto.randomUUID() };
     active.current = request; return request;
-  };
-  const complete = (requestId: string) => { if (active.current?.requestId === requestId) active.current = null; };
+  }, [cancel]);
+  const complete = useCallback((requestId: string) => { if (active.current?.requestId === requestId) active.current = null; }, []);
   return { begin, complete, cancel };
 }

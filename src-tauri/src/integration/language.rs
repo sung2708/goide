@@ -158,18 +158,7 @@ pub fn with_documents<T>(
         return Err(anyhow!("Language query column is outside the document."));
     }
     let handle = lsp_manager::get_lsp_session();
-    let mut guard = loop {
-        super::language_requests::check()?;
-        match handle.try_lock() {
-            Ok(guard) => break guard,
-            Err(std::sync::TryLockError::WouldBlock) => {
-                std::thread::sleep(Duration::from_millis(25))
-            }
-            Err(std::sync::TryLockError::Poisoned(_)) => {
-                return Err(anyhow!("Language server lock poisoned"))
-            }
-        }
-    };
+    let mut guard = super::language_requests::lock(&handle)?;
     if guard
         .as_ref()
         .is_some_and(|session| session.workspace_root != root)

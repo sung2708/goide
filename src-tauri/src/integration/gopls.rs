@@ -4,7 +4,6 @@ use serde_json::{json, Value};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use std::time::{Duration, Instant};
 
 use crate::integration::fs;
 use crate::integration::lsp_manager;
@@ -832,6 +831,13 @@ pub fn get_file_completions(
     _trigger_character: Option<&str>,
     file_content: Option<&str>,
 ) -> Result<Vec<CompletionItem>> {
+    crate::integration::language_requests::check()?;
+    if file_content.is_some_and(|content| content.len() > 4 * 1024 * 1024 || content.contains('\0'))
+    {
+        return Err(anyhow!(
+            "Completion buffer exceeds the 4 MiB budget or contains NUL."
+        ));
+    }
     let workspace_path = normalize_platform_pathbuf(
         Path::new(workspace_root)
             .canonicalize()
@@ -864,6 +870,9 @@ pub fn get_file_completions(
     ) {
         Ok(items) => return Ok(items),
         Err(error) => {
+            if crate::integration::language_requests::is_stopped(&error) {
+                return Err(error);
+            }
             if error
                 .downcast_ref::<io::Error>()
                 .map(|err| err.kind() == io::ErrorKind::NotFound)
@@ -879,6 +888,7 @@ pub fn get_file_completions(
     if lsp_manager::is_shutting_down() {
         return Err(lsp_error);
     }
+    crate::integration::language_requests::check()?;
     let output = match run_gopls_completion(workspace_root, &location, file_content) {
         Ok(out) => out,
         Err(err) => {
@@ -907,6 +917,7 @@ pub fn get_file_completions(
         &output.stderr
     };
 
+    crate::integration::language_requests::check()?;
     Ok(parse_gopls_completion_output(output_bytes))
 }
 
@@ -918,9 +929,7 @@ fn get_file_completions_via_lsp(
     file_content: &str,
 ) -> Result<Vec<CompletionItem>> {
     let session_handle = lsp_manager::get_lsp_session();
-    let mut guard = session_handle
-        .lock()
-        .map_err(|_| anyhow!("LSP session lock poisoned"))?;
+    let mut guard = crate::integration::language_requests::lock(&session_handle)?;
 
     let session = if let Some(s) = guard.as_mut() {
         if s.workspace_root == workspace_root {
@@ -934,7 +943,10 @@ fn get_file_completions_via_lsp(
     };
 
     let result = request_file_completions(session, target_path, line, column, file_content);
-    if result.is_err() {
+    if result
+        .as_ref()
+        .is_err_and(|error| !crate::integration::language_requests::is_stopped(error))
+    {
         // Drop a failed connection so the next request can start a fresh server.
         *guard = None;
     }
@@ -988,43 +1000,15 @@ fn request_file_completions(
     session
         .open_file_versions
         .insert(target_uri.clone(), document_version);
-    let deadline = Instant::now() + Duration::from_secs(45);
-    let completion_response = loop {
-        let request_id = session.next_id;
-        session.next_id += 1;
-
-        let message = json!({
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "textDocument/completion",
-            "params": {
-                "textDocument": {
-                    "uri": target_uri
-                },
-                "position": {
-                    "line": line.saturating_sub(1),
-                    "character": column.saturating_sub(1)
-                }
-            }
-        });
-        lsp_manager::write_lsp_request_sync(
-            &mut session.stdin,
-            request_id,
-            "textDocument/completion",
-            message["params"].clone(),
-        )?;
-
-        let response =
-            lsp_manager::wait_lsp_response_until_sync(&session.rx, request_id, deadline)?;
-        if lsp_manager::lsp_error_message_sync(&response) == Some("no views")
-            && Instant::now() < deadline
-        {
-            std::thread::sleep(Duration::from_millis(100));
-            continue;
-        }
-        break response;
-    };
-    lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
+    let result = crate::integration::language::request_method(
+        session,
+        "textDocument/completion",
+        json!({
+            "textDocument": { "uri": target_uri },
+            "position": { "line": line.saturating_sub(1), "character": column.saturating_sub(1) }
+        }),
+    )?;
+    let completion_response = json!({ "result": result });
     Ok(parse_lsp_completion_response(&completion_response))
 }
 
