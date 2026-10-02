@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import SearchPanel from "./SearchPanel";
@@ -49,8 +49,9 @@ describe("SearchPanel", () => {
     expect(screen.getByText(/mu\.Lock\(\)/)).toBeInTheDocument();
   });
 
-  it("filters rendered matches when Match Case is enabled", async () => {
+  it("submits Match Case to native search instead of filtering incomplete results locally", async () => {
     const user = userEvent.setup();
+    const onSearch = vi.fn();
     render(
       <SearchPanel
         results={[
@@ -63,7 +64,7 @@ describe("SearchPanel", () => {
           },
         ]}
         loading={false}
-        onSearch={vi.fn()}
+        onSearch={onSearch}
         onOpenResult={vi.fn()}
       />
     );
@@ -72,7 +73,7 @@ describe("SearchPanel", () => {
     await user.click(screen.getByRole("button", { name: /match case/i }));
 
     expect(screen.getByText("mu.Lock")).toBeInTheDocument();
-    expect(screen.queryByText("MU.LOCK()")).toBeNull();
+    await waitFor(() => expect(onSearch).toHaveBeenLastCalledWith("mu.Lock", expect.objectContaining({ matchCase: true })));
   });
 
   it("calls onReplaceMatch with file, line, query, and replaceQuery when Replace is clicked on a match", async () => {
@@ -194,7 +195,7 @@ describe("SearchPanel", () => {
 
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onSearch).toHaveBeenCalledWith("mutex");
+    expect(onSearch).toHaveBeenCalledWith("mutex", expect.objectContaining({ matchCase: false }));
     expect(onParentKeyDown).not.toHaveBeenCalled();
   });
 
@@ -222,7 +223,7 @@ describe("SearchPanel", () => {
 
       fireEvent.keyDown(input, { key: "Enter" });
 
-      expect(onSearch).toHaveBeenCalledWith("mutex");
+      expect(onSearch).toHaveBeenCalledWith("mutex", expect.objectContaining({ matchCase: false }));
       expect(onWindowKeyDown).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("keydown", onWindowKeyDown);

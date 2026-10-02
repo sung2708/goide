@@ -9,6 +9,21 @@ use std::path::Path;
     rename_all_fields = "camelCase"
 )]
 pub enum Mutation {
+    CreateBranch {
+        name: String,
+        start: Option<String>,
+    },
+    SaveConflict {
+        path: String,
+        expected_index: String,
+        expected_disk: String,
+        result: String,
+    },
+    StageResolved {
+        path: String,
+        expected_index: String,
+        expected_disk: String,
+    },
     Discard {
         path: String,
     },
@@ -40,12 +55,39 @@ pub enum Mutation {
 
 pub fn mutate(root: &Path, mutation: Mutation) -> Result<(), String> {
     let snapshot = repository_status(root)?;
-    if !matches!(mutation, Mutation::Fetch { .. })
+    let merge_commit = matches!(mutation, Mutation::Commit { .. })
+        && snapshot.operation.as_deref() == Some("merge")
+        && !snapshot.files.iter().any(|file| file.conflicted);
+    if !merge_commit
+        && !matches!(
+            mutation,
+            Mutation::Fetch { .. } | Mutation::SaveConflict { .. } | Mutation::StageResolved { .. }
+        )
         && (snapshot.operation.is_some() || snapshot.files.iter().any(|f| f.conflicted))
     {
         return Err("A Git operation/conflict is in progress. Resolve it in the repository terminal; no files were staged or committed.".into());
     }
     match mutation {
+        Mutation::CreateBranch { name, start } => {
+            checked_branch(root, &name)?;
+            let start = start
+                .as_deref()
+                .or(snapshot.head.as_deref())
+                .ok_or("Commit before creating a branch.")?;
+            super::commit::verify_commit(root, start)?;
+            runner::run(root, &["branch", "--", &name, start]).map(|_| ())
+        }
+        Mutation::SaveConflict {
+            path,
+            expected_index,
+            expected_disk,
+            result,
+        } => super::conflict::save(root, &path, &expected_index, &expected_disk, &result),
+        Mutation::StageResolved {
+            path,
+            expected_index,
+            expected_disk,
+        } => super::conflict::stage(root, &path, &expected_index, &expected_disk),
         Mutation::Discard { path } => {
             checked_paths(root, &snapshot.files, vec![path.clone()])?;
             let file = snapshot

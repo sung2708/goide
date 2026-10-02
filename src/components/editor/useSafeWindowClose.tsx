@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import Dialog from "../primitives/Dialog";
 type Params = { dirty: () => boolean; busy: () => boolean; save: () => Promise<boolean>; cancelAutosave: () => void; onError: (message: string) => void };
 export function useSafeWindowClose(params: Params) {
   const latest = useRef(params); latest.current = params;
@@ -45,6 +46,6 @@ export function useSafeWindowClose(params: Params) {
     } catch (error) { allowed.current = false; latest.current.onError(error instanceof Error ? error.message : "Unable to close safely."); }
     finally { setClosing(false); }
   };
-  const dialog = pending ? <div role="dialog" aria-modal="true" aria-label="Close GoIDE safely" className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"><div className="max-w-md rounded border border-(--border-muted) bg-(--base) p-5 text-(--text)"><h2>Close GoIDE?</h2><p className="my-3 text-sm">{latest.current.dirty() ? "Save your editor changes before closing?" : "GoIDE will stop its workspace processes before closing."}</p><div className="flex gap-4 text-sm"><button disabled={closing} onClick={() => void finish(true)}>Save and close</button>{latest.current.dirty() && <button disabled={closing} onClick={() => void finish(false)}>Discard editor edits and close</button>}<button disabled={closing} autoFocus onClick={() => setPending(false)}>Cancel</button></div></div></div> : null;
+  const dialog = <Dialog open={pending} ariaLabel="Close GoIDE safely" closeOnBackdrop={false} onOpenChange={(open) => { if (!open && !closing) setPending(false); }} className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-center justify-center bg-black/50" panelClassName="max-w-md rounded border border-(--border-muted) bg-(--base) p-5 text-(--text)"><h2>Close GoIDE?</h2><p className="my-3 text-sm">{latest.current.dirty() ? "Save your editor and retained conflict-result changes before closing?" : "GoIDE will stop its workspace processes before closing."}</p><div className="flex gap-4 text-sm"><button disabled={closing} onClick={() => void finish(true)}>Save and close</button>{latest.current.dirty() && <button disabled={closing} onClick={() => void finish(false)}>Discard editor edits and close</button>}<button disabled={closing} autoFocus onClick={() => setPending(false)}>Cancel</button></div></Dialog>;
   return dialog;
 }

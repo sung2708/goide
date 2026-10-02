@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { KeyboardEvent as ReactKeyboardEvent } from "react";
-import type { WorkspaceSearchFile } from "../../lib/ipc/types";
+import type { WorkspaceSearchFile, WorkspaceSearchOptions } from "../../lib/ipc/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import {
   faAngleDown,
@@ -10,9 +10,12 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 
 type SearchPanelProps = {
+  error?: string | null;
+  warning?: string | null;
+  onCancel?: () => void;
   loading?: boolean;
   results: WorkspaceSearchFile[];
-  onSearch: (query: string) => void;
+  onSearch: (query: string, options: WorkspaceSearchOptions) => void;
   onOpenResult: (file: string, line: number, query: string) => void;
   autoFocus?: boolean;
   focusTrigger?: number;
@@ -22,22 +25,6 @@ type SearchPanelProps = {
 
 function escapeRegex(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function buildSearchRegex(
-  query: string,
-  matchCase: boolean,
-  wholeWord: boolean,
-  useRegex: boolean
-): RegExp | null {
-  if (!query) return null;
-  const basePattern = useRegex ? query : escapeRegex(query);
-  const wrappedPattern = wholeWord ? `\\b${basePattern}\\b` : basePattern;
-  try {
-    return new RegExp(wrappedPattern, matchCase ? "g" : "gi");
-  } catch {
-    return null;
-  }
 }
 
 function HighlightedPreview({
@@ -107,6 +94,9 @@ function ToggleButton({
 }
 
 function SearchPanel({
+  error,
+  warning,
+  onCancel,
   loading = false,
   results,
   onSearch,
@@ -146,7 +136,7 @@ function SearchPanel({
   const submitSearch = (nextQuery: string) => {
     const trimmed = nextQuery.trim();
     setLastSubmittedQuery(trimmed);
-    onSearch(trimmed);
+    onSearch(trimmed, { matchCase, wholeWord, useRegex, include: filesInclude.split(",").map((pattern) => pattern.trim()).filter(Boolean), exclude: filesExclude.split(",").map((pattern) => pattern.trim()).filter(Boolean) });
   };
 
   useEffect(() => {
@@ -156,18 +146,7 @@ function SearchPanel({
   }, [focusTrigger]);
 
   const activeQuery = query.trim();
-  const previewRegex = buildSearchRegex(activeQuery, matchCase, wholeWord, useRegex);
-  const displayedResults = previewRegex
-    ? results
-        .map((file) => ({
-          ...file,
-          matches: file.matches.filter((match) => {
-            previewRegex.lastIndex = 0;
-            return previewRegex.test(match.preview);
-          }),
-        }))
-        .filter((file) => file.matches.length > 0)
-    : results;
+  const displayedResults = results;
   const flatDisplayedMatches = displayedResults.flatMap((file) =>
     file.matches.map((match) => ({
       file: file.relativePath,
@@ -199,14 +178,14 @@ function SearchPanel({
       submitSearch(trimmed);
     }, 180);
     return () => window.clearTimeout(handle);
-  }, [query, onSearch]);
+  }, [query, matchCase, wholeWord, useRegex, filesInclude, filesExclude, onSearch]);
 
   const clearSearch = () => {
     setQuery("");
     setReplaceQuery("");
     setLastSubmittedQuery("");
     setActiveMatchKey(null);
-    onSearch("");
+    onSearch("", { matchCase, wholeWord, useRegex, include: [], exclude: [] });
     searchInputRef.current?.focus();
   };
 
@@ -287,6 +266,9 @@ function SearchPanel({
 
   return (
     <div className="flex h-full flex-col bg-(--mantle)">
+      {error && <p role="alert" className="p-3 text-xs text-(--red)">{error}</p>}
+      {warning && <p role="status" className="p-3 text-xs text-(--yellow)">{warning}</p>}
+      {loading && onCancel && <button className="px-3 py-1 text-left text-xs" onClick={onCancel}>Cancel search</button>}
       {/* Header */}
       <div className="border-b border-(--border-muted) px-3 py-2.5">
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-widest text-(--overlay1)">
@@ -369,6 +351,7 @@ function SearchPanel({
               <button
                 type="button"
                 aria-label="Replace All"
+                disabled={loading}
                 onClick={() => onReplaceAll(activeQuery, replaceQuery)}
                 className="rounded border border-(--border-muted) bg-(--surface0) px-2 py-0.5 text-[10px] font-semibold text-(--subtext1) transition-colors duration-100 hover:border-(--border-active) hover:bg-(--bg-hover) hover:text-(--text)"
               >
@@ -498,6 +481,7 @@ function SearchPanel({
                               <button
                                 type="button"
                                 aria-label={`Replace match in ${file.relativePath} line ${match.line}`}
+                                disabled={loading}
                                 title="Replace match"
                                 onClick={() =>
                                   onReplaceMatch(

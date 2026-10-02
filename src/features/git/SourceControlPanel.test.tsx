@@ -58,7 +58,7 @@ describe("Source Control vertical slice", () => {
     render(<SourceControlPanel {...props} onOpenTerminal={vi.fn()} />);
     await screen.findByRole("list", { name: "Merge changes / conflicts" });
     expect(screen.getByText(/MERGE IN PROGRESS/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Commit staged (0)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Commit merge (0)" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Open terminal" })).toBeEnabled();
   });
   it("ignores stale repository status on workspace change", async () => {
@@ -70,6 +70,15 @@ describe("Source Control vertical slice", () => {
     await screen.findByText("next");
     await act(async () => { finish({ ok: true, data }); });
     expect(screen.getByText("next")).toBeInTheDocument(); expect(screen.queryByText("main")).not.toBeInTheDocument();
+  });
+  it("creates a branch explicitly without silently switching or saving the working buffer", async () => {
+    render(<SourceControlPanel {...props} />);
+    await screen.findByRole("list", { name: "Changes" });
+    fireEvent.click(screen.getByText("Create branch"));
+    fireEvent.change(screen.getByLabelText("New branch name"), { target: { value: "feature/new" } });
+    await act(async () => { fireEvent.click(screen.getByText("Create from HEAD (stay here)")); });
+    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "createBranch", name: "feature/new", start: null });
+    expect(transaction.mock.calls[0][1]).toBe(false);
   });
   it("requests cancellation without automatically retrying or clearing a rejected commit", async () => {
     let finish!: (value: unknown) => void;

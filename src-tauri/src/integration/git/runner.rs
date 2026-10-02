@@ -2,10 +2,29 @@ use crate::integration::command::std_command;
 use std::io::Read;
 use std::path::Path;
 use std::process::Stdio;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 const OUTPUT_LIMIT: usize = 2 * 1024 * 1024;
+static RUNNING: AtomicUsize = AtomicUsize::new(0);
+struct Running;
+impl Drop for Running {
+    fn drop(&mut self) {
+        RUNNING.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+pub(super) fn wait_for_shutdown() -> Result<(), String> {
+    let start = Instant::now();
+    while RUNNING.load(Ordering::Acquire) != 0 {
+        if start.elapsed() > Duration::from_secs(10) {
+            return Err(
+                "Owned Git processes have not finished stopping; the window remains open.".into(),
+            );
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
+}
 
 // Drain both streams concurrently to avoid pipe deadlock; retain bounded output.
 fn capture(mut pipe: impl Read) -> Result<(Vec<u8>, bool), String> {
@@ -25,6 +44,11 @@ fn capture(mut pipe: impl Read) -> Result<(Vec<u8>, bool), String> {
 }
 
 pub(super) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    RUNNING.fetch_add(1, Ordering::AcqRel);
+    let _running = Running;
+    if crate::integration::lifecycle::gate().is_closing() {
+        return Err("App is shutting down; no new Git process can start.".into());
+    }
     let token = super::cancellation(root);
     if token
         .as_ref()
@@ -55,6 +79,22 @@ pub(super) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| format!("Unable to start Git: {e}"))?;
+    #[cfg(windows)]
+    let _tree = {
+        use std::os::windows::io::AsRawHandle;
+        let tree = crate::integration::process_job::Job::new().and_then(|job| {
+            job.assign(child.as_raw_handle())?;
+            Ok(job)
+        });
+        match tree {
+            Ok(tree) => tree,
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Unable to own Git process tree: {error}"));
+            }
+        }
+    };
     let stdout = child.stdout.take().ok_or("Git stdout unavailable")?;
     let stderr = child.stderr.take().ok_or("Git stderr unavailable")?;
     let out_thread = std::thread::spawn(move || capture(stdout));
@@ -65,9 +105,10 @@ pub(super) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         if let Some(exit) = child.try_wait().map_err(|e| e.to_string())? {
             break exit;
         }
-        let cancelled = token
-            .as_ref()
-            .is_some_and(|token| token.load(Ordering::Acquire));
+        let cancelled = crate::integration::lifecycle::gate().is_closing()
+            || token
+                .as_ref()
+                .is_some_and(|token| token.load(Ordering::Acquire));
         if cancelled || started.elapsed() > Duration::from_secs(180) {
             interrupted = Some(if cancelled {
                 "Git operation cancelled"
@@ -91,6 +132,16 @@ pub(super) fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         }
         std::thread::sleep(Duration::from_millis(25));
     };
+    // Close the job even when the parent exited normally. Descendants keeping
+    // inherited output pipes open must not prevent readers from completing.
+    #[cfg(windows)]
+    drop(_tree);
+    #[cfg(unix)]
+    {
+        let _ = std_command("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .output();
+    }
     let (out, out_truncated) = out_thread
         .join()
         .map_err(|_| "Git stdout reader failed")??;

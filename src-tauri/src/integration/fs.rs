@@ -1,7 +1,7 @@
 use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use std::fs;
-use std::io::{ErrorKind, Write};
+use std::io::{ErrorKind, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -125,8 +125,24 @@ pub fn read_file(workspace_root: &str, relative_path: &str) -> Result<String> {
         return Err(anyhow!("path is not a file"));
     }
 
-    fs::read_to_string(&target)
-        .with_context(|| format!("failed to read file: {}", target.display()))
+    const LIMIT: u64 = 4 * 1024 * 1024;
+    if metadata.len() > LIMIT {
+        return Err(anyhow!(
+            "File exceeds the 4 MiB editor limit; open it with an external tool."
+        ));
+    }
+    let mut bytes = Vec::new();
+    fs::File::open(&target)?
+        .take(LIMIT + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > LIMIT {
+        return Err(anyhow!("File grew beyond the 4 MiB editor limit."));
+    }
+    if bytes.contains(&0) {
+        return Err(anyhow!("Binary files cannot be opened in the text editor."));
+    }
+    String::from_utf8(bytes)
+        .with_context(|| format!("File is not UTF-8 text: {}", target.display()))
 }
 
 pub fn create_file(workspace_root: &str, relative_path: &str, content: &str) -> Result<()> {
