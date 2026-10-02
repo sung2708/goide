@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, expect, it, vi } from "vitest";
 import ConflictEditor from "./ConflictEditor";
-import { removeConflictDraft } from "./conflictDrafts";
+import { getConflictDraft, removeConflictDraft } from "./conflictDrafts";
 const { read } = vi.hoisted(() => ({ read: vi.fn() }));
 vi.mock("../../lib/ipc/git", () => ({ getGitConflictContent: read }));
 const transaction = vi.fn(async (operation: () => Promise<void>) => { await operation(); return true; });
@@ -36,4 +36,14 @@ it("retains unsaved conflict results when switching away from the Source Control
   fireEvent.change(await screen.findByLabelText("Conflict result"), { target: { value: "valuable unresolved draft" } }); view.unmount();
   render(<ConflictEditor {...props} />);
   expect(await screen.findByLabelText("Conflict result")).toHaveValue("valuable unresolved draft");
+});
+it("preserves a newer result typed while saving an earlier result", async () => {
+  let finish!: (saved: boolean) => void;
+  const mutate = vi.fn(() => new Promise<boolean>(resolve => { finish = resolve; }));
+  render(<ConflictEditor root="repo" path="main.go" busy={false} transaction={transaction} mutate={mutate} onClose={vi.fn()} />);
+  const result = await screen.findByLabelText("Conflict result");
+  fireEvent.change(result, { target: { value: "first" } }); fireEvent.click(screen.getByText("Save result (keep unresolved)"));
+  fireEvent.change(result, { target: { value: "newer" } }); await act(async () => finish(true));
+  expect(result).toHaveValue("newer"); expect(screen.getByText("Stage resolved")).toBeDisabled();
+  expect(getConflictDraft("repo", "main.go")?.content.result).toBe("first"); expect(getConflictDraft("repo", "main.go")?.result).toBe("newer");
 });

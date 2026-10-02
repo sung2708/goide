@@ -3,6 +3,13 @@ type Draft = { content: GitConflictContent; result: string };
 const drafts = new Map<string, Map<string, Draft>>();
 export const getConflictDraft = (root: string, path: string) => drafts.get(root)?.get(path);
 export const hasConflictDrafts = (root: string | null) => root !== null && (drafts.get(root)?.size ?? 0) > 0;
+export function hasConflictDraftsAt(root: string | null, path: string): boolean {
+  const affected = path.replace(/\\/g, "/").toLowerCase();
+  return root !== null && [...(drafts.get(root)?.keys() ?? [])].some(file => {
+    const normalized = file.replace(/\\/g, "/").toLowerCase();
+    return normalized === affected || normalized.startsWith(`${affected}/`);
+  });
+}
 export function retainConflictDraft(root: string, content: GitConflictContent, result: string) {
   if (result === content.result) { removeConflictDraft(root, content.path); return; }
   let files = drafts.get(root); if (!files) { files = new Map(); drafts.set(root, files); }
@@ -14,7 +21,13 @@ export async function saveConflictDrafts(root: string) {
     const response = await mutateGit(root, { kind: "saveConflict", path, expectedIndex: draft.content.indexSignature, expectedDisk: draft.content.result, result: draft.result });
     if (!response.ok) throw new Error(response.error?.message ?? `Cannot save conflict result ${path}.`);
     // A changed draft remains dirty even when an earlier version saved successfully.
-    if (getConflictDraft(root, path) === draft) removeConflictDraft(root, path);
+    const current = getConflictDraft(root, path);
+    if (current === draft) removeConflictDraft(root, path);
+    else if (current && current.content.indexSignature === draft.content.indexSignature && current.content.result === draft.content.result) {
+      // The disk baseline advances even when a newer in-memory result survives.
+      // Retrying must compare against the version this save actually wrote.
+      retainConflictDraft(root, { ...current.content, result: draft.result }, current.result);
+    }
   }
   if (hasConflictDrafts(root)) throw new Error("Conflict result changed while saving. Review and save again.");
 }

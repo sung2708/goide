@@ -36,7 +36,7 @@ export default function ConflictEditor({ root, path, busy, transaction, mutate, 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [root, path]);
   const dirty = content !== null && result !== content.result;
-  const edit = (value: string) => { if (content) retainConflictDraft(root, content, value); setResult(value); };
+  const edit = (value: string) => { if (content) retainConflictDraft(root, getConflictDraft(root, path)?.content ?? content, value); setResult(value); };
   const close = () => { if (!dirty || window.confirm("Close conflict editor and discard its unsaved result edits?")) { removeConflictDraft(root, path); onClose(); } };
   return <section aria-label="Git conflict editor" className="min-h-0 overflow-auto border-t border-(--border-muted) p-3 text-xs">
     <div className="flex items-center justify-between gap-2"><strong className="truncate">Resolve {path}</strong><button className={button} disabled={busy} onClick={close}>Close conflict editor</button></div>
@@ -55,7 +55,13 @@ export default function ConflictEditor({ root, path, busy, transaction, mutate, 
       <div className="mt-2 flex flex-wrap gap-2">
         <button className={button} disabled={busy || !dirty} onClick={async () => {
           const saved = result;
-          if (await mutate({ kind: "saveConflict", path, expectedIndex: content.indexSignature, expectedDisk: content.result, result: saved }) && mounted.current) { removeConflictDraft(root, path); setContent({ ...content, result: saved }); }
+          const baseline = getConflictDraft(root, path)?.content ?? content;
+          if (await mutate({ kind: "saveConflict", path, expectedIndex: baseline.indexSignature, expectedDisk: baseline.result, result: saved }) && mounted.current) {
+            const current = getConflictDraft(root, path);
+            if (current && current.result !== saved) retainConflictDraft(root, { ...baseline, result: saved }, current.result);
+            else removeConflictDraft(root, path);
+            setContent({ ...baseline, result: saved });
+          }
         }}>Save result (keep unresolved)</button>
         <button className={button} disabled={busy || dirty} onClick={async () => {
           if (window.confirm(`Stage reviewed result for ${path} as resolved? Git does not validate code correctness.`) && await mutate({ kind: "stageResolved", path, expectedIndex: content.indexSignature, expectedDisk: content.result }) && mounted.current) onClose();
