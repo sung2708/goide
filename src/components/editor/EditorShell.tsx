@@ -2,6 +2,9 @@ import { open } from "@tauri-apps/plugin-dialog";
 import WelcomeScreen from "./WelcomeScreen";
 import { useQuickOpenIndex } from "../../features/navigation/useQuickOpenIndex";
 import Dialog from "../primitives/Dialog";
+import CommandPalette from "../command-palette/CommandPalette";
+import { useCommandRegistry } from "../../features/commands/useCommandRegistry";
+import type { Command } from "../../features/commands/registry";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -336,6 +339,7 @@ function EditorShell() {
   const [activeTab, setActiveTab] = useState<ActivityBarTab>("explorer");
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
   const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
@@ -428,6 +432,7 @@ function EditorShell() {
   const runtimeSignalInFlightRef = useRef(false);
   const runtimeSignalPendingRequestCountRef = useRef(0);
   const debugStopInFlightRef = useRef(false);
+  const runStopInFlightRef = useRef(false);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchMutationRef = useRef(false);
   const editorMountedRef = useRef(true);
@@ -505,33 +510,6 @@ function EditorShell() {
       if (autoSaveDebounceRef.current !== null) {
         clearTimeout(autoSaveDebounceRef.current);
       }
-    };
-  }, []);
-
-  // Global keyboard shortcut: Ctrl+Shift+F (or Cmd+Shift+F on Mac) opens search
-  useEffect(() => {
-    function handleGlobalKeyDown(e: KeyboardEvent) {
-      const isMac = navigator.platform.startsWith("Mac");
-      const mod = isMac ? e.metaKey : e.ctrlKey;
-      if (mod && !e.shiftKey && e.key.toLowerCase() === "p") {
-        e.preventDefault();
-        if (!workspacePathRef.current) {
-          return;
-        }
-        setIsQuickOpenOpen(true);
-        setQuickOpenQuery("");
-        setQuickOpenSelectedIndex(0);
-        return;
-      }
-      if (mod && e.shiftKey && e.key === "F") {
-        e.preventDefault();
-        setActiveTab("search");
-        setSearchFocusTrigger((n) => n + 1);
-      }
-    }
-    window.addEventListener("keydown", handleGlobalKeyDown);
-    return () => {
-      window.removeEventListener("keydown", handleGlobalKeyDown);
     };
   }, []);
 
@@ -1230,7 +1208,7 @@ function EditorShell() {
   });
 
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
-    if (documentTransitionRef.current || debugUiState === "starting") {
+    if (documentTransitionRef.current || runStopInFlightRef.current || debugUiState === "starting") {
       return;
     }
     if (!workspacePath || !activeFilePath) return;
@@ -1324,7 +1302,7 @@ function EditorShell() {
   }, [handleRunFile]);
 
   const handleStartDebug = useCallback(async () => {
-    if (documentTransitionRef.current || debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
+    if (documentTransitionRef.current || runStopInFlightRef.current || debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
       return;
     }
     if (!workspacePath || !activeFilePath || !isGoFile(activeFilePath)) return;
@@ -1537,15 +1515,12 @@ function EditorShell() {
     isDebugSessionRunning ||
     Boolean(workspacePath && activeFilePath && activeFilePath.toLowerCase().endsWith(".go"));
 
-  const handleToggleDebugPause = useCallback(() => {
-    if (isDebugPaused) {
-      setDebugUiState("running");
-      void debuggerContinue();
-      return;
-    }
-    setDebugUiState("paused");
-    void debuggerPause();
-  }, [isDebugPaused]);
+  // A DAP acknowledgement does not prove that the target paused/continued.
+  // Runtime polling updates the UI from backend-observed debugger state.
+  const handleToggleDebugPause = useCallback(
+    () => isDebugPaused ? debuggerContinue() : debuggerPause(),
+    [isDebugPaused]
+  );
 
   // Fall back to explorer when the debug tab becomes unavailable while active.
   useEffect(() => {
@@ -1553,93 +1528,6 @@ function EditorShell() {
       setActiveTab("explorer");
     }
   }, [activeTab, showDebugTab]);
-
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const canStartDebug =
-        DEBUG_UI_ENABLED &&
-        !isDebugSessionBusy &&
-        !debugStopInFlightRef.current &&
-        runStatus !== "running" &&
-        Boolean(workspacePath && isGoFile(activeFilePath));
-
-      if (e.key === "F9" && activeFilePath && selectedLine) {
-        e.preventDefault();
-        void handleToggleBreakpoint(selectedLine);
-        return;
-      }
-
-      if (e.key === "F5" && !e.shiftKey) {
-        e.preventDefault();
-        if (!isDebugSessionRunning) {
-          if (canStartDebug) {
-            void handleStartDebug();
-          }
-          return;
-        }
-        handleToggleDebugPause();
-        return;
-      }
-
-      if (e.key === "F5" && e.shiftKey) {
-        e.preventDefault();
-        if (isDebugSessionRunning) {
-          void handleStopDebug();
-        }
-        return;
-      }
-
-      if (e.key === "F8" && !e.shiftKey) {
-        e.preventDefault();
-        navigateDocumentSymbol("next");
-        return;
-      }
-
-      if (e.key === "F8" && e.shiftKey) {
-        e.preventDefault();
-        navigateDocumentSymbol("previous");
-        return;
-      }
-
-
-      if (!isDebugSessionRunning || !isDebugPaused) {
-        return;
-      }
-
-      if (e.key === "F10") {
-        e.preventDefault();
-        void debuggerStepOver();
-        return;
-      }
-
-      if (e.key === "F11" && !e.shiftKey) {
-        e.preventDefault();
-        void debuggerStepInto();
-        return;
-      }
-
-      if (e.key === "F11" && e.shiftKey) {
-        e.preventDefault();
-        void debuggerStepOut();
-      }
-    };
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [
-    activeFilePath,
-    handleToggleBreakpoint,
-    handleToggleDebugPause,
-    handleStartDebug,
-    handleStopDebug,
-    isDebugSessionBusy,
-    isDebugPaused,
-    isDebugSessionRunning,
-    navigateDocumentSymbol,
-    runStatus,
-    selectedLine,
-    workspacePath,
-  ]);
 
   const handleRunFileWithRace = useCallback(() => {
     if (runtimeAvailability === "unavailable") {
@@ -1654,13 +1542,19 @@ function EditorShell() {
     setBottomPanelTab("logs");
   }, [clearPendingRunOutputBuffer]);
 
-  const handleStopRun = useCallback(() => {
-    // Clear the active run ID immediately so trailing exit events from the
-    // stopped run cannot attach to the next run.
-    activeRunIdRef.current = null;
-    clearPendingRunOutputBuffer();
-    void stopCurrentRun();
-    setRunStatus((current) => (current === "running" ? "done" : current));
+  const handleStopRun = useCallback(async () => {
+    if (runStopInFlightRef.current) return;
+    runStopInFlightRef.current = true;
+    const stoppedId = activeRunIdRef.current;
+    try {
+      const response = await stopCurrentRun();
+      if (!response.ok) throw new Error(response.error?.message ?? "Unable to stop the active run.");
+      if (activeRunIdRef.current === stoppedId) {
+        activeRunIdRef.current = null;
+        clearPendingRunOutputBuffer();
+        setRunStatus((current) => current === "running" ? "done" : current);
+      }
+    } finally { runStopInFlightRef.current = false; }
   }, [clearPendingRunOutputBuffer]);
 
   const handleEditorChange = useCallback((value: string) => {
@@ -2035,6 +1929,30 @@ function EditorShell() {
    */
   const surfaceKey = workspacePath ? "workspace-shell" : null;
 
+  const commandBusy = documentTransitionRef.current || branchMutationRef.current || runStopInFlightRef.current;
+  const debugStartDisabled = !workspacePath || !isGoFile(activeFilePath) || isDebugSessionBusy || debugStopInFlightRef.current || runStatus === "running" || commandBusy;
+  const runDisabled = !workspacePath || !isGoFile(activeFilePath) || runStatus === "running" || isDebugSessionBusy || commandBusy;
+  const commands: Command[] = [
+    { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
+    { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: handleOpenWorkspace },
+    { id: "file.quickOpen", title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); } },
+    { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
+    { id: "workspace.search", title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
+    { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
+    { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
+    { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
+    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
+    { id: "debug.stop", title: "Stop Debugging", shortcut: "Shift+F5", disabled: !isDebugSessionRunning ? "No active debug session." : undefined, run: handleStopDebug },
+    { id: "debug.breakpoint", title: "Toggle Breakpoint", shortcut: "F9", disabled: !activeFilePath || !selectedLine ? "Place the cursor on a source line." : undefined, run: () => selectedLine ? handleToggleBreakpoint(selectedLine) : undefined },
+    { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepOver },
+    { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepInto },
+    { id: "debug.stepOut", title: "Debug: Step Out", shortcut: "Shift+F11", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepOut },
+    { id: "navigation.nextSymbol", title: "Next Document Symbol", shortcut: "F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("next") },
+    { id: "navigation.previousSymbol", title: "Previous Document Symbol", shortcut: "Shift+F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("previous") },
+  ];
+  const executeCommand = useCommandRegistry(commands, setFileError);
+
   return (
     <div
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
@@ -2047,12 +1965,13 @@ function EditorShell() {
           aria-label="Find workspace files"
           title="Find a file (Ctrl+P)"
           disabled={!workspacePath}
-          onClick={() => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); }}
+          onClick={() => void executeCommand("file.quickOpen")}
         >
           <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
           <span>{workspacePath ? workspacePath.split(/[\\/]/).pop() : "Your next workspace"}</span>
           <kbd>Ctrl P</kbd>
         </button>
+        <button type="button" aria-label="Commands" title="Command Palette (Ctrl+Shift+P / Cmd+Shift+P)" className="rounded px-2 py-1 text-xs text-(--subtext0) hover:bg-(--bg-hover)" onClick={() => void executeCommand("workbench.commands")}>Commands</button>
         <ThemeSwitcher />
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -2184,7 +2103,7 @@ function EditorShell() {
                       ? "cursor-not-allowed border-[var(--border-subtle)] text-[var(--overlay2)]"
                       : "border-[rgba(235,160,172,0.3)] text-[var(--maroon)] hover:bg-[rgba(235,160,172,0.1)]"
                   }`}
-                  onClick={handleStartDebug}
+                  onClick={() => void executeCommand("debug.startOrContinue")}
                   disabled={runStatus === "running" || isDebugSessionBusy}
                 >
                   Start Debug Session
@@ -2198,7 +2117,7 @@ function EditorShell() {
                       type="button"
                       aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
-                      onClick={handleToggleDebugPause}
+                      onClick={() => void executeCommand("debug.startOrContinue")}
                     >
                       {isDebugPaused ? "Continue" : "Pause"}
                     </button>
@@ -2206,7 +2125,7 @@ function EditorShell() {
                       type="button"
                       aria-label="Stop debugging"
                       className="rounded-md border border-[rgba(231,130,132,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--red)] hover:bg-[rgba(231,130,132,0.12)]"
-                      onClick={() => void handleStopDebug()}
+                      onClick={() => void executeCommand("debug.stop")}
                     >
                       Stop
                     </button>
@@ -2218,7 +2137,7 @@ function EditorShell() {
                         type="button"
                         aria-label="Step over"
                         className="rounded-md border border-[rgba(129,200,190,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--teal)] hover:bg-[rgba(129,200,190,0.12)]"
-                        onClick={() => void debuggerStepOver()}
+                        onClick={() => void executeCommand("debug.stepOver")}
                       >
                         Over
                       </button>
@@ -2226,7 +2145,7 @@ function EditorShell() {
                         type="button"
                         aria-label="Step into"
                         className="rounded-md border border-[rgba(229,200,144,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--yellow)] hover:bg-[rgba(229,200,144,0.12)]"
-                        onClick={() => void debuggerStepInto()}
+                        onClick={() => void executeCommand("debug.stepInto")}
                       >
                         Into
                       </button>
@@ -2234,7 +2153,7 @@ function EditorShell() {
                         type="button"
                         aria-label="Step out"
                         className="rounded-md border border-[rgba(239,159,118,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
-                        onClick={() => void debuggerStepOut()}
+                        onClick={() => void executeCommand("debug.stepOut")}
                       >
                         Out
                       </button>
@@ -2282,9 +2201,9 @@ function EditorShell() {
                       onClose={() => setIsBottomPanelOpen(false)}
                       isRunning={runStatus === "running"}
                       onClear={handleClearOutput}
-                      onRun={handleRunFileStandard}
-                      onRunWithRace={handleRunFileWithRace}
-                      onStop={handleStopRun}
+                      onRun={() => void executeCommand("go.run")}
+                      onRunWithRace={() => void executeCommand("go.race")}
+                      onStop={() => void executeCommand("go.stop")}
                       canRunWithRace={runtimeAvailability !== "unavailable"}
                     />
                   </Suspense>
@@ -2307,7 +2226,7 @@ function EditorShell() {
                     className={`flex size-7 cursor-pointer items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] transition-colors duration-100 ease-out hover:bg-[var(--bg-hover)] ${
                       isOpening ? "cursor-not-allowed opacity-60" : ""
                     }`}
-                    onClick={handleOpenWorkspace}
+                    onClick={() => void executeCommand("workspace.open")}
                     type="button"
                     aria-label="Open workspace folder"
                     title="Choose a Go workspace folder."
@@ -2323,7 +2242,7 @@ function EditorShell() {
                           ? "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
-                      onClick={handleRunFileStandard}
+                      onClick={() => void executeCommand("go.run")}
                       type="button"
                       aria-label="Run active Go file"
                       title="Run the active Go file and show output in the terminal panel."
@@ -2341,7 +2260,7 @@ function EditorShell() {
                           ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
-                      onClick={handleRunFileWithRace}
+                      onClick={() => void executeCommand("go.race")}
                       type="button"
                       aria-label="Run active Go file with race detector"
                       title="Run the active Go file with the Go race detector and surface confirmed race findings."
@@ -2361,7 +2280,7 @@ function EditorShell() {
                           ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
                           : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
                       }`}
-                      onClick={() => void handleStartDebug()}
+                      onClick={() => void executeCommand("debug.startOrContinue")}
                       type="button"
                       aria-label="Debug active Go file"
                       title="Start a debug session for the active Go file."
@@ -2506,7 +2425,7 @@ function EditorShell() {
                             onInteractionAnchorChange={setInteractionAnchor}
                             onCounterpartAnchorChange={setCounterpartAnchor}
                             onViewportRangeChange={setVisibleRange}
-                            onSave={handleSaveFile}
+                            onSave={(content) => { latestEditorContentRef.current = content; void executeCommand("file.save"); }}
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
                             externalSearchQuery={editorHighlightQuery}
@@ -2549,6 +2468,7 @@ function EditorShell() {
         />
       </div>
 
+      {isCommandPaletteOpen && <CommandPalette commands={commands} execute={executeCommand} onClose={() => setIsCommandPaletteOpen(false)} />}
       {isQuickOpenOpen && (
         <Dialog open={true} onOpenChange={setIsQuickOpenOpen} ariaLabel="Quick Open" className="fixed inset-0 z-50 m-0 flex h-dvh w-full justify-center bg-black/40 pt-20" panelClassName="w-full max-w-2xl">
           <div className="pointer-events-auto w-full max-w-2xl px-4">
