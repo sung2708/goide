@@ -1,6 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
-  LanguageQuery, LanguageQueryResult, LanguageCancelRequest,
+  LanguageQuery, LanguageQueryResult, LanguageCancelRequest, SignatureHelp,
   LanguageFormatRequest, LanguageEditPlan,
   LanguageRenameRequest,
   WorkspaceFileInfo,
@@ -49,6 +49,11 @@ function hasTauriInternals(): boolean {
 export async function queryWorkspaceLanguage(request: LanguageQuery): Promise<ApiResponse<LanguageQueryResult>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Language queries require the desktop app and gopls." } };
   return invoke<ApiResponse<LanguageQueryResult>>("query_workspace_language", { request });
+}
+
+export async function queryWorkspaceSignature(request: LanguageQuery): Promise<ApiResponse<SignatureHelp | null>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "signature_unavailable", message: "Signature help requires the desktop gopls integration." } };
+  return invoke<ApiResponse<SignatureHelp | null>>("query_workspace_signature", { request });
 }
 export async function cancelLanguageRequest(request: LanguageCancelRequest): Promise<ApiResponse<boolean>> {
   if (!hasTauriInternals()) return { ok: true, data: false };

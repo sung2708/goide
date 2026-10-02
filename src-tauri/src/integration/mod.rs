@@ -20,3 +20,4 @@ pub mod rename_symbol;
 pub mod replacement;
 pub mod search;
 pub mod shell;
+pub mod signature_help;

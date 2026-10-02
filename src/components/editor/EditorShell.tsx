@@ -13,6 +13,7 @@ import { buildProblems, diagnosticProblems, type Problem } from "../../features/
 import { useLanguageQueries } from "../../features/language/useLanguageQueries";
 import LanguageResults from "../../features/language/LanguageResults";
 import { useEditorHover } from "../../features/language/useEditorHover";
+import { useEditorSignature } from "../../features/language/useEditorSignature";
 import { useLanguageEditReview } from "../../features/language/useLanguageEditReview";
 import LanguageEditReview from "../../features/language/LanguageEditReview";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
@@ -386,6 +387,8 @@ function EditorShell() {
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
   const language = useLanguageQueries(documentSnapshot, cursorOffset, setFileError);
   const requestEditorHover = useEditorHover(documentSnapshot, setFileError);
+  const requestEditorSignature = useEditorSignature(documentSnapshot, setFileError);
+  const [signatureRequestTrigger, setSignatureRequestTrigger] = useState(0);
   const languageEdits = useLanguageEditReview(documents, documentSnapshot, () => {
     if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
     setProblemRun(null);
@@ -2012,6 +2015,7 @@ function EditorShell() {
     { id: "workspace.search", title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
     { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
     ...(["definition", "references", "hover"] as const).map(kind => ({ id: `language.${kind}`, title: kind === "definition" ? "Go to Definition" : kind === "references" ? "Find References" : "Show Symbol Information", shortcut: kind === "definition" ? "F12" : kind === "references" ? "Shift+F12" : undefined, disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => language.query(kind) })),
+    { id: "language.signature", title: "Show Signature Help", shortcut: "Mod+Shift+Space", disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => setSignatureRequestTrigger(value => value + 1) },
     { id: "language.format", title: "Format Document", shortcut: "Shift+Alt+f", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.format },
     { id: "language.imports", title: "Organize Imports", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.organizeImports },
     { id: "language.rename", title: "Rename Symbol", shortcut: "F2", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: languageEdits.beginRename },
@@ -2531,6 +2535,8 @@ function EditorShell() {
                             onChange={handleEditorChange}
                             onRequestCompletions={handleRequestCompletions}
                             onRequestHover={requestEditorHover}
+                            onRequestSignature={requestEditorSignature}
+                            signatureRequestTrigger={signatureRequestTrigger}
                             externalSearchQuery={editorHighlightQuery}
                             onDocumentSymbolsChange={(symbols) => {
                               setDocumentSymbols(symbols);

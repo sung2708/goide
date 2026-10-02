@@ -9,6 +9,8 @@ it("matches platform modifiers exactly without stealing Alt or shifted editor sh
   expect(matchesShortcut(event, "Mod+Shift+p", true)).toBe(false);
   expect(matchesShortcut({ ...event, ctrlKey: false, metaKey: true }, "Mod+Shift+p", true)).toBe(true);
   expect(matchesShortcut({ ...event, altKey: true }, "Mod+Shift+p", false)).toBe(false);
+  expect(matchesShortcut({ ...event, key: " " }, "Mod+Shift+Space", false)).toBe(true);
+  expect(matchesShortcut({ ...event, key: " ", ctrlKey: false, metaKey: true }, "Mod+Shift+Space", true)).toBe(true);
 });
 it("rejects disabled commands and surfaces native failures through the shared executor", async () => {
   const run = vi.fn(); await expect(runCommand({ id: "save", title: "Save", disabled: "Read only", run })).rejects.toThrow("Read only"); expect(run).not.toHaveBeenCalled();

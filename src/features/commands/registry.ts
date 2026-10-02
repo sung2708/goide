@@ -5,7 +5,8 @@ export type Command = {
 export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">, shortcut: string, mac: boolean): boolean {
   const parts = shortcut.toLowerCase().split("+");
   const modifiers = new Set(parts.slice(0, -1));
-  return event.key.toLowerCase() === parts[parts.length - 1]
+  const key = event.key === " " ? "space" : event.key.toLowerCase();
+  return key === parts[parts.length - 1]
     && event.ctrlKey === (modifiers.has("ctrl") || (!mac && modifiers.has("mod")))
     && event.metaKey === (modifiers.has("meta") || (mac && modifiers.has("mod")))
     && event.shiftKey === modifiers.has("shift") && event.altKey === modifiers.has("alt");
