@@ -5,13 +5,20 @@ mod ui_bridge;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .manage(integration::fs_watch::FsWatchService::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            ui_bridge::git_commands::git_repository_status,
+            ui_bridge::git_commands::git_file_diff,
+            ui_bridge::git_commands::git_mutate,
+            ui_bridge::git_commands::git_history_page,
+            ui_bridge::document_commands::get_workspace_file_state,
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
             ui_bridge::commands::write_workspace_file,
             ui_bridge::commands::start_workspace_fs_watch,
+            ui_bridge::commands::stop_workspace_fs_watch,
             ui_bridge::commands::create_workspace_file,
             ui_bridge::commands::create_workspace_folder,
             ui_bridge::commands::delete_workspace_entry,
@@ -47,6 +54,20 @@ pub fn run() {
             ui_bridge::commands::resize_shell_session,
             ui_bridge::commands::dispose_shell_session
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                use tauri::Manager;
+                if let Err(error) = app
+                    .state::<integration::fs_watch::FsWatchService>()
+                    .stop_all()
+                {
+                    eprintln!("Filesystem sync shutdown failed: {error}");
+                }
+                if let Err(error) = integration::lsp_manager::shutdown_lsp_session() {
+                    eprintln!("Language server shutdown failed: {error}");
+                }
+            }
+        });
 }

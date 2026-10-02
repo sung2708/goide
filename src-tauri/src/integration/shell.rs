@@ -325,7 +325,9 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             .map(|handle| {
                 handle.block_on(async {
                     let mut guard = exit_store.lock().await;
-                    guard.surface_to_shell.retain(|_, v| v != &output_session_id);
+                    guard
+                        .surface_to_shell
+                        .retain(|_, v| v != &output_session_id);
                     guard.sessions.remove(&output_session_id).is_some()
                 })
             })
@@ -637,9 +639,7 @@ mod tests {
         // Verify the underlying map uses `surface_to_shell` naming.
         let guard = store.lock().await;
         assert!(
-            guard
-                .surface_to_shell
-                .contains_key("surface:panel-shell"),
+            guard.surface_to_shell.contains_key("surface:panel-shell"),
             "surface_to_shell map must contain the registered surface key"
         );
     }

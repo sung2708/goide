@@ -56,13 +56,20 @@ export async function readWorkspaceFile(
 export async function writeWorkspaceFile(
   workspaceRoot: string,
   relativePath: string,
-  content: string
+  content: string,
+  expectedContent?: string
 ): Promise<ApiResponse<void>> {
   return invoke<ApiResponse<void>>("write_workspace_file", {
     workspaceRoot,
     relativePath,
     content,
+    expectedContent: expectedContent ?? null,
   });
+}
+
+export async function getWorkspaceFileState(workspaceRoot: string, relativePath: string): Promise<ApiResponse<{ exists: boolean; content: string | null }>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "fs_state_unavailable", message: "File state checks require the desktop app." } };
+  return invoke("get_workspace_file_state", { workspaceRoot, relativePath });
 }
 
 export async function startWorkspaceFsWatch(
@@ -70,13 +77,20 @@ export async function startWorkspaceFsWatch(
 ): Promise<ApiResponse<StartWorkspaceFsWatchResponse>> {
   if (!hasTauriInternals()) {
     return {
-      ok: true,
-      data: { workspaceRoot, mode: "watch" },
+      ok: false,
+      error: { code: "fs_watch_unavailable", message: "Automatic filesystem sync requires the desktop app. Use Explorer refresh in the browser preview." },
     };
   }
   return invoke<ApiResponse<StartWorkspaceFsWatchResponse>>("start_workspace_fs_watch", {
     workspaceRoot,
   });
+}
+
+export async function stopWorkspaceFsWatch(watchId: string): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) {
+    return { ok: true };
+  }
+  return invoke<ApiResponse<void>>("stop_workspace_fs_watch", { watchId });
 }
 
 export async function analyzeActiveFileConcurrency(

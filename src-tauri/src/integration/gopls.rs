@@ -852,7 +852,7 @@ pub fn get_file_completions(
         }
     };
 
-    match get_file_completions_via_lsp(
+    let lsp_error = match get_file_completions_via_lsp(
         &workspace_path,
         &target_path,
         line,
@@ -868,10 +868,14 @@ pub fn get_file_completions(
             {
                 return Ok(Vec::new());
             }
+            error
         }
-    }
+    };
 
     let location = format!("{relative_path}:{line}:{column}");
+    if lsp_manager::is_shutting_down() {
+        return Err(lsp_error);
+    }
     let output = match run_gopls_completion(workspace_root, &location, file_content) {
         Ok(out) => out,
         Err(err) => {
@@ -883,7 +887,11 @@ pub fn get_file_completions(
     };
 
     if !output.status.success() {
-        return Ok(Vec::new());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(anyhow!(
+            "gopls completion failed: {lsp_error}; CLI fallback: {}",
+            stderr.lines().next().unwrap_or("command failed").trim()
+        ));
     }
 
     if output.stdout.is_empty() && output.stderr.is_empty() {
@@ -922,7 +930,22 @@ fn get_file_completions_via_lsp(
         lsp_manager::start_new_lsp_session(workspace_root, &mut guard)?
     };
 
-    let target_uri = path_to_file_uri(target_path);
+    let result = request_file_completions(session, target_path, line, column, file_content);
+    if result.is_err() {
+        // Drop a failed connection so the next request can start a fresh server.
+        *guard = None;
+    }
+    result
+}
+
+fn request_file_completions(
+    session: &mut lsp_manager::LspSession,
+    target_path: &Path,
+    line: usize,
+    column: usize,
+    file_content: &str,
+) -> Result<Vec<CompletionItem>> {
+    let target_uri = lsp_manager::path_to_file_uri(target_path)?;
 
     if !session.open_files.contains(&target_uri) {
         lsp_manager::write_lsp_notification_sync(
@@ -991,17 +1014,6 @@ fn get_file_completions_via_lsp(
         completion_response.ok_or_else(|| anyhow!("gopls completion failed after retries"))?;
     lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
     Ok(parse_lsp_completion_response(&completion_response))
-}
-
-fn path_to_file_uri(path: &Path) -> String {
-    let normalized = normalize_path_for_file_uri(&path.to_string_lossy())
-        .replace('\\', "/")
-        .replace(' ', "%20");
-    if normalized.starts_with("//") {
-        format!("file:{normalized}")
-    } else {
-        format!("file:///{normalized}")
-    }
 }
 
 #[cfg(windows)]
@@ -2326,16 +2338,21 @@ completion candidates:
     }
 
     #[test]
-    #[ignore = "requires unsandboxed gopls workspace access"]
+    #[ignore = "requires installed Go and gopls; run explicitly with --include-ignored"]
     fn gets_completions_from_gopls_lsp_when_available() {
-        if std_command("gopls").arg("version").output().is_err() {
-            return;
-        }
+        let version = std_command("gopls")
+            .arg("version")
+            .output()
+            .expect("install gopls before running this opt-in integration test");
+        assert!(version.status.success(), "gopls version command failed");
 
         let temp_dir = std::env::current_dir()
             .expect("current test directory")
             .join("target")
-            .join("goide_gopls_lsp_completion");
+            .join(format!(
+                "goide gopls # % tiếng Việt {}",
+                uuid::Uuid::new_v4()
+            ));
         let _ = fs::remove_dir_all(&temp_dir);
         fs::create_dir_all(&temp_dir).expect("create temp workspace");
         fs::write(
@@ -2369,5 +2386,57 @@ func main() {
                 .any(|item| item.label == "Println" || item.label == "Printf"),
             "expected fmt.Print* completion from gopls, got: {items:?}"
         );
+
+        let unsaved = source
+            .replace("\"fmt\"", "\"strings\"")
+            .replace("fmt.", "strings.");
+        let items = get_file_completions(
+            &temp_dir.to_string_lossy(),
+            "main.go",
+            6,
+            13,
+            None,
+            Some(&unsaved),
+        )
+        .expect("completion request for unsaved edits");
+        assert!(
+            items.iter().any(|item| item.label == "ToUpper"),
+            "expected strings.ToUpper completion from unsaved buffer, got: {items:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(temp_dir.join("main.go")).unwrap(),
+            source
+        );
+
+        // Simulate a real server crash, then verify cleanup and resynchronization.
+        {
+            let handle = lsp_manager::get_lsp_session();
+            let mut guard = handle.lock().unwrap();
+            let session = guard.as_mut().expect("active completion session");
+            session
+                ._child
+                .kill()
+                .expect("terminate test language server");
+            session._child.wait().expect("reap test language server");
+        }
+        assert!(get_file_completions_via_lsp(
+            &normalize_platform_pathbuf(temp_dir.canonicalize().unwrap()),
+            &normalize_platform_pathbuf(temp_dir.join("main.go").canonicalize().unwrap()),
+            6,
+            13,
+            &unsaved,
+        )
+        .is_err());
+        assert!(lsp_manager::get_lsp_session().lock().unwrap().is_none());
+        let recovered = get_file_completions(
+            &temp_dir.to_string_lossy(),
+            "main.go",
+            6,
+            13,
+            None,
+            Some(&unsaved),
+        )
+        .expect("completion after restarting a crashed gopls");
+        assert!(recovered.iter().any(|item| item.label == "ToUpper"));
     }
 }

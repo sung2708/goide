@@ -48,7 +48,6 @@ static DAP_SESSION_HANDLE: std::sync::OnceLock<Arc<Mutex<Option<DapSessionHandle
     std::sync::OnceLock::new();
 static RUNTIME_SIGNALS: std::sync::OnceLock<Arc<Mutex<RuntimeSignalStore>>> =
     std::sync::OnceLock::new();
-static FS_WATCH_SERVICE: std::sync::OnceLock<FsWatchService> = std::sync::OnceLock::new();
 
 #[derive(Default)]
 struct RuntimeSignalStore {
@@ -93,10 +92,6 @@ fn get_runtime_signals_handle() -> Arc<Mutex<RuntimeSignalStore>> {
     RUNTIME_SIGNALS
         .get_or_init(|| Arc::new(Mutex::new(RuntimeSignalStore::default())))
         .clone()
-}
-
-fn get_fs_watch_service() -> FsWatchService {
-    FS_WATCH_SERVICE.get_or_init(FsWatchService::new).clone()
 }
 
 fn is_blocked_wait_reason(wait_reason: &str) -> bool {
@@ -213,14 +208,19 @@ pub async fn write_workspace_file(
     workspace_root: String,
     relative_path: String,
     content: String,
+    expected_content: Option<String>,
 ) -> ApiResponse<()> {
     let result = tauri::async_runtime::spawn_blocking(move || {
-        fs::write_file(&workspace_root, &relative_path, &content)
+        match expected_content {
+            Some(expected) => crate::integration::document::save(&workspace_root, &relative_path, &content, &expected),
+            None => Err("A disk baseline is required to save an existing document.".to_string()),
+        }
     })
     .await;
 
     match result {
         Ok(Ok(())) => ApiResponse::ok(()),
+        Ok(Err(error)) if error.starts_with("external_file_conflict:") => ApiResponse::err("external_file_conflict", &error),
         Ok(Err(error)) => ApiResponse::err("fs_write_failed", &error.to_string()),
         Err(error) => ApiResponse::err("fs_write_failed", &error.to_string()),
     }
@@ -231,17 +231,30 @@ pub async fn start_workspace_fs_watch<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     workspace_root: String,
 ) -> ApiResponse<StartWorkspaceFsWatchResponseDto> {
-    let service = get_fs_watch_service();
+    use tauri::Manager;
+    let service = app.state::<FsWatchService>().inner().clone();
     let root = PathBuf::from(workspace_root);
     match service.start(app, &root).await {
         Ok(result) => ApiResponse::ok(StartWorkspaceFsWatchResponseDto {
             workspace_root: result.workspace_root,
+            watch_id: result.watch_id,
             mode: match result.mode {
                 FsWatchMode::Watch => WorkspaceFsSyncModeDto::Watch,
                 FsWatchMode::Polling => WorkspaceFsSyncModeDto::Polling,
             },
         }),
         Err(error) => ApiResponse::err("fs_watch_start_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
+pub fn stop_workspace_fs_watch(
+    service: tauri::State<'_, FsWatchService>,
+    watch_id: String,
+) -> ApiResponse<()> {
+    match service.stop(&watch_id) {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("fs_watch_stop_failed", &error.to_string()),
     }
 }
 
@@ -1492,9 +1505,22 @@ fn should_search_file(path: &Path) -> bool {
         .map(|value| value.to_ascii_lowercase());
     matches!(
         extension.as_deref(),
-        Some("go") | Some("mod") | Some("sum") | Some("md") | Some("txt") | Some("json")
-        | Some("yaml") | Some("yml") | Some("toml") | Some("rs") | Some("ts") | Some("tsx")
-        | Some("js") | Some("jsx") | Some("css") | Some("html")
+        Some("go")
+            | Some("mod")
+            | Some("sum")
+            | Some("md")
+            | Some("txt")
+            | Some("json")
+            | Some("yaml")
+            | Some("yml")
+            | Some("toml")
+            | Some("rs")
+            | Some("ts")
+            | Some("tsx")
+            | Some("js")
+            | Some("jsx")
+            | Some("css")
+            | Some("html")
     )
 }
 
@@ -2127,6 +2153,7 @@ pub async fn switch_workspace_branch(
     let result = tauri::async_runtime::spawn_blocking(move || {
         let root = resolve_workspace_root(&request.workspace_root)
             .map_err(|error| format!("git_branch_switch_failed::{error}"))?;
+        let _git_operation = crate::integration::git::mutation_lock(&root)?;
         execute_branch_switch(&root, request)?;
         build_workspace_branch_snapshot(&root)
             .map_err(|error| format!("git_branch_switch_failed::{error}"))
@@ -2407,9 +2434,9 @@ mod tests {
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,
         get_runtime_signals_handle, get_workspace_branches, map_debug_failure,
         map_debugger_state_snapshot, normalize_remote_branch_name, parse_remote_ref,
-        resolve_debug_target, search_with_git_grep, start_debug_session_internal_for_test, strip_error_prefix,
-        switch_workspace_branch, validate_completion_cursor, validate_go_analysis_path,
-        validate_go_completion_path, validate_go_diagnostics_path,
+        resolve_debug_target, search_with_git_grep, start_debug_session_internal_for_test,
+        strip_error_prefix, switch_workspace_branch, validate_completion_cursor,
+        validate_go_analysis_path, validate_go_completion_path, validate_go_diagnostics_path,
         validate_workspace_scoped_go_path, RuntimeSignalStore,
     };
     use crate::ui_bridge::types::{
@@ -2519,7 +2546,7 @@ mod tests {
         git(dir, &["init", "--bare"]);
     }
 
-    fn clone_git_repo(remote: &std::path::PathBuf, local: &std::path::PathBuf) {
+    fn clone_git_repo(remote: &std::path::Path, local: &std::path::PathBuf) {
         let output = Command::new("git")
             .args([
                 "clone",

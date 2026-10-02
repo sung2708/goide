@@ -5,12 +5,13 @@
  * component must render a local inline error message rather than propagating
  * the exception to the React tree (which would unmount the entire subtree).
  */
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Use inline factory with vi.fn() so hoisting works correctly.
 vi.mock("@xterm/xterm", () => ({
   Terminal: vi.fn().mockImplementation(() => ({
+    options: {},
     open: vi.fn(),
     write: vi.fn(),
     loadAddon: vi.fn(),
@@ -44,6 +45,7 @@ const MockedFitAddon = FitAddonAny as any as { mockImplementation: (impl: () => 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makeTerminalInstance(overrides: Record<string, any> = {}): any {
   return {
+    options: {},
     open: overrides.open ?? vi.fn(),
     write: vi.fn(),
     loadAddon: overrides.loadAddon ?? vi.fn(),
@@ -90,8 +92,29 @@ describe("TerminalSurface — default terminal options", () => {
       '"JetBrainsMono Nerd Font", "Cascadia Code PL", "Cascadia Mono", "Cascadia Code", "Fira Code", monospace'
     );
     expect(capturedOptions?.scrollback).toBe(10000);
-    expect((capturedOptions?.theme as Record<string, unknown>)?.background).toBe("#2e3440");
-    expect((capturedOptions?.theme as Record<string, unknown>)?.selectionBackground).toBe("#3a4355");
+    expect((capturedOptions?.theme as Record<string, unknown>)?.background).toBe("#101113");
+    expect((capturedOptions?.theme as Record<string, unknown>)?.selectionBackground).toBe("#303641");
+  });
+
+  it("updates colors in place when the workspace theme changes", async () => {
+    const instance = makeTerminalInstance();
+    MockedTerminal.mockImplementation(() => instance);
+    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    const view = render(<TerminalSurface />);
+    try {
+      document.documentElement.style.setProperty("--crust", "#f4f5f7");
+      document.documentElement.style.setProperty("--text", "#101113");
+      document.documentElement.dataset.theme = "light";
+      await waitFor(() => expect(instance.options.theme.background).toBe("#f4f5f7"));
+      expect(instance.options.theme.foreground).toBe("#101113");
+      expect(instance.dispose).not.toHaveBeenCalled();
+      expect(instance.open).toHaveBeenCalledTimes(1);
+    } finally {
+      view.unmount();
+      document.documentElement.style.removeProperty("--crust");
+      document.documentElement.style.removeProperty("--text");
+      delete document.documentElement.dataset.theme;
+    }
   });
 });
 

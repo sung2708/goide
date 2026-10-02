@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -19,6 +19,14 @@ vi.mock("../../lib/ipc/client", async () => {
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
   };
 });
+
+// This suite exercises workbench navigation. CodeMirror rendering and DOM
+// geometry are covered by the dedicated CodeEditor suite.
+vi.mock("./CodeEditor", () => ({
+  default: ({ value }: { value: string }) => (
+    <pre data-testid="opened-document">{value}</pre>
+  ),
+}));
 
 // xterm cannot run in jsdom (no matchMedia / canvas). Mock at the module level
 // so that LogsTerminalView (rendered inside BottomPanel) doesn't crash.
@@ -180,6 +188,9 @@ describe("EditorShell panels", () => {
     fireEvent.keyDown(quickOpenInput, { key: "ArrowDown" });
     fireEvent.keyDown(quickOpenInput, { key: "Enter" });
 
-    expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "pkg/helper.go");
+    await waitFor(() =>
+      expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "pkg/helper.go")
+    );
+    expect(await screen.findByTestId("opened-document")).toHaveTextContent("package main");
   });
 });

@@ -1,23 +1,23 @@
+mod snapshot;
+#[cfg(test)]
+mod tests;
+
 use anyhow::{Context, Result};
+use notify::{Config, EventKind, RecommendedWatcher, RecursiveMode, Watcher};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tauri::Emitter;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum FsWatchMode {
     Watch,
     Polling,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FsWatchEntryKind {
-    File,
-    Directory,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -43,44 +43,52 @@ pub struct WorkspaceFsChangedPayload {
     pub changes: Vec<FsWatchChange>,
 }
 
-#[derive(Debug, Clone)]
+type ChangeEmitter = Arc<dyn Fn(WorkspaceFsChangedPayload) -> Result<(), String> + Send + Sync>;
+type SnapshotCollector = Arc<dyn Fn(&Path) -> Result<snapshot::Snapshot> + Send + Sync>;
+
+#[derive(Clone, Default)]
 pub struct FsWatchService {
     state: Arc<Mutex<FsWatchServiceState>>,
-    native_watch_available_override: Option<bool>,
     force_watcher_start_failure: bool,
 }
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 struct FsWatchServiceState {
     workspaces: HashMap<PathBuf, WorkspaceWatchState>,
+    shutdown: bool,
 }
 
-#[derive(Debug)]
 struct WorkspaceWatchState {
-    mode: FsWatchMode,
+    // Each caller owns a lease, so late cleanup cannot stop a newer caller.
+    subscribers: HashSet<String>,
+    native_active: Arc<AtomicBool>,
+    _watcher: Option<RecommendedWatcher>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for WorkspaceWatchState {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FsWatchStartResult {
     pub workspace_root: String,
+    pub watch_id: String,
     pub mode: FsWatchMode,
 }
 
 impl FsWatchService {
     pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(FsWatchServiceState::default())),
-            native_watch_available_override: None,
-            force_watcher_start_failure: false,
-        }
+        Self::default()
     }
 
     #[cfg(test)]
-    pub fn new_for_test(native_watch_available: bool, force_watcher_start_failure: bool) -> Self {
+    fn new_for_test(force_watcher_start_failure: bool) -> Self {
         Self {
-            state: Arc::new(Mutex::new(FsWatchServiceState::default())),
-            native_watch_available_override: Some(native_watch_available),
             force_watcher_start_failure,
+            ..Self::default()
         }
     }
 
@@ -89,244 +97,244 @@ impl FsWatchService {
         app: tauri::AppHandle<R>,
         workspace_root: &Path,
     ) -> Result<FsWatchStartResult> {
-        let canonical_root = workspace_root.canonicalize().with_context(|| {
-            format!(
-                "workspace root does not exist: {}",
-                workspace_root.display()
-            )
-        })?;
-        let workspace_root_str = canonical_root.to_string_lossy().replace('\\', "/");
-
-        let mode = match self.try_start_watcher(&canonical_root).await {
-            Ok(()) => FsWatchMode::Watch,
-            Err(_) => FsWatchMode::Polling,
-        };
-
-        {
-            let mut guard = self.state.lock().await;
-            guard
-                .workspaces
-                .insert(canonical_root.clone(), WorkspaceWatchState { mode });
-        }
-
-        if mode == FsWatchMode::Polling {
-            self.spawn_polling_task(app, canonical_root.clone()).await;
-        }
-
-        Ok(FsWatchStartResult {
-            workspace_root: workspace_root_str,
-            mode,
-        })
+        self.start_with_emitter(
+            workspace_root.to_path_buf(),
+            Arc::new(move |payload| {
+                app.emit("workspace-fs-changed", payload)
+                    .map_err(|error| error.to_string())
+            }),
+        )
+        .await
     }
 
-    async fn try_start_watcher(&self, _workspace_root: &Path) -> Result<()> {
-        if !self
-            .native_watch_available_override
-            .unwrap_or_else(native_watch_is_available)
-        {
-            return Err(anyhow::anyhow!("native file watching unavailable"));
-        }
+    async fn start_with_emitter(
+        &self,
+        workspace_root: PathBuf,
+        emit: ChangeEmitter,
+    ) -> Result<FsWatchStartResult> {
+        let service = self.clone();
+        let runtime = tokio::runtime::Handle::current();
+        tokio::task::spawn_blocking(move || {
+            let root = workspace_root.canonicalize().with_context(|| {
+                format!(
+                    "workspace root does not exist: {}",
+                    workspace_root.display()
+                )
+            })?;
+            if !root.is_dir() {
+                anyhow::bail!("workspace root must be a directory");
+            }
+            let watch_id = uuid::Uuid::new_v4().to_string();
+            let mut state = service
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("filesystem sync state is poisoned"))?;
+            if state.shutdown {
+                anyhow::bail!("filesystem sync service is shutting down");
+            }
+            if let Some(existing) = state.workspaces.get_mut(&root) {
+                if !existing.task.is_finished() {
+                    existing.subscribers.insert(watch_id.clone());
+                    return Ok(FsWatchStartResult {
+                        workspace_root: display_root(&root),
+                        watch_id,
+                        mode: watch_mode(&existing.native_active),
+                    });
+                }
+            }
+            state.workspaces.remove(&root);
+            let native_active = Arc::new(AtomicBool::new(true));
+            let (sender, receiver) = mpsc::channel(1);
+            let watcher = match service.try_start_watcher(&root, sender, Arc::clone(&native_active))
+            {
+                Ok(watcher) => Some(watcher),
+                Err(error) => {
+                    eprintln!(
+                        "Native filesystem sync unavailable for {}: {error}; using polling",
+                        root.display()
+                    );
+                    native_active.store(false, Ordering::Release);
+                    None
+                }
+            };
+            // Subscribe before taking the baseline; queued changes close the startup gap.
+            let previous = snapshot::collect(&root)?;
+            let mode = watch_mode(&native_active);
+            let task = runtime.spawn(run_sync(
+                root.clone(),
+                previous,
+                receiver,
+                Arc::clone(&native_active),
+                emit,
+            ));
+            state.workspaces.insert(
+                root.clone(),
+                WorkspaceWatchState {
+                    subscribers: HashSet::from([watch_id.clone()]),
+                    native_active,
+                    _watcher: watcher,
+                    task,
+                },
+            );
+            Ok(FsWatchStartResult {
+                workspace_root: display_root(&root),
+                watch_id,
+                mode,
+            })
+        })
+        .await
+        .context("filesystem sync startup task failed")?
+    }
+
+    fn try_start_watcher(
+        &self,
+        root: &Path,
+        sender: mpsc::Sender<()>,
+        native_active: Arc<AtomicBool>,
+    ) -> Result<RecommendedWatcher> {
         if self.force_watcher_start_failure {
-            return Err(anyhow::anyhow!("failed to initialize native file watcher"));
+            anyhow::bail!("native watcher startup failed");
         }
+        let callback_root = root.to_path_buf();
+        let mut watcher = RecommendedWatcher::new(
+            move |result: notify::Result<notify::Event>| {
+                match result {
+                    Ok(event) => {
+                        // Read/access events generated by scans must not trigger another scan.
+                        if matches!(event.kind, EventKind::Access(_)) {
+                            return;
+                        }
+                        if !event.paths.is_empty()
+                            && event.paths.iter().all(|path| {
+                                path.strip_prefix(&callback_root)
+                                    .map(snapshot::is_ignored)
+                                    .unwrap_or(true)
+                            })
+                        {
+                            return;
+                        }
+                    }
+                    Err(error) => {
+                        if native_active.swap(false, Ordering::AcqRel) {
+                            eprintln!("Native filesystem watcher failed: {error}; using polling");
+                        }
+                    }
+                }
+                // One pending wakeup coalesces bursts without an unbounded event queue.
+                let _ = sender.try_send(());
+            },
+            Config::default().with_follow_symlinks(false),
+        )?;
+        watcher.watch(root, RecursiveMode::Recursive)?;
+        Ok(watcher)
+    }
+
+    pub fn stop(&self, watch_id: &str) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("filesystem sync state is poisoned"))?;
+        state.workspaces.retain(|_, workspace| {
+            workspace.subscribers.remove(watch_id);
+            !workspace.subscribers.is_empty()
+        });
         Ok(())
     }
 
-    async fn spawn_polling_task<R: tauri::Runtime>(
-        &self,
-        app: tauri::AppHandle<R>,
-        workspace_root: PathBuf,
-    ) {
-        let state = Arc::clone(&self.state);
-        tokio::spawn(async move {
-            let mut previous = collect_snapshot(&workspace_root).unwrap_or_default();
-            let mut interval = tokio::time::interval(Duration::from_millis(900));
-            loop {
-                interval.tick().await;
-
-                let mode_active = {
-                    let guard = state.lock().await;
-                    guard
-                        .workspaces
-                        .get(&workspace_root)
-                        .map(|entry| entry.mode == FsWatchMode::Polling)
-                        .unwrap_or(false)
-                };
-                if !mode_active {
-                    return;
-                }
-
-                let current = match collect_snapshot(&workspace_root) {
-                    Ok(snapshot) => snapshot,
-                    Err(_) => continue,
-                };
-
-                let changes = diff_snapshots(&previous, &current);
-                previous = current;
-                if changes.is_empty() {
-                    continue;
-                }
-
-                let payload = WorkspaceFsChangedPayload {
-                    workspace_root: workspace_root.to_string_lossy().replace('\\', "/"),
-                    changes,
-                };
-                let _ = app.emit("workspace-fs-changed", payload);
-            }
-        });
+    pub fn stop_all(&self) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("filesystem sync state is poisoned"))?;
+        state.shutdown = true;
+        state.workspaces.clear();
+        Ok(())
     }
 }
 
-fn native_watch_is_available() -> bool {
-    true
+fn watch_mode(native_active: &AtomicBool) -> FsWatchMode {
+    if native_active.load(Ordering::Acquire) {
+        FsWatchMode::Watch
+    } else {
+        FsWatchMode::Polling
+    }
 }
 
-fn collect_snapshot(workspace_root: &Path) -> Result<HashMap<PathBuf, FsWatchEntryKind>> {
-    let mut snapshot = HashMap::new();
-    collect_snapshot_recursive(workspace_root, workspace_root, &mut snapshot)?;
-    Ok(snapshot)
+fn display_root(root: &Path) -> String {
+    let raw = root.to_string_lossy().replace('\\', "/");
+    if let Some(unc) = raw.strip_prefix("//?/UNC/") {
+        format!("//{unc}")
+    } else {
+        raw.strip_prefix("//?/").unwrap_or(&raw).to_string()
+    }
 }
 
-fn collect_snapshot_recursive(
-    workspace_root: &Path,
-    current_dir: &Path,
-    snapshot: &mut HashMap<PathBuf, FsWatchEntryKind>,
-) -> Result<()> {
-    for entry in std::fs::read_dir(current_dir)
-        .with_context(|| format!("failed to read directory {}", current_dir.display()))?
-    {
-        let entry = entry.with_context(|| "failed to read directory entry")?;
-        let path = entry.path();
-        let metadata = entry
-            .metadata()
-            .with_context(|| format!("failed to read metadata for {}", path.display()))?;
-        let relative_path = match path.strip_prefix(workspace_root) {
-            Ok(value) => value.to_path_buf(),
-            Err(_) => continue,
+async fn run_sync(
+    root: PathBuf,
+    previous: snapshot::Snapshot,
+    receiver: mpsc::Receiver<()>,
+    native_active: Arc<AtomicBool>,
+    emit: ChangeEmitter,
+) {
+    run_sync_with_collector(
+        root,
+        previous,
+        receiver,
+        native_active,
+        emit,
+        Arc::new(snapshot::collect),
+    )
+    .await;
+}
+
+async fn run_sync_with_collector(
+    root: PathBuf,
+    mut previous: snapshot::Snapshot,
+    mut receiver: mpsc::Receiver<()>,
+    native_active: Arc<AtomicBool>,
+    emit: ChangeEmitter,
+    collect: SnapshotCollector,
+) {
+    let mut interval = tokio::time::interval(Duration::from_millis(900));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+    let mut scan_failed = false;
+    loop {
+        // Retry transient scan failures even if no further native event arrives.
+        if native_active.load(Ordering::Acquire) && !scan_failed {
+            if receiver.recv().await.is_none() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(150)).await;
+            while receiver.try_recv().is_ok() {}
+        } else {
+            interval.tick().await;
+        }
+        let scan_root = root.clone();
+        let collector = Arc::clone(&collect);
+        let current = match tokio::task::spawn_blocking(move || collector(&scan_root)).await {
+            Ok(Ok(snapshot)) => {
+                scan_failed = false;
+                snapshot
+            }
+            result => {
+                if !scan_failed {
+                    eprintln!("Filesystem sync scan failed for {}: {result:?}; retaining the previous snapshot", root.display());
+                    scan_failed = true;
+                }
+                continue;
+            }
         };
-        if relative_path.as_os_str().is_empty() {
-            continue;
-        }
-
-        if metadata.is_dir() {
-            snapshot.insert(relative_path.clone(), FsWatchEntryKind::Directory);
-            collect_snapshot_recursive(workspace_root, &path, snapshot)?;
-        } else if metadata.is_file() {
-            snapshot.insert(relative_path, FsWatchEntryKind::File);
-        }
-    }
-    Ok(())
-}
-
-pub fn diff_snapshots(
-    previous: &HashMap<PathBuf, FsWatchEntryKind>,
-    current: &HashMap<PathBuf, FsWatchEntryKind>,
-) -> Vec<FsWatchChange> {
-    let mut changes = Vec::new();
-
-    for (path, current_kind) in current {
-        match previous.get(path) {
-            None => changes.push(FsWatchChange {
-                kind: FsWatchChangeKindDto::Create,
-                relative_path: path.to_string_lossy().replace('\\', "/"),
-                is_dir: *current_kind == FsWatchEntryKind::Directory,
-            }),
-            Some(previous_kind) if previous_kind != current_kind => {
-                changes.push(FsWatchChange {
-                    kind: FsWatchChangeKindDto::Modify,
-                    relative_path: path.to_string_lossy().replace('\\', "/"),
-                    is_dir: *current_kind == FsWatchEntryKind::Directory,
-                });
+        let changes = snapshot::diff(&previous, &current);
+        previous = current;
+        if !changes.is_empty() {
+            if let Err(error) = emit(WorkspaceFsChangedPayload {
+                workspace_root: display_root(&root),
+                changes,
+            }) {
+                eprintln!("Filesystem sync event delivery failed: {error}");
+                return;
             }
-            _ => {}
         }
-    }
-
-    for (path, previous_kind) in previous {
-        if current.contains_key(path) {
-            continue;
-        }
-        changes.push(FsWatchChange {
-            kind: FsWatchChangeKindDto::Delete,
-            relative_path: path.to_string_lossy().replace('\\', "/"),
-            is_dir: *previous_kind == FsWatchEntryKind::Directory,
-        });
-    }
-
-    changes
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::collections::HashMap;
-    use std::path::{Path, PathBuf};
-
-    fn snapshot(paths: &[(&str, bool)]) -> HashMap<PathBuf, FsWatchEntryKind> {
-        paths
-            .iter()
-            .map(|(path, is_dir)| {
-                (
-                    PathBuf::from(path),
-                    if *is_dir {
-                        FsWatchEntryKind::Directory
-                    } else {
-                        FsWatchEntryKind::File
-                    },
-                )
-            })
-            .collect()
-    }
-
-    #[tokio::test]
-    async fn fs_watch_prefers_watch_when_watcher_starts_successfully() {
-        let service = FsWatchService::new_for_test(true, false);
-        let mode = service
-            .try_start_watcher(Path::new("."))
-            .await
-            .map(|_| FsWatchMode::Watch)
-            .unwrap_or(FsWatchMode::Polling);
-        assert_eq!(mode, FsWatchMode::Watch);
-    }
-
-    #[tokio::test]
-    async fn fs_watch_falls_back_to_polling_when_watcher_start_fails() {
-        let service = FsWatchService::new_for_test(true, true);
-        let mode = service
-            .try_start_watcher(Path::new("."))
-            .await
-            .map(|_| FsWatchMode::Watch)
-            .unwrap_or(FsWatchMode::Polling);
-        assert_eq!(mode, FsWatchMode::Polling);
-    }
-
-    #[tokio::test]
-    async fn fs_watch_falls_back_to_polling_when_native_watch_is_unavailable() {
-        let service = FsWatchService::new_for_test(false, false);
-        let mode = service
-            .try_start_watcher(Path::new("."))
-            .await
-            .map(|_| FsWatchMode::Watch)
-            .unwrap_or(FsWatchMode::Polling);
-        assert_eq!(mode, FsWatchMode::Polling);
-    }
-
-    #[test]
-    fn polling_diff_reports_created_and_deleted_paths() {
-        let previous = snapshot(&[("main.go", false), ("pkg", true), ("old.go", false)]);
-        let current = snapshot(&[("main.go", false), ("pkg", true), ("new.go", false)]);
-
-        let changes = diff_snapshots(&previous, &current);
-
-        assert!(changes.iter().any(|change| {
-            change.relative_path == "new.go" && change.kind == FsWatchChangeKindDto::Create
-        }));
-        assert!(changes.iter().any(|change| {
-            change.relative_path == "old.go" && change.kind == FsWatchChangeKindDto::Delete
-        }));
-        assert!(
-            changes.iter().all(|change| change.relative_path != "pkg"),
-            "unchanged directories must not be reported as external deltas"
-        );
     }
 }

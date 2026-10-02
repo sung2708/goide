@@ -346,7 +346,8 @@ describe("EditorShell diagnostics", () => {
     expect(writeWorkspaceFileMock).toHaveBeenCalledWith(
       "C:/workspace",
       "main.go",
-      "package main\nfunc main() {\n"
+      "package main\nfunc main() {\n",
+      "package main\n"
     );
   }, 15000);
 
