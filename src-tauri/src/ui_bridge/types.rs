@@ -560,6 +560,18 @@ pub struct ShellExitPayloadDto {
     pub selected_shell: Option<String>,
 }
 
+pub use crate::integration::git::{
+    CommitDetails as GitCommitDetailsDto, ConflictContent as GitConflictContentDto,
+    FileDiff as GitFileDiffDto, HistoryPage as GitHistoryPageDto, Mutation as GitMutationDto,
+    RepositoryStatus as GitRepositoryStatusDto,
+};
+pub use crate::integration::replacement::{
+    ReplacementPlan as ReplacementPlanDto, ReplacementRequest as ReplacementRequestDto,
+};
+pub use crate::integration::search::{
+    SearchOptions as SearchOptionsDto, SearchReport as SearchReportDto,
+};
+
 #[cfg(test)]
 mod tests {
     use super::{EnsureShellSessionRequestDto, ShellExitPayloadDto, ShellHealthDto};
@@ -600,14 +612,3 @@ mod tests {
         assert_eq!(json["workspaceRoot"], "/workspace");
     }
 }
-pub use crate::integration::git::{
-    CommitDetails as GitCommitDetailsDto, ConflictContent as GitConflictContentDto,
-    FileDiff as GitFileDiffDto, HistoryPage as GitHistoryPageDto, Mutation as GitMutationDto,
-    RepositoryStatus as GitRepositoryStatusDto,
-};
-pub use crate::integration::replacement::{
-    ReplacementPlan as ReplacementPlanDto, ReplacementRequest as ReplacementRequestDto,
-};
-pub use crate::integration::search::{
-    SearchOptions as SearchOptionsDto, SearchReport as SearchReportDto,
-};

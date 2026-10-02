@@ -10,12 +10,13 @@ mod windows {
         System::{
             JobObjects::{
                 AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
-                SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+                SetInformationJobObject, TerminateJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
                 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
             },
             Threading::GetCurrentProcess,
         },
     };
+    #[derive(Debug)]
     pub struct Job(OwnedHandle);
     impl Job {
         pub fn new() -> Result<Self, String> {
@@ -52,6 +53,13 @@ mod windows {
             }
             Ok(())
         }
+        pub fn terminate(&self) -> Result<(), String> {
+            // SAFETY: This handle owns only its explicitly assigned process tree.
+            if unsafe { TerminateJobObject(self.0.as_raw_handle() as HANDLE, 1) } == 0 {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            Ok(())
+        }
     }
     pub fn install() -> Result<(), String> {
         static APP_JOB: OnceLock<Result<Job, String>> = OnceLock::new();
@@ -69,6 +77,76 @@ mod windows {
 }
 #[cfg(windows)]
 pub use windows::{install, Job};
+
+#[derive(Debug)]
+pub struct OwnedChild {
+    identity: uuid::Uuid,
+    child: tokio::process::Child,
+    #[cfg(windows)]
+    tree: Job,
+    #[cfg(unix)]
+    process_group: u32,
+}
+impl OwnedChild {
+    #[allow(unused_mut)] // Windows registration failure must terminate/reap the child.
+    pub async fn new(mut child: tokio::process::Child) -> Result<Self, String> {
+        #[cfg(windows)]
+        let tree = match Job::new().and_then(|job| {
+            job.assign(
+                child
+                    .raw_handle()
+                    .ok_or("Owned child has no process handle")?,
+            )?;
+            Ok(job)
+        }) {
+            Ok(job) => job,
+            Err(error) => {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+                return Err(format!("Unable to own process tree: {error}"));
+            }
+        };
+        #[cfg(unix)]
+        let process_group = child.id().ok_or("Owned child has no process group")?;
+        Ok(Self {
+            identity: uuid::Uuid::new_v4(),
+            child,
+            #[cfg(windows)]
+            tree,
+            #[cfg(unix)]
+            process_group,
+        })
+    }
+    pub async fn stop(&mut self) -> Result<(), String> {
+        #[cfg(windows)]
+        self.tree.terminate()?;
+        crate::integration::process::kill_process_group(&mut self.child)
+            .await
+            .map_err(|e| e.to_string())
+    }
+    pub fn identity(&self) -> uuid::Uuid {
+        self.identity
+    }
+}
+impl std::ops::Deref for OwnedChild {
+    type Target = tokio::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.child
+    }
+}
+impl std::ops::DerefMut for OwnedChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.child
+    }
+}
+#[cfg(unix)]
+impl Drop for OwnedChild {
+    fn drop(&mut self) {
+        let _ = crate::integration::command::std_command("kill")
+            .args(["-KILL", "--", &format!("-{}", self.process_group)])
+            .output();
+    }
+}
 #[cfg(not(windows))]
 pub fn install() -> Result<(), String> {
     Ok(())

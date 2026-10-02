@@ -1,4 +1,5 @@
 use crate::integration::command::tokio_command;
+use crate::integration::process_job::OwnedChild;
 use anyhow::{anyhow, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -8,7 +9,6 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::TcpStream;
-use tokio::process::Child;
 use tokio::sync::mpsc;
 use tokio::time::timeout;
 
@@ -58,7 +58,7 @@ fn normalize_platform_path_for_dap(path: &str) -> String {
 
 #[derive(Debug)]
 pub struct DapProcess {
-    pub child: Child,
+    pub child: OwnedChild,
     pub listen_addr: SocketAddr,
 }
 
@@ -560,7 +560,7 @@ pub(crate) async fn spawn_dlv_dap_with(
     let mut dap_command = tokio_command(command);
     #[cfg(unix)]
     dap_command.process_group(0);
-    let mut child = dap_command
+    let child = dap_command
         .args(args)
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())
@@ -568,10 +568,15 @@ pub(crate) async fn spawn_dlv_dap_with(
         .kill_on_drop(true)
         .spawn()
         .with_context(|| format!("failed to spawn `{command}` — is it installed and on PATH?"))?;
+    let mut child = OwnedChild::new(child)
+        .await
+        .map_err(|error| anyhow!(error))?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let (tx, mut rx) = mpsc::unbounded_channel::<String>();
+    // Only the first listen address is needed. Flooding startup output must not
+    // allocate an unbounded queue or block draining either pipe.
+    let (tx, mut rx) = mpsc::channel::<SocketAddr>(1);
 
     if let Some(reader) = stdout {
         let tx_stdout = tx.clone();
@@ -588,10 +593,8 @@ pub(crate) async fn spawn_dlv_dap_with(
     drop(tx);
 
     let listen_addr = timeout(DAP_READY_TIMEOUT, async move {
-        while let Some(line) = rx.recv().await {
-            if let Some(addr) = extract_listen_addr(&line) {
-                return Ok::<SocketAddr, anyhow::Error>(addr);
-            }
+        if let Some(addr) = rx.recv().await {
+            return Ok::<SocketAddr, anyhow::Error>(addr);
         }
         Err(anyhow!("`dlv dap` exited before reporting listen address"))
     })
@@ -599,7 +602,7 @@ pub(crate) async fn spawn_dlv_dap_with(
     .context("timed out waiting for `dlv dap` listen address")??;
 
     if !is_local_loopback(listen_addr) {
-        let _ = child.kill().await;
+        child.stop().await.map_err(|error| anyhow!(error))?;
         return Err(anyhow!(
             "refusing non-local delve endpoint: {listen_addr}; expected 127.0.0.1"
         ));
@@ -608,14 +611,16 @@ pub(crate) async fn spawn_dlv_dap_with(
     Ok(DapProcess { child, listen_addr })
 }
 
-async fn forward_lines<R>(reader: BufReader<R>, tx: mpsc::UnboundedSender<String>)
+async fn forward_lines<R>(reader: BufReader<R>, tx: mpsc::Sender<SocketAddr>)
 where
     R: AsyncRead + Unpin,
 {
-    let mut lines = reader.lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let _ = tx.send(line);
-    }
+    let _ = super::output::stream_lines(reader, |line| {
+        if let Some(addr) = extract_listen_addr(&line) {
+            let _ = tx.try_send(addr);
+        }
+    })
+    .await;
 }
 
 fn extract_listen_addr(line: &str) -> Option<SocketAddr> {
@@ -644,12 +649,22 @@ async fn write_dap_message<W: AsyncWriteExt + Unpin>(writer: &mut W, value: &Val
 
 async fn read_dap_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Value> {
     let mut content_length: Option<usize> = None;
+    let mut header_bytes = 0usize;
+    const HEADER_LIMIT: usize = 16 * 1024;
+    const BODY_LIMIT: usize = 16 * 1024 * 1024;
 
     loop {
         let mut line = String::new();
-        let read = reader.read_line(&mut line).await?;
+        let read = (&mut *reader)
+            .take((HEADER_LIMIT - header_bytes + 1) as u64)
+            .read_line(&mut line)
+            .await?;
         if read == 0 {
             return Err(anyhow!("DAP stream closed"));
+        }
+        header_bytes += read;
+        if header_bytes > HEADER_LIMIT {
+            return Err(anyhow!("DAP header exceeds 16 KiB limit"));
         }
 
         let trimmed = line.trim_end_matches(['\r', '\n']);
@@ -664,6 +679,9 @@ async fn read_dap_message<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Val
     }
 
     let len = content_length.ok_or_else(|| anyhow!("DAP message missing Content-Length header"))?;
+    if len > BODY_LIMIT {
+        return Err(anyhow!("DAP message exceeds 16 MiB limit"));
+    }
     let mut body = vec![0u8; len];
     reader.read_exact(&mut body).await?;
     let payload = serde_json::from_slice::<Value>(&body)?;
@@ -679,6 +697,38 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
+
+    #[tokio::test]
+    async fn dap_rejects_oversized_headers_and_bodies_before_allocation() {
+        let header = format!("X-Noise: {}", "x".repeat(32 * 1024));
+        let mut reader = BufReader::new(header.as_bytes());
+        assert!(read_dap_message(&mut reader)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("header exceeds"));
+        let mut reader = BufReader::new(b"Content-Length: 16777217\r\n\r\n".as_slice());
+        assert!(read_dap_message(&mut reader)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("message exceeds"));
+    }
+
+    #[tokio::test]
+    async fn readiness_drains_noise_without_queueing_it_and_survives_closed_receiver() {
+        let text = format!(
+            "{}DAP server listening at: 127.0.0.1:40123\n",
+            "noise\n".repeat(50_000)
+        );
+        let (tx, mut rx) = mpsc::channel(1);
+        forward_lines(BufReader::new(text.as_bytes()), tx).await;
+        assert_eq!(rx.recv().await.unwrap().to_string(), "127.0.0.1:40123");
+        assert!(rx.recv().await.is_none());
+        let (tx, rx) = mpsc::channel(1);
+        drop(rx);
+        forward_lines(BufReader::new(text.as_bytes()), tx).await;
+    }
 
     #[test]
     fn parse_thread_wait_state_extracts_wait_reason() {

@@ -205,3 +205,7 @@ Each meaningful milestone reports implemented/hardened work, tests, bugs found/f
 - [x] Text document reads reject binary/non-UTF-8 files and enforce a 4 MiB read limit. Replacement preview has tighter file/batch limits.
 - [x] Windows app descendants inherit an OS job before tool launch; Git owns a nested job and drains output after descendants stop. Shutdown rejects new Git work, cancels active Git and waits for owned runners. An isolated real-process test covers a descendant surviving parent exit and an unrelated live process.
 - [ ] Complete all remaining Git/addendum requirements and real native developer-session/platform release gates. These automated slices do not establish Beta/Stable readiness; no release tags.
+
+### Run and Debug Process Ownership
+
+Go Run and Delve now use explicit owned-child identities and Windows child jobs. Completion of an old run cannot retire a replacement run. Run output is drained with bounded chunks and a visible 2 MiB per-stream truncation notice; Delve startup uses a bounded readiness channel. DAP headers and bodies reject oversized frames before allocation. Windows fixture tests cover parent exit, descendant cleanup, explicit stop and preservation of an unrelated process. Native app workflow checks and macOS/Linux lifecycle verification remain required; this milestone does not satisfy the full addendum or release gate.

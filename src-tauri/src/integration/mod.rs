@@ -7,6 +7,7 @@ pub mod git;
 pub mod gopls;
 pub mod lifecycle;
 pub mod lsp_manager;
+pub mod output;
 pub mod process;
 pub mod process_job;
 pub mod replacement;

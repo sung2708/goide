@@ -1,4 +1,5 @@
 use super::Job;
+use super::OwnedChild;
 use crate::integration::command::std_command;
 use std::{
     os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle},
@@ -12,6 +13,24 @@ use windows_sys::Win32::{
         PROCESS_TERMINATE,
     },
 };
+struct TestChild(std::process::Child);
+impl std::ops::Deref for TestChild {
+    type Target = std::process::Child;
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+impl std::ops::DerefMut for TestChild {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+impl Drop for TestChild {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
 
 #[test]
 fn job_stops_descendant_after_parent_exit_and_keeps_unrelated_process_alive() {
@@ -25,14 +44,15 @@ while (-not (Test-Path -LiteralPath $StartPath)) { Start-Sleep -Milliseconds 10 
 $OwnedDescendant = Start-Process ping.exe -ArgumentList @('-n','90','127.0.0.1') -WindowStyle Hidden -PassThru
 Set-Content -LiteralPath $PidPath -Value $OwnedDescendant.Id
 "#).unwrap();
-    let mut unrelated = std_command("ping.exe")
+    let unrelated = std_command("ping.exe")
         .args(["-n", "90", "127.0.0.1"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    let mut unrelated = TestChild(unrelated);
     let job = Job::new().unwrap();
-    let mut parent = std_command("powershell.exe")
+    let parent = std_command("powershell.exe")
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -47,12 +67,15 @@ Set-Content -LiteralPath $PidPath -Value $OwnedDescendant.Id
         .stderr(Stdio::null())
         .spawn()
         .unwrap();
+    let mut parent = TestChild(parent);
     job.assign(parent.as_raw_handle()).unwrap();
     std::fs::write(&start, b"start").unwrap();
     let started = Instant::now();
     while !pid_file.exists() && started.elapsed() < Duration::from_secs(10) {
         std::thread::sleep(Duration::from_millis(10));
     }
+    let parent_exit = parent.wait().unwrap();
+    assert!(parent_exit.success());
     let pid = std::fs::read_to_string(&pid_file)
         .unwrap()
         .trim()
@@ -68,8 +91,6 @@ Set-Content -LiteralPath $PidPath -Value $OwnedDescendant.Id
     };
     assert!(!raw.is_null());
     let descendant = unsafe { OwnedHandle::from_raw_handle(raw) };
-    let parent_exit = parent.wait().unwrap();
-    assert!(parent_exit.success());
     assert_ne!(
         unsafe { WaitForSingleObject(descendant.as_raw_handle() as HANDLE, 0) },
         WAIT_OBJECT_0
@@ -84,4 +105,86 @@ Set-Content -LiteralPath $PidPath -Value $OwnedDescendant.Id
     assert!(unrelated_alive);
     assert!(root.starts_with(std::env::temp_dir()));
     std::fs::remove_dir_all(root).unwrap();
+}
+#[tokio::test]
+async fn owned_async_child_stops_and_reaps_without_stopping_an_unrelated_child() {
+    let spawn = || {
+        let mut command = crate::integration::command::tokio_command("ping.exe");
+        command
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        command.spawn().unwrap()
+    };
+    let mut owned = OwnedChild::new(spawn()).await.unwrap();
+    let mut unrelated = spawn();
+    let result = owned.stop().await;
+    let exited = owned.try_wait().unwrap().is_some();
+    let unrelated_alive = unrelated.try_wait().unwrap().is_none();
+    let _ = unrelated.kill().await;
+    let _ = unrelated.wait().await;
+    assert!(result.is_ok());
+    assert!(exited);
+    assert!(unrelated_alive);
+}
+#[tokio::test]
+async fn completion_uses_owner_identity_and_cannot_retire_a_replacement_run() {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    let spawn = || {
+        let mut command = crate::integration::command::tokio_command("ping.exe");
+        command
+            .args(["-n", "60", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true);
+        command.spawn().unwrap()
+    };
+    let mut old = OwnedChild::new(spawn()).await.unwrap();
+    let old_identity = old.identity();
+    old.stop().await.unwrap();
+    drop(old);
+    let current = OwnedChild::new(spawn()).await.unwrap();
+    let current_identity = current.identity();
+    let handle = Arc::new(Mutex::new(Some(current)));
+    let result = crate::integration::process::wait_for_owned_exit(&handle, old_identity)
+        .await
+        .unwrap();
+    let mut guard = handle.lock().await;
+    let current = guard.as_mut().unwrap();
+    let preserved = current.identity() == current_identity && current.try_wait().unwrap().is_none();
+    current.stop().await.unwrap();
+    *guard = None;
+    assert_eq!(result, None);
+    assert!(preserved);
+}
+#[tokio::test]
+async fn completion_reaps_and_retires_a_naturally_exited_owned_process() {
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
+    let child = crate::integration::command::tokio_command("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Milliseconds 100; exit 13",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let child = OwnedChild::new(child).await.unwrap();
+    let identity = child.identity();
+    let handle = Arc::new(Mutex::new(Some(child)));
+    let code = tokio::time::timeout(
+        Duration::from_secs(10),
+        crate::integration::process::wait_for_owned_exit(&handle, identity),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(code, Some(13));
+    assert!(handle.lock().await.is_none());
 }
