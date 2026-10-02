@@ -35,3 +35,11 @@ it("surfaces native failures and routes author/hash searches without guessing co
   fireEvent.change(screen.getByRole("combobox", { name: "Commit search field" }), { target: { value: "author" } }); submit("Author [Ω]");
   await waitFor(() => expect(search).toHaveBeenLastCalledWith("repo", expect.objectContaining({ field: "author", text: "Author [Ω]" })));
 });
+
+it("loads an exact file history request immediately, preserving literal path characters", async () => {
+  search.mockResolvedValue({ ok: true, data: { commits: [commit], tips: ["pinned"], hasMore: false } });
+  render(<GitHistorySearch root="repo" tips={[]} initialFilePath="space Ω [ab].go" onSelect={vi.fn()} onClose={vi.fn()} />);
+  await screen.findByText("Older matching commit", { exact: false });
+  expect(search).toHaveBeenCalledWith("repo", { field: "file", text: "space Ω [ab].go", offset: 0, tips: [] });
+  expect(screen.getByRole("combobox", { name: "Commit search field" })).toHaveValue("file");
+});

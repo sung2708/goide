@@ -2,8 +2,8 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourceControlPanel from "./SourceControlPanel";
 import type { GitRepositoryStatus } from "../../lib/ipc/git";
-const { status, diff, mutate, history, cancel } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn() }));
-vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel }));
+const { status, diff, mutate, history, cancel, search } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn(), search: vi.fn() }));
+vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel, searchGitHistory: search }));
 const data: GitRepositoryStatus = {
   root: "C:/repo", gitDir: "C:/repo/.git", gitVersion: "git version 2.50", branch: "main", head: "abc", upstream: "origin/main", ahead: 2, behind: 1, operation: null,
   remotes: ["origin"],
@@ -20,6 +20,7 @@ describe("Source Control vertical slice", () => {
     cancel.mockResolvedValue({ ok: true, data: true });
     diff.mockResolvedValue({ ok: true, data: { path: "both.go", originalPath: null, patch: "@@ -1 +1 @@\n-old\n+new\n", binary: false, limited: false } });
     history.mockResolvedValue({ ok: true, data: { commits: [], tips: [], hasMore: false } });
+    search.mockResolvedValue({ ok: true, data: { commits: [], tips: [], hasMore: false } });
     transaction.mockImplementation(async (operation) => { await operation(); return true; });
   });
   it("shows the same file in staged and unstaged groups with independent actions", async () => {
@@ -52,6 +53,13 @@ describe("Source Control vertical slice", () => {
     expect(screen.getByRole("region", { name: "Git diff" })).toHaveTextContent("+new");
     expect(screen.getByRole("button", { name: "Next change" })).toBeEnabled();
     expect(mutate).not.toHaveBeenCalled();
+  });
+  it("opens file history from the exact status row without saving or mutating", async () => {
+    render(<SourceControlPanel {...props} />);
+    fireEvent.click(await screen.findByRole("button", { name: "File history both.go" }));
+    await waitFor(() => expect(search).toHaveBeenCalledWith("C:/repo", expect.objectContaining({ field: "file", text: "both.go", offset: 0 })));
+    expect(screen.getByRole("region", { name: "Search repository history" })).toBeInTheDocument();
+    expect(mutate).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
   });
   it("detects conflict states and keeps mutation controls disabled", async () => {
     status.mockResolvedValue({ ok: true, data: { ...data, operation: "merge", files: [{ ...data.files[0], conflicted: true, indexStatus: "U", worktreeStatus: "U" }] } });
