@@ -17,6 +17,7 @@ export type GitConflictContent = { path: string; indexSignature: string; base: s
 export const getGitConflictContent = (workspaceRoot: string, path: string) => request<GitConflictContent>("git_conflict_content", { workspaceRoot, path });
 export type GitHistoryCommit = { hash: string; parents: string[]; author: string; date: string; subject: string; refs: string[] };
 export type GitHistoryPage = { commits: GitHistoryCommit[]; tips: string[]; hasMore: boolean };
+export type GitHistorySearchRequest = { field: "message" | "author" | "hash"; text: string; offset: number; tips: string[] };
 export type GitCommitDetails = { hash: string; parents: string[]; author: string; email: string; date: string; message: string; selectedParent: string | null; files: { path: string; originalPath: string | null; status: string }[] };
 
 async function request<T>(command: string, args: Record<string, unknown>): Promise<ApiResponse<T>> {
@@ -30,5 +31,6 @@ export const getGitFileDiff = (workspaceRoot: string, path: string, staged: bool
 export const mutateGit = (workspaceRoot: string, mutation: GitMutation) => request<void>("git_mutate", { workspaceRoot, mutation });
 export const cancelGit = (workspaceRoot: string) => request<boolean>("git_cancel", { workspaceRoot });
 export const getGitHistoryPage = (workspaceRoot: string, offset: number, tips: string[]) => request<GitHistoryPage>("git_history_page", { workspaceRoot, offset, tips });
+export const searchGitHistory = (workspaceRoot: string, search: GitHistorySearchRequest) => request<GitHistoryPage>("git_search_history", { workspaceRoot, request: search });
 export const getGitCommitDetails = (workspaceRoot: string, hash: string, parent: string | null) => request<GitCommitDetails>("git_commit_details", { workspaceRoot, hash, parent });
 export const getGitHistoricalDiff = (workspaceRoot: string, hash: string, parent: string | null, path: string) => request<GitFileDiff>("git_historical_diff", { workspaceRoot, hash, parent, path });

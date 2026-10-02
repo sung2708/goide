@@ -56,6 +56,20 @@ pub async fn git_historical_diff(
 use crate::integration::git;
 
 #[tauri::command]
+pub async fn git_search_history(
+    workspace_root: String,
+    request: super::types::GitHistorySearchRequestDto,
+) -> ApiResponse<GitHistoryPageDto> {
+    respond(
+        tauri::async_runtime::spawn_blocking(move || {
+            let root = git::repository_root(&workspace_root)?;
+            git::search_history(&root, request)
+        })
+        .await,
+    )
+}
+
+#[tauri::command]
 pub async fn git_history_page(
     workspace_root: String,
     offset: usize,

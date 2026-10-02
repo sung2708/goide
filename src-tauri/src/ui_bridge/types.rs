@@ -572,7 +572,8 @@ pub struct ShellExitPayloadDto {
 
 pub use crate::integration::git::{
     CommitDetails as GitCommitDetailsDto, ConflictContent as GitConflictContentDto,
-    FileDiff as GitFileDiffDto, HistoryPage as GitHistoryPageDto, Mutation as GitMutationDto,
+    FileDiff as GitFileDiffDto, HistoryPage as GitHistoryPageDto,
+    HistorySearchRequest as GitHistorySearchRequestDto, Mutation as GitMutationDto,
     RepositoryStatus as GitRepositoryStatusDto,
 };
 pub use crate::integration::replacement::{

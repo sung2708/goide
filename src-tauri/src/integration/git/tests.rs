@@ -83,6 +83,62 @@ fn parses_nul_status_without_corrupting_special_names_and_rename_sources() {
 }
 
 #[test]
+fn history_search_uses_literal_messages_authors_verified_hashes_and_pinned_scope() {
+    let repo = Repo::new();
+    repo.git(&["config", "user.name", "Author [Ω]"]);
+    repo.write("main.go", b"first\n");
+    repo.stage(&["main.go"]);
+    repo.commit("First subject\n\nNeedle [x].* in the body");
+    let first = repo.git(&["rev-parse", "HEAD"]).trim().to_string();
+    repo.git(&["config", "user.name", "Author Ω"]);
+    repo.write("main.go", b"second\n");
+    repo.stage(&["main.go"]);
+    repo.commit("Needle x aaaa");
+    let search = |field, text: &str, tips: Vec<String>, offset| {
+        search_history(
+            &repo.0,
+            HistorySearchRequest {
+                field,
+                text: text.into(),
+                tips,
+                offset,
+            },
+        )
+    };
+    let found = search(HistorySearchField::Message, "needle [x].*", vec![], 0).unwrap();
+    assert_eq!(found.commits.len(), 1);
+    assert_eq!(found.commits[0].hash, first);
+    let authors = search(HistorySearchField::Author, "author [Ω]", vec![], 0).unwrap();
+    assert_eq!(authors.commits.len(), 1);
+    assert_eq!(authors.commits[0].hash, first);
+    let hash = search(HistorySearchField::Hash, &first[..10], vec![], 0).unwrap();
+    assert_eq!(hash.commits[0].hash, first);
+    assert!(!hash.has_more);
+    assert!(search(HistorySearchField::Hash, "--all", vec![], 0).is_err());
+    assert!(search(HistorySearchField::Message, "bad\nquery", vec![], 0).is_err());
+    assert!(search(
+        HistorySearchField::Message,
+        "needle",
+        vec!["--all".into()],
+        0
+    )
+    .is_err());
+    let pinned = found.tips;
+    repo.write("main.go", b"third\n");
+    repo.stage(&["main.go"]);
+    repo.commit("Future matching needle [x].*");
+    let older = search(HistorySearchField::Message, "needle [x].*", pinned, 0).unwrap();
+    assert_eq!(older.commits.len(), 1);
+    assert_eq!(older.commits[0].hash, first);
+    assert!(
+        search(HistorySearchField::Message, "needle [x].*", older.tips, 1)
+            .unwrap()
+            .commits
+            .is_empty()
+    );
+}
+
+#[test]
 fn real_repo_initial_stage_unstage_and_commit_only_index() {
     let repo = Repo::new();
     let initial = repository_status(&repo.0).unwrap();
