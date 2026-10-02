@@ -1,5 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import WelcomeScreen from "./WelcomeScreen";
+import { useQuickOpenIndex } from "../../features/navigation/useQuickOpenIndex";
+import Dialog from "../primitives/Dialog";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -10,7 +12,6 @@ import {
   deactivateDeepTrace,
   getRuntimeAvailability,
   getRuntimeSignals,
-  listWorkspaceEntries,
   readWorkspaceFile,
   writeWorkspaceFile,
   runWorkspaceFile,
@@ -33,7 +34,6 @@ import type {
   DebugFailure,
   RuntimeSignal,
   DebuggerState,
-  FsEntry,
 } from "../../lib/ipc/types";
 import HintUnderline from "../overlays/HintUnderline";
 import InlineActions from "../overlays/InlineActions";
@@ -77,7 +77,6 @@ import { useWorkspaceSearchState } from "./useWorkspaceSearchState";
 import { useRunOutputState, type RunMode } from "./useRunOutputState";
 
 const DEBUG_UI_ENABLED = true;
-const QUICK_OPEN_IGNORED_FOLDERS = new Set([".git", "node_modules", "dist", "target", ".turbo", ".cache"]);
 const LazyBottomPanel = lazy(() => import("../panels/BottomPanel"));
 const LazyRuntimeTopologyPanel = lazy(() => import("../panels/RuntimeTopologyPanel"));
 const LazyDebugFailureDialog = lazy(() => import("../panels/DebugFailureDialog"));
@@ -338,10 +337,7 @@ function EditorShell() {
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
-  const [quickOpenFiles, setQuickOpenFiles] = useState<string[]>([]);
-  const [quickOpenLoading, setQuickOpenLoading] = useState(false);
   const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
-  const quickOpenRequestIdRef = useRef(0);
   const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
   const replacementReview = useReplacementReview(workspacePath);
@@ -545,70 +541,7 @@ function EditorShell() {
     }
   }, [isQuickOpenOpen]);
 
-  const loadQuickOpenFiles = useCallback(async (rootWorkspacePath: string) => {
-    const requestId = quickOpenRequestIdRef.current + 1;
-    quickOpenRequestIdRef.current = requestId;
-    setQuickOpenLoading(true);
-    const nextFiles: string[] = [];
-    const queue: (string | undefined)[] = [undefined];
-
-    while (queue.length > 0) {
-      const current = queue.shift();
-      const response = await listWorkspaceEntries(rootWorkspacePath, current);
-      if (requestId !== quickOpenRequestIdRef.current) {
-        return;
-      }
-      if (!response.ok || !response.data) {
-        continue;
-      }
-      for (const entry of response.data as FsEntry[]) {
-        if (entry.isDir) {
-          if (!QUICK_OPEN_IGNORED_FOLDERS.has(entry.name)) {
-            queue.push(entry.path);
-          }
-        } else {
-          nextFiles.push(entry.path);
-        }
-      }
-    }
-
-    if (requestId !== quickOpenRequestIdRef.current) {
-      return;
-    }
-    nextFiles.sort((a, b) => a.localeCompare(b));
-    setQuickOpenFiles(nextFiles);
-    setQuickOpenLoading(false);
-    setQuickOpenSelectedIndex(0);
-  }, []);
-
-  useEffect(() => {
-    if (!isQuickOpenOpen || !workspacePath) {
-      return;
-    }
-    void loadQuickOpenFiles(workspacePath);
-  }, [isQuickOpenOpen, loadQuickOpenFiles, workspacePath]);
-
-  const quickOpenFilteredFiles = useMemo(() => {
-    const query = quickOpenQuery.trim().toLowerCase();
-    if (!query) {
-      return quickOpenFiles.slice(0, 200);
-    }
-    const score = (path: string) => {
-      const normalized = path.toLowerCase();
-      const name = normalized.split("/").pop() ?? normalized;
-      if (name === query) return 0;
-      if (name.startsWith(query)) return 1;
-      if (normalized.startsWith(query)) return 2;
-      const idx = normalized.indexOf(query);
-      return idx >= 0 ? 10 + idx : Number.MAX_SAFE_INTEGER;
-    };
-    return quickOpenFiles
-      .map((path) => ({ path, score: score(path) }))
-      .filter((item) => item.score !== Number.MAX_SAFE_INTEGER)
-      .sort((a, b) => a.score - b.score || a.path.localeCompare(b.path))
-      .slice(0, 200)
-      .map((item) => item.path);
-  }, [quickOpenFiles, quickOpenQuery]);
+  const { files: quickOpenFilteredFiles, loading: quickOpenLoading, error: quickOpenError, notice: quickOpenNotice, remember: rememberOpenedFile } = useQuickOpenIndex(workspacePath, explorerRevision, isQuickOpenOpen, quickOpenQuery);
 
   useEffect(() => {
     setQuickOpenSelectedIndex((current) => {
@@ -1928,6 +1861,7 @@ function EditorShell() {
         invalidateCompletionRequests();
         clearActiveDiagnostics();
         resetCompletionAvailability();
+        rememberOpenedFile(relativePath);
         setActiveFilePath(relativePath);
         activeFilePathRef.current = relativePath;
         setActiveFileContent(response.data);
@@ -1989,7 +1923,7 @@ function EditorShell() {
         setIsReading(false);
       }
     },
-    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, preserveActiveDocument, refreshDiagnosticsForFile, workspacePath]
+    [clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, preserveActiveDocument, refreshDiagnosticsForFile, rememberOpenedFile, workspacePath]
   );
 
   // Git has already preserved the buffer before entering this callback. Never
@@ -2616,12 +2550,13 @@ function EditorShell() {
       </div>
 
       {isQuickOpenOpen && (
-        <div className="pointer-events-none absolute inset-0 z-50 flex justify-center pt-20">
+        <Dialog open={true} onOpenChange={setIsQuickOpenOpen} ariaLabel="Quick Open" className="fixed inset-0 z-50 m-0 flex h-dvh w-full justify-center bg-black/40 pt-20" panelClassName="w-full max-w-2xl">
           <div className="pointer-events-auto w-full max-w-2xl px-4">
             <div className="overflow-hidden rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] shadow-[var(--panel-shadow)]">
               <input
                 ref={quickOpenInputRef}
                 type="text"
+                maxLength={256}
                 placeholder="Find file..."
                 value={quickOpenQuery}
                 onChange={(event) => {
@@ -2658,10 +2593,12 @@ function EditorShell() {
                 aria-label="Quick open file"
               />
               <div className="max-h-72 overflow-auto py-1">
+                {quickOpenError && <p role="alert" className="px-3 py-2 text-xs text-(--red)">{quickOpenError}</p>}
+                {quickOpenNotice && <p role="status" className="px-3 py-2 text-xs text-(--yellow)">{quickOpenNotice}</p>}
                 {quickOpenLoading && (
                   <p className="px-3 py-2 text-xs text-[var(--overlay1)]">Indexing files...</p>
                 )}
-                {!quickOpenLoading && quickOpenFilteredFiles.length === 0 && (
+                {!quickOpenLoading && !quickOpenError && quickOpenFilteredFiles.length === 0 && (
                   <p className="px-3 py-2 text-xs text-[var(--overlay1)]">No files found.</p>
                 )}
                 {!quickOpenLoading &&
@@ -2683,7 +2620,7 @@ function EditorShell() {
               </div>
             </div>
           </div>
-        </div>
+        </Dialog>
       )}
 
       <StatusBar

@@ -182,3 +182,7 @@ On Windows, an app-lifetime unnamed job is installed before Tauri/tool launch so
 ## Owned Run and Debug Children
 
 The process boundary wraps Go Run and Delve children in OwnedChild. Each run has an immutable UUID separate from its OS PID. Completion checks that identity before retiring the shared handle. On Windows, per-child jobs complement the application job; Unix callers spawn a process group and cleanup targets that group. Output draining uses bounded UTF-8 chunks, and DAP framing limits headers to 16 KiB and bodies to 16 MiB. The output delivery budget is 2 MiB per stream; excess output is still drained. Native lifecycle and platform validation remain release requirements.
+
+## Quick Open Index Boundary
+
+Navigation indexing and fuzzy ranking live in features/navigation, separate from EditorShell. The hook caches one workspace/revision index, rejects stale asynchronous responses, and stores at most 30 recent file paths per workspace. Traversal skips generated trees and stops at 20,000 files, 2,000 folders, depth 64 or a five-second traversal budget between directory requests. Closing the picker invalidates pending frontend traversal; directory IPC calls already in progress finish independently. Partial results and errors remain visible.

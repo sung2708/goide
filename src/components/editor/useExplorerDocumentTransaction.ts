@@ -1,4 +1,5 @@
 import { useCallback, type MutableRefObject } from "react";
+import { hasConflictDraftsAt } from "../../features/git/conflictDrafts";
 export type ExplorerTransaction = <T>(operation: () => Promise<T>, affectedPath?: string) => Promise<T | null>;
 type Params = { root: MutableRefObject<string | null>; path: MutableRefObject<string | null>; lock: MutableRefObject<boolean>; mutation: MutableRefObject<boolean>; preserve: () => Promise<boolean>; isPreserved: () => boolean; setBusy: (busy: boolean) => void; onError: (message: string) => void };
 const normalized = (path: string) => path.replace(/\\/g, "/");
@@ -11,6 +12,10 @@ export function useExplorerDocumentTransaction(p: Params): ExplorerTransaction {
     const touchesDocument = active && affected && (active === affected || active.startsWith(`${affected}/`));
     p.lock.current = true; p.setBusy(true);
     try {
+      if (affected && hasConflictDraftsAt(root, affected)) {
+        p.onError("Save or explicitly discard the retained Git conflict result before moving or deleting this path.");
+        return null;
+      }
       if (touchesDocument && (!(await p.preserve()) || !p.isPreserved())) return null;
       if (p.root.current !== root) return null;
       p.mutation.current = true;
