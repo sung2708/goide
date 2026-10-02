@@ -4,12 +4,16 @@ import type { BottomPanelTab, RunOutputPayload } from "../../lib/ipc/types";
 import { FontAwesomeIcon } from "@fortawesome/react-fontawesome";
 import { faEyeSlash, faTrashCan } from "@fortawesome/free-solid-svg-icons";
 import AlertDialog from "../primitives/AlertDialog";
+import ProblemsPanel from "../../features/problems/ProblemsPanel";
+import type { Problem } from "../../features/problems/model";
 import LogsTerminalView from "./LogsTerminalView";
 import ShellTerminalView from "./ShellTerminalView";
 
 export type { BottomPanelTab };
 
 type BottomPanelProps = {
+  problems?: Problem[];
+  onNavigateProblem?: (problem: Problem) => void;
   activeTab: BottomPanelTab;
   onActiveTabChange: (tab: BottomPanelTab) => void;
   logEntries: RunOutputPayload[];
@@ -26,6 +30,7 @@ type BottomPanelProps = {
 };
 
 function BottomPanel({
+  problems = [], onNavigateProblem = () => {},
   activeTab,
   onActiveTabChange,
   logEntries,
@@ -92,6 +97,7 @@ function BottomPanel({
             </button>
           </div>
 
+          <button role="tab" aria-selected={activeTab === "problems"} className={cn(tabBase, activeTab === "problems" ? tabActive : tabInactive)} onClick={() => onActiveTabChange("problems")}>Problems ({problems.length})</button>
           {/* Logs-scoped run controls */}
           {activeTab === "logs" && (
             <div className="flex items-center gap-1 rounded bg-[var(--base)]/25 p-0.5">
@@ -170,6 +176,7 @@ function BottomPanel({
           session alive across tab switches. Visibility is toggled via the HTML
           `hidden` attribute rather than conditional rendering. */}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-(--crust)">
+        <div hidden={activeTab !== "problems"} className="absolute inset-0 h-full min-h-0"><ProblemsPanel problems={problems} onNavigate={onNavigateProblem} /></div>
         <div
           aria-hidden={activeTab !== "logs"}
           className={cn(

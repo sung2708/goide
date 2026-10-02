@@ -8,6 +8,7 @@ import type { Command } from "../../features/commands/registry";
 import { useDocumentSession } from "../../features/documents/useDocumentSession";
 import DocumentTabs from "../../features/documents/DocumentTabs";
 import { useSaveDecision } from "../../features/documents/useSaveDecision";
+import { buildProblems, diagnosticProblems, type Problem } from "../../features/problems/model";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -294,6 +295,8 @@ function EditorShell() {
   const [saveStatus, setSaveStatus] = useState<"idle" | "saving" | "saved" | "error">("idle");
   const [runStatus, setRunStatus] = useState<"idle" | "running" | "done" | "error">("idle");
   const [runMode, setRunMode] = useState<RunMode>("standard");
+  const [problemRun, setProblemRun] = useState<{ root: string; id: string } | null>(null);
+  useEffect(() => { setProblemRun(null); }, [workspacePath]);
   const {
     runOutput,
     setRunOutput,
@@ -400,6 +403,7 @@ function EditorShell() {
     }, onError: setFileError,
   });
   const {
+    knownDiagnostics, forgetDiagnostics,
     diagnostics,
     diagnosticsByFile,
     diagnosticsAvailability,
@@ -408,6 +412,7 @@ function EditorShell() {
     invalidateDiagnosticsRequests,
     resetDiagnosticsState,
     refreshDiagnosticsForFile,
+    scheduleDiagnosticsRefresh,
   } = useDiagnosticsState({
     workspacePathRef,
     activeFilePathRef,
@@ -686,7 +691,10 @@ function EditorShell() {
 
   const handleWorkspaceFsChanged = useCallback(() => {
     setExplorerRevision((prev) => prev + 1);
-  }, []);
+    setProblemRun(null);
+    resetDiagnosticsState();
+    scheduleDiagnosticsRefresh(workspacePathRef.current, activeFilePathRef.current);
+  }, [resetDiagnosticsState, scheduleDiagnosticsRefresh]);
 
   useWorkspaceFsSync({
     workspacePath,
@@ -773,17 +781,17 @@ function EditorShell() {
     : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
 
-  const requestJump = useCallback((targetLine: number | null) => {
+  const requestJump = useCallback((targetLine: number | null, column = 1) => {
     if (targetLine === null) {
       return;
     }
     if (targetLine < 1 || !Number.isInteger(targetLine)) {
       return;
     }
-    if (activeFileContent === null) {
+    if (latestEditorContentRef.current === null) {
       return;
     }
-    const maxLine = activeFileContent.split("\n").length;
+    const maxLine = latestEditorContentRef.current.split("\n").length;
     if (targetLine > maxLine) {
       return;
     }
@@ -791,9 +799,10 @@ function EditorShell() {
     jumpRequestIdRef.current += 1;
     setJumpRequest({
       line: targetLine,
+      column,
       requestId: jumpRequestIdRef.current,
     });
-  }, [activeFileContent]);
+  }, [latestEditorContentRef]);
 
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
@@ -1241,6 +1250,7 @@ function EditorShell() {
 
     setRunOutput([]);
     setRunStatus("running");
+    setProblemRun({ root: workspacePath, id: runId });
     setRunMode(modeToRun);
     setIsBottomPanelOpen(true);
     setBottomPanelTab("logs");
@@ -1550,6 +1560,8 @@ function EditorShell() {
   const handleEditorChange = useCallback((value: string) => {
     if (branchMutationRef.current || documents.active?.readOnly) return;
     latestEditorContentRef.current = value;
+    setProblemRun(null);
+    if (activeFilePath) { forgetDiagnostics(activeFilePath); clearDiagnostics(); invalidateDiagnosticsRequests(); }
     setActiveFileContent(value);
 
     // Reset transient statuses when the user starts editing again
@@ -1573,7 +1585,7 @@ function EditorShell() {
         void persistActiveFileContent(value);
       }
     }, 2500);
-  }, [documents, persistActiveFileContent, workspacePath, activeFilePath]);
+  }, [documents, forgetDiagnostics, clearDiagnostics, invalidateDiagnosticsRequests, persistActiveFileContent, workspacePath, activeFilePath]);
 
   const handleModifierClickLine = useCallback(
     (line: number): boolean => {
@@ -1825,7 +1837,7 @@ function EditorShell() {
     invalidateDiagnosticsRequests();
     invalidateCompletionRequests();
     runtimeCheckRequestIdRef.current += 1;
-    clearDiagnostics();
+    resetDiagnosticsState();
     setDebuggerState(null);
     clearPendingRunOutputBuffer();
     setRunOutput([]);
@@ -1871,7 +1883,7 @@ function EditorShell() {
       }
     }
     await reloadGitState(root);
-  }, [documents, clearDiagnostics, refreshDiagnosticsForFile, reloadGitState, resetWorkspaceSearch, invalidateDiagnosticsRequests, invalidateCompletionRequests]);
+  }, [documents, resetDiagnosticsState, refreshDiagnosticsForFile, reloadGitState, resetWorkspaceSearch, invalidateDiagnosticsRequests, invalidateCompletionRequests]);
 
   const {
     pendingTargetBranch, isBranchDialogOpen, branchSwitchLoading, branchSwitchError,
@@ -1946,6 +1958,23 @@ function EditorShell() {
   const surfaceKey = workspacePath ? "workspace-shell" : null;
 
   const commandBusy = documentTransitionRef.current || branchMutationRef.current || runStopInFlightRef.current;
+  const problems = useMemo(() => [
+    ...Object.entries(knownDiagnostics)
+      .filter(([file]) => !documentSnapshot.documents.some(document => document.path === file && document.text !== document.baseline))
+      .flatMap(([file, values]) => diagnosticProblems(file, values)),
+    ...(documents.dirty || problemRun?.root !== workspacePath ? [] : buildProblems(workspacePath, runOutput.filter(entry => entry.runId === problemRun?.id))),
+  ], [documents, documentSnapshot, knownDiagnostics, workspacePath, runOutput, problemRun]);
+  const selectedProblemRef = useRef<string | null>(null);
+  const navigateProblem = (problem: Problem) => {
+    selectedProblemRef.current = problem.id;
+    const root = workspacePath;
+    void handleOpenFile(problem.file).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === problem.file) requestJump(problem.line, problem.column); });
+  };
+  const navigateAdjacentProblem = (direction: number) => {
+    if (problems.length === 0) return;
+    const index = problems.findIndex(problem => problem.id === selectedProblemRef.current);
+    navigateProblem(problems[index < 0 ? (direction > 0 ? 0 : problems.length - 1) : (index + direction + problems.length) % problems.length]);
+  };
   const debugStartDisabled = !workspacePath || !isGoFile(activeFilePath) || isDebugSessionBusy || debugStopInFlightRef.current || runStatus === "running" || commandBusy;
   const runDisabled = !workspacePath || !isGoFile(activeFilePath) || runStatus === "running" || isDebugSessionBusy || commandBusy;
   const commands: Command[] = [
@@ -1956,6 +1985,9 @@ function EditorShell() {
     { id: "file.saveAll", title: "Save All Files", shortcut: "Ctrl+Alt+s", disabled: !workspacePath || commandBusy || isSavingRef.current ? "Open a workspace and wait for document operations." : undefined, run: preserveAllDocuments },
     { id: "file.close", title: "Close Active Editor Tab", shortcut: "Mod+w", disabled: documentSnapshot.activeId === null || commandBusy || isSavingRef.current ? "Open a file and wait for document operations." : undefined, run: () => documentSnapshot.activeId !== null ? closeDocument(documentSnapshot.activeId) : undefined },
     { id: "workspace.search", title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
+    { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
+    { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
     { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
@@ -2018,6 +2050,8 @@ function EditorShell() {
                   explorerRevision={explorerRevision}
                   transaction={explorerTransaction}
                   onEntryPathChanged={(previous, next) => {
+                    const previousPath = previous.replace(/\\/g, "/");
+                    for (const file of Object.keys(knownDiagnostics)) if (file === previousPath || file.startsWith(`${previousPath}/`)) forgetDiagnostics(file);
                     const active = activeFilePathRef.current?.replace(/\\/g, "/");
                     const old = previous.replace(/\\/g, "/");
                     documents.remap(old, next.replace(/\\/g, "/"));
@@ -2027,6 +2061,8 @@ function EditorShell() {
                     }
                   }}
                   onEntryDeleted={(deleted) => {
+                    const deletedPath = deleted.replace(/\\/g, "/");
+                    for (const file of Object.keys(knownDiagnostics)) if (file === deletedPath || file.startsWith(`${deletedPath}/`)) forgetDiagnostics(file);
                     const active = activeFilePathRef.current?.replace(/\\/g, "/");
                     const path = deleted.replace(/\\/g, "/");
                     for (const document of documents.snapshot().documents) {
@@ -2214,6 +2250,8 @@ function EditorShell() {
                 {hasLoadedBottomPanel ? (
                   <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
                     <LazyBottomPanel
+                      problems={problems}
+                      onNavigateProblem={navigateProblem}
                       activeTab={bottomPanelTab}
                       onActiveTabChange={setBottomPanelTab}
                       logEntries={runOutput}
