@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  LanguageQuery, LanguageQueryResult,
   WorkspaceFileInfo,
   WorkspaceReplacementRequest,
   WorkspaceReplacementPlan,
@@ -41,6 +42,11 @@ import type {
 
 function hasTauriInternals(): boolean {
   return Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
+}
+
+export async function queryWorkspaceLanguage(request: LanguageQuery): Promise<ApiResponse<LanguageQueryResult>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Language queries require the desktop app and gopls." } };
+  return invoke<ApiResponse<LanguageQueryResult>>("query_workspace_language", { request });
 }
 
 export async function listWorkspaceEntries(

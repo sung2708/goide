@@ -1,4 +1,7 @@
 pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
+pub use crate::integration::language::{
+    Query as LanguageQueryDto, QueryResult as LanguageQueryResultDto,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

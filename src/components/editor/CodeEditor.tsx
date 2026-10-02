@@ -1739,6 +1739,7 @@ function CodeEditor({
         onCreateEditor={(view) => {
           viewRef.current = view;
           setEditorView(view);
+          if (view.state.selection) emitCursorOffset(view.state.selection.main.head);
           view.requestMeasure();
           if (sessionState) {
             view.scrollDOM.scrollTop = sessionState.scrollTop;

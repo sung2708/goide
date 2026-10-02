@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Output, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::integration::fs;
 use crate::integration::lsp_manager;
@@ -977,8 +977,8 @@ fn request_file_completions(
         )?;
     }
 
-    let mut completion_response: Option<Value> = None;
-    for _attempt in 0..20 {
+    let deadline = Instant::now() + Duration::from_secs(45);
+    let completion_response = loop {
         let request_id = session.next_id;
         session.next_id += 1;
 
@@ -996,33 +996,34 @@ fn request_file_completions(
                 }
             }
         });
-        let body = serde_json::to_vec(&message)?;
-        write!(&mut session.stdin, "Content-Length: {}\r\n\r\n", body.len())?;
-        session.stdin.write_all(&body)?;
-        session.stdin.flush()?;
+        lsp_manager::write_lsp_request_sync(
+            &mut session.stdin,
+            request_id,
+            "textDocument/completion",
+            message["params"].clone(),
+        )?;
 
-        let response = lsp_manager::wait_lsp_response_sync(&session.rx, request_id)?;
-        if lsp_manager::lsp_error_message_sync(&response) == Some("no views") {
+        let response =
+            lsp_manager::wait_lsp_response_until_sync(&session.rx, request_id, deadline)?;
+        if lsp_manager::lsp_error_message_sync(&response) == Some("no views")
+            && Instant::now() < deadline
+        {
             std::thread::sleep(Duration::from_millis(100));
             continue;
         }
-        completion_response = Some(response);
-        break;
-    }
-
-    let completion_response =
-        completion_response.ok_or_else(|| anyhow!("gopls completion failed after retries"))?;
+        break response;
+    };
     lsp_manager::ensure_lsp_response_success_sync(completion_response.clone())?;
     Ok(parse_lsp_completion_response(&completion_response))
 }
 
 #[cfg(windows)]
-fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
+pub(crate) fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
     PathBuf::from(normalize_path_for_file_uri(&path.to_string_lossy()))
 }
 
 #[cfg(not(windows))]
-fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
+pub(crate) fn normalize_platform_pathbuf(path: PathBuf) -> PathBuf {
     path
 }
 
