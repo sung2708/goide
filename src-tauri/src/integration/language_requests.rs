@@ -68,6 +68,21 @@ pub fn deadline(fallback: Instant) -> Instant {
     })
 }
 
+pub fn lock<T>(mutex: &Mutex<T>) -> Result<std::sync::MutexGuard<'_, T>> {
+    loop {
+        check()?;
+        match mutex.try_lock() {
+            Ok(guard) => return Ok(guard),
+            Err(std::sync::TryLockError::WouldBlock) => {
+                std::thread::sleep(Duration::from_millis(25))
+            }
+            Err(std::sync::TryLockError::Poisoned(_)) => {
+                return Err(anyhow!("Language server lock poisoned"))
+            }
+        }
+    }
+}
+
 pub struct Scope {
     id: Uuid,
     previous: Option<Context>,

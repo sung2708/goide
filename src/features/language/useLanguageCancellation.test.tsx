@@ -20,6 +20,8 @@ it("cancels captured identities on supersession and workspace changes without cl
   act(() => { second = hook.result.current.begin("C:/first"); });
   expect(first.requestId).not.toBe(second.requestId);
   expect(cancelMock).toHaveBeenCalledExactlyOnceWith(first);
+  act(() => hook.result.current.cancel(first.requestId));
+  expect(cancelMock).toHaveBeenCalledTimes(1);
   act(() => hook.result.current.complete(first.requestId));
   session.reset("C:/second");
   hook.rerender({ snapshot: session.snapshot() });

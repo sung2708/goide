@@ -135,6 +135,7 @@ describe("EditorShell completions", () => {
 
     await waitFor(() =>
       expect(fetchWorkspaceCompletionsMock).toHaveBeenCalledWith({
+        requestId: expect.any(String),
         workspaceRoot: "C:/workspace",
         relativePath: "main.go",
         line: 1,

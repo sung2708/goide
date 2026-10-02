@@ -93,6 +93,8 @@ fn bounded_output(
             "App is shutting down; no new native tool can start.",
         ));
     }
+    super::language_requests::check()
+        .map_err(|error| io::Error::new(io::ErrorKind::Interrupted, error))?;
     command
         .stdin(if input.is_some() {
             Stdio::piped()
@@ -124,8 +126,11 @@ fn bounded_output(
     } else {
         None
     };
-    let deadline = Instant::now() + timeout;
+    let deadline = super::language_requests::deadline(Instant::now() + timeout);
     let status = loop {
+        if let Err(error) = super::language_requests::check() {
+            break Err(io::Error::new(io::ErrorKind::Interrupted, error));
+        }
         if lifecycle::gate().is_closing() {
             break Err(io::Error::other("Native tool cancelled for app shutdown."));
         }
@@ -168,6 +173,28 @@ mod tests {
         assert_eq!(capture(&b"small"[..]).unwrap(), b"small");
         assert!(capture(std::io::repeat(b'x').take((OUTPUT_LIMIT + 1) as u64)).is_err());
     }
+    #[cfg(windows)]
+    #[test]
+    fn scoped_cancellation_stops_a_running_cli_tool_promptly() {
+        let root = std::path::Path::new("owned-tool-cancel-test");
+        let id = uuid::Uuid::new_v4().to_string();
+        let scope = super::super::language_requests::begin(root, Some(&id)).unwrap();
+        let canceller = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            super::super::language_requests::cancel(root, &id).unwrap();
+        });
+        let started = Instant::now();
+        let error = output(
+            super::super::command::std_command("ping.exe").args(["-n", "90", "127.0.0.1"]),
+            None,
+        )
+        .unwrap_err();
+        canceller.join().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert!(started.elapsed() < Duration::from_secs(3));
+        drop(scope);
+    }
+
     #[cfg(windows)]
     #[test]
     fn deadline_stops_the_owned_tool_and_does_not_stop_an_unrelated_process() {

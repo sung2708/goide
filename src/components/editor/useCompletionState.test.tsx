@@ -1,0 +1,34 @@
+import { act, renderHook } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
+import { useCompletionState } from "./useCompletionState";
+const fetchMock = vi.hoisted(() => vi.fn());
+const cancelMock = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, data: true }));
+vi.mock("../../lib/ipc/client", () => ({ fetchWorkspaceCompletions: fetchMock, cancelLanguageRequest: cancelMock }));
+
+it("cancels native completion on supersession, edits, workspace changes and unmount", async () => {
+  const workspacePathRef = { current: "C:/original" as string | null };
+  const activeFilePathRef = { current: "main.go" as string | null };
+  const latestEditorContentRef = { current: "package main\n" as string | null };
+  const pending: Array<(result: unknown) => void> = [];
+  fetchMock.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  const hook = renderHook(() => useCompletionState({ workspacePathRef, activeFilePathRef, latestEditorContentRef, activeFileContent: latestEditorContentRef.current }));
+  let first!: Promise<unknown>, second!: Promise<unknown>;
+  act(() => { first = hook.result.current.handleRequestCompletions({ line: 1, column: 1, explicit: true }); });
+  const request1 = fetchMock.mock.calls[0][0];
+  act(() => { second = hook.result.current.handleRequestCompletions({ line: 1, column: 2, explicit: true }); });
+  const request2 = fetchMock.mock.calls[1][0];
+  expect(cancelMock).toHaveBeenLastCalledWith({ workspaceRoot: "C:/original", requestId: request1.requestId });
+  await act(async () => { pending[0]({ ok: true, data: [{ label: "obsolete" }] }); expect(await first).toEqual([]); });
+  act(() => hook.result.current.invalidateCompletionRequests());
+  expect(cancelMock).toHaveBeenLastCalledWith({ workspaceRoot: "C:/original", requestId: request2.requestId });
+  await act(async () => { pending[1]({ ok: false, error: { message: "cancelled" } }); expect(await second).toEqual([]); });
+  act(() => { void hook.result.current.handleRequestCompletions({ line: 1, column: 1, explicit: true }); });
+  const request3 = fetchMock.mock.calls[2][0];
+  workspacePathRef.current = "C:/new";
+  hook.rerender();
+  expect(cancelMock).toHaveBeenLastCalledWith({ workspaceRoot: "C:/original", requestId: request3.requestId });
+  act(() => { void hook.result.current.handleRequestCompletions({ line: 1, column: 1, explicit: true }); });
+  const request4 = fetchMock.mock.calls[3][0];
+  hook.unmount();
+  expect(cancelMock).toHaveBeenLastCalledWith({ workspaceRoot: "C:/new", requestId: request4.requestId });
+});

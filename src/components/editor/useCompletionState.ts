@@ -1,4 +1,5 @@
-import { useCallback, useRef, useState, type MutableRefObject } from "react";
+import { useCallback, useMemo, useRef, useState, type MutableRefObject } from "react";
+import { useLanguageCancellation } from "../../features/language/useLanguageCancellation";
 import { fetchWorkspaceCompletions } from "../../lib/ipc/client";
 import type { CompletionItem } from "../../lib/ipc/types";
 import type { EditorCompletionRequest } from "./CodeEditor";
@@ -11,6 +12,7 @@ type UseCompletionStateParams = {
   activeFilePathRef: MutableRefObject<string | null>;
   activeFileContent: string | null;
   latestEditorContentRef: MutableRefObject<string | null>;
+  onError?: (message: string) => void;
 };
 
 type CompletionState = {
@@ -26,14 +28,18 @@ export function useCompletionState({
   activeFilePathRef,
   activeFileContent,
   latestEditorContentRef,
+  onError,
 }: UseCompletionStateParams): CompletionState {
+  const context = useMemo(() => ({}), [workspacePathRef.current, activeFilePathRef.current, activeFileContent]);
+  const cancellation = useLanguageCancellation(context, onError);
   const [completionAvailability, setCompletionAvailability] =
     useState<CompletionIndicatorState>("idle");
   const completionRequestIdRef = useRef(0);
 
   const invalidateCompletionRequests = useCallback(() => {
     completionRequestIdRef.current += 1;
-  }, []);
+    cancellation.cancel();
+  }, [cancellation.cancel]);
 
   const resetCompletionAvailability = useCallback(() => {
     setCompletionAvailability("idle");
@@ -50,10 +56,11 @@ export function useCompletionState({
 
       const requestId = completionRequestIdRef.current + 1;
       completionRequestIdRef.current = requestId;
+      const native = cancellation.begin(currentWorkspace);
 
       try {
         const response = await fetchWorkspaceCompletions({
-          workspaceRoot: currentWorkspace,
+          ...native,
           relativePath: currentPath,
           line: request.line,
           column: request.column,
@@ -89,9 +96,9 @@ export function useCompletionState({
           return [];
         }
         return [];
-      }
+      } finally { cancellation.complete(native.requestId); }
     },
-    [activeFileContent, activeFilePathRef, latestEditorContentRef, workspacePathRef]
+    [activeFileContent, activeFilePathRef, latestEditorContentRef, workspacePathRef, cancellation.begin, cancellation.complete]
   );
 
   return {
