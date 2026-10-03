@@ -111,6 +111,12 @@ describe("EditorShell branch switching", () => {
 
   it("reloads workspace state after successful branch switch", async () => {
     const user = userEvent.setup();
+    switchWorkspaceBranchMock.mockImplementationOnce(async () => {
+      const data = { ...defaultBranchSnapshot, currentBranch: "main" };
+      getWorkspaceBranchesMock.mockResolvedValue({ ok: true, data });
+      getWorkspaceGitSnapshotMock.mockResolvedValue({ ok: true, data: { ...defaultGitSnapshot, branch: "main" } });
+      return { ok: true, data };
+    });
 
     // Set up mock to return workspace path when the open dialog is triggered
     openMock.mockResolvedValue("C:/workspace");
@@ -184,13 +190,11 @@ describe("EditorShell branch switching", () => {
       });
     });
 
-    // The initial workspace load fetches branch state directly and via the git
-    // polling refresh. Selecting a branch refreshes branch state again before
-    // switching, then reloadWorkspaceState fetches both snapshots after a
-    // successful switch.
+    // Verify the native state is read again and the selected branch is visible.
     await waitFor(() => {
       expect(getWorkspaceGitSnapshotMock).toHaveBeenCalledTimes(2);
-      expect(getWorkspaceBranchesMock).toHaveBeenCalledTimes(4);
+      expect(getWorkspaceBranchesMock).toHaveBeenLastCalledWith("C:/workspace");
+      expect(screen.getByRole("button", { name: /switch branch/i })).toHaveTextContent("main");
     });
   });
 

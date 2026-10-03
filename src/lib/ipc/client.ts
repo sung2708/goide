@@ -45,6 +45,9 @@ import type {
 function hasTauriInternals(): boolean {
   return Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
+function gitNativeRequired<T>(): ApiResponse<T> {
+  return { ok: false, error: { code: "git_native_required", message: "Git operations require the desktop app and a real repository." } };
+}
 
 export async function inspectGoProject(request: import("./types").GoProjectRequest): Promise<ApiResponse<import("./types").GoProjectInfo>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "go_project_native_required", message: "Go project inspection requires the desktop app and Go." } };
@@ -450,14 +453,7 @@ export async function getWorkspaceGitSnapshot(
   workspaceRoot: string
 ): Promise<ApiResponse<WorkspaceGitSnapshot>> {
   if (!hasTauriInternals()) {
-    return {
-      ok: true,
-      data: {
-        branch: "unknown",
-        changedFiles: [],
-        commits: [],
-      },
-    };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<WorkspaceGitSnapshot>>(
     "get_workspace_git_snapshot",
@@ -470,6 +466,7 @@ export async function getWorkspaceGitSnapshot(
 export async function getWorkspaceBranches(
   workspaceRoot: string,
 ): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  if (!hasTauriInternals()) return gitNativeRequired();
   return invoke<ApiResponse<WorkspaceBranchSnapshot>>("get_workspace_branches", {
     workspaceRoot,
   });
@@ -478,6 +475,7 @@ export async function getWorkspaceBranches(
 export async function switchWorkspaceBranch(
   request: SwitchWorkspaceBranchRequest,
 ): Promise<ApiResponse<WorkspaceBranchSnapshot>> {
+  if (!hasTauriInternals()) return gitNativeRequired();
   return invoke<ApiResponse<WorkspaceBranchSnapshot>>("switch_workspace_branch", {
     request,
   });
@@ -487,7 +485,7 @@ export async function stageWorkspaceGitFile(
   request: WorkspaceGitFileActionRequest,
 ): Promise<ApiResponse<void>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<void>>("stage_workspace_git_file", { request });
 }
@@ -496,7 +494,7 @@ export async function unstageWorkspaceGitFile(
   request: WorkspaceGitFileActionRequest,
 ): Promise<ApiResponse<void>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<void>>("unstage_workspace_git_file", { request });
 }
@@ -505,7 +503,7 @@ export async function commitWorkspaceGitChanges(
   request: WorkspaceGitCommitRequest,
 ): Promise<ApiResponse<void>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<void>>("commit_workspace_git_changes", { request });
 }
@@ -515,25 +513,7 @@ export async function getWorkspaceCommitDetail(
   hash: string,
 ): Promise<ApiResponse<WorkspaceGitCommitDetail>> {
   if (!hasTauriInternals()) {
-    return {
-      ok: true,
-      data: {
-        hash,
-        shortHash: hash.slice(0, 7),
-        parents: [],
-        author: "unknown",
-        email: "",
-        relativeTime: "just now",
-        dateIso: "",
-        subject: "",
-        body: "",
-        filesChanged: 0,
-        insertions: 0,
-        deletions: 0,
-        files: [],
-        patchPreview: "",
-      },
-    };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<WorkspaceGitCommitDetail>>("get_workspace_commit_detail", {
     workspaceRoot,
@@ -545,7 +525,7 @@ export async function getWorkspaceGitGraph(
   workspaceRoot: string,
 ): Promise<ApiResponse<WorkspaceGitGraphEntry[]>> {
   if (!hasTauriInternals()) {
-    return { ok: true, data: [] };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<WorkspaceGitGraphEntry[]>>("get_workspace_git_graph", {
     workspaceRoot,
@@ -556,7 +536,7 @@ export async function getWorkspaceGitGraphCommits(
   workspaceRoot: string,
 ): Promise<ApiResponse<WorkspaceGitGraphCommit[]>> {
   if (!hasTauriInternals()) {
-    return { ok: true, data: [] };
+    return gitNativeRequired();
   }
   return invoke<ApiResponse<WorkspaceGitGraphCommit[]>>("get_workspace_git_graph_commits", {
     workspaceRoot,
