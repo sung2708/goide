@@ -22,6 +22,7 @@ Welcome to the Goro engineering and product documentation. This directory provid
 
 ### 4. Release Engineering & Operations
 - [VERSIONING.md](VERSIONING.md): Semantic Versioning policy, pre-1.0 guidelines, version synchronization mechanism, tag naming, and migration of historical prototype tags.
+- [RELEASE_READINESS.md](RELEASE_READINESS.md): Current evidence-based decision, focused Go IDE scope, blockers and native acceptance protocol.
 - [RELEASE.md](RELEASE.md): Step-by-step maintainer release runbook, tag-driven CI/CD release workflow, verification checklists, artifact naming, and rollback procedures.
 - [SECURITY.md](../SECURITY.md): Vulnerability reporting policy, SLA, and architectural security boundaries.
 

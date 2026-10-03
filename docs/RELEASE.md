@@ -2,6 +2,8 @@
 
 This document defines the complete operational procedure for preparing, validating, publishing, and verifying releases of Goro.
 
+Before executing this runbook, pass the selected maturity gate in [Release Readiness](RELEASE_READINESS.md). The current audit is NOT READY; this runbook is not authorization to create a tag or publish.
+
 The workflow initializes MSVC on Windows, runs Rust tests as well as frontend tests, explicitly builds each matrix target, and uses Bash for artifact packaging on every runner. The Intel macOS job uses `macos-15-intel`, replacing the retired `macos-13` image ([GitHub runner retirement notice](https://github.com/actions/runner-images/issues/13046)). These configuration checks and local Windows builds do not establish that hosted Linux/macOS builds, installation, signing, or publication have succeeded.
 
 ---
