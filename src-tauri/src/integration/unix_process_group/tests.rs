@@ -29,8 +29,9 @@ fn natural_exit_remains_unreaped_until_group_signal_and_cannot_signal_a_reused_i
         assert!(Instant::now() < deadline);
         std::thread::sleep(Duration::from_millis(10));
     }
-    // A waitable original leader still owns this PID/group before status consumption.
-    assert_eq!(unsafe { libc::getpgid(pid as i32) }, pid as i32);
+    // Repeat WNOWAIT successfully: status remains owned/unconsumed. Darwin's
+    // getpgid cannot look up zombies, so it cannot establish this invariant.
+    assert!(group.exited().unwrap());
     assert_eq!(group.try_wait(&mut child).unwrap().unwrap().code(), Some(7));
     assert!(group.signal_consumed && group.reaped);
     assert!(group.is_empty().unwrap());

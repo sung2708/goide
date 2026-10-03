@@ -162,10 +162,13 @@ impl Group {
             return Ok(false);
         }
         let error = io::Error::last_os_error();
-        if error.raw_os_error() == Some(libc::ESRCH) {
-            Ok(true)
-        } else {
-            Err(error)
+        match error.raw_os_error() {
+            Some(libc::ESRCH) => Ok(true),
+            // XNU also skips zombies for the read-only group probe. EPERM is
+            // unconfirmed, never empty: the owner's bounded wait/retry retains
+            // authority until kernel group absence can be positively observed.
+            Some(libc::EPERM) => Ok(false),
+            _ => Err(error),
         }
     }
 }
