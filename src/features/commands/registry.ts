@@ -1,7 +1,14 @@
 export type Command = {
-  id: string; title: string; shortcut?: string; disabled?: string;
+  id: string; title: string; category?: string; description?: string; shortcut?: string; allowInInput?: boolean; disabled?: string;
   run: () => unknown | Promise<unknown>;
 };
+export function validateCommands(commands: Command[]): void {
+  const ids = new Set<string>();
+  for (const command of commands) {
+    if (ids.has(command.id)) throw new Error(`Duplicate command ID: ${command.id}`);
+    ids.add(command.id);
+  }
+}
 export function matchesShortcut(event: Pick<KeyboardEvent, "key" | "ctrlKey" | "metaKey" | "shiftKey" | "altKey">, shortcut: string, mac: boolean): boolean {
   const parts = shortcut.toLowerCase().split("+");
   const modifiers = new Set(parts.slice(0, -1));

@@ -16,7 +16,7 @@ type SearchPanelProps = {
   loading?: boolean;
   results: WorkspaceSearchFile[];
   onSearch: (query: string, options: WorkspaceSearchOptions) => void;
-  onOpenResult: (file: string, line: number, query: string) => void;
+  onOpenResult: (file: string, line: number, query: string, column?: number, target?: { from: number; to: number; preview: string }) => void;
   autoFocus?: boolean;
   focusTrigger?: number;
   onReplaceMatch?: (file: string, line: number, searchText: string, replacement: string) => void;
@@ -31,11 +31,24 @@ function HighlightedPreview({
   preview,
   query,
   matchCase,
+  ranges,
 }: {
   preview: string;
   query: string;
   matchCase: boolean;
+  ranges?: { from: number; to: number }[];
 }) {
+  if (ranges?.length) {
+    const segments = []; let cursor = 0;
+    for (const range of ranges) {
+      if (range.from < cursor || range.to < range.from || range.to > preview.length) continue;
+      segments.push(<span key={`plain-${cursor}`}>{preview.slice(cursor, range.from)}</span>);
+      segments.push(<mark key={`match-${range.from}`} className="bg-(--selection-bg) font-semibold text-(--text)">{preview.slice(range.from, range.to)}</mark>);
+      cursor = range.to;
+    }
+    segments.push(<span key="tail">{preview.slice(cursor)}</span>);
+    return <>{segments}</>;
+  }
   if (!query) return <>{preview}</>;
 
   let regex: RegExp;
@@ -120,6 +133,8 @@ function SearchPanel({
   const [activeMatchKey, setActiveMatchKey] = useState<string | null>(null);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const composing = useRef(false);
+  const [compositionRevision, setCompositionRevision] = useState(0);
   const latestQueryRef = useRef(query);
 
   latestQueryRef.current = query;
@@ -134,7 +149,8 @@ function SearchPanel({
   };
 
   const submitSearch = (nextQuery: string) => {
-    const trimmed = nextQuery.trim();
+    if (composing.current) return;
+    const trimmed = nextQuery;
     setLastSubmittedQuery(trimmed);
     onSearch(trimmed, { matchCase, wholeWord, useRegex, include: filesInclude.split(",").map((pattern) => pattern.trim()).filter(Boolean), exclude: filesExclude.split(",").map((pattern) => pattern.trim()).filter(Boolean) });
   };
@@ -151,12 +167,14 @@ function SearchPanel({
     file.matches.map((match) => ({
       file: file.relativePath,
       line: match.line,
+      column: match.ranges?.[0] ? match.ranges[0].from + 1 : undefined,
+      target: match.ranges?.[0] ? { ...match.ranges[0], preview: match.preview } : undefined,
       preview: match.preview,
       key: `${file.relativePath}:${match.line}:${match.preview}`,
     }))
   );
   const displayedResultCount = displayedResults.reduce(
-    (total, file) => total + file.matches.length,
+    (total, file) => total + file.matches.reduce((count, match) => count + (match.ranges?.length ?? 1), 0),
     0
   );
 
@@ -165,20 +183,20 @@ function SearchPanel({
       return;
     }
     const first = flatDisplayedMatches[0];
-    if (activeMatchKey === first.key) {
+    if (flatDisplayedMatches.some(match => match.key === activeMatchKey)) {
       return;
     }
     setActiveMatchKey(first.key);
-    onOpenResult(first.file, first.line, activeQuery);
+
   }, [activeMatchKey, activeQuery, flatDisplayedMatches, onOpenResult]);
 
   useEffect(() => {
-    const trimmed = query.trim();
+    const trimmed = query;
     const handle = window.setTimeout(() => {
       submitSearch(trimmed);
     }, 180);
     return () => window.clearTimeout(handle);
-  }, [query, matchCase, wholeWord, useRegex, filesInclude, filesExclude, onSearch]);
+  }, [query, matchCase, wholeWord, useRegex, filesInclude, filesExclude, onSearch, compositionRevision]);
 
   const clearSearch = () => {
     setQuery("");
@@ -196,7 +214,7 @@ function SearchPanel({
       flatDisplayedMatches.length;
     const target = flatDisplayedMatches[normalized];
     setActiveMatchKey(target.key);
-    onOpenResult(target.file, target.line, activeQuery);
+    if (target.column !== undefined) onOpenResult(target.file, target.line, activeQuery, target.column, target.target); else onOpenResult(target.file, target.line, activeQuery);
   };
 
   const advanceActiveMatch = (direction: 1 | -1) => {
@@ -210,7 +228,7 @@ function SearchPanel({
 
   useEffect(() => {
     const handleWindowKeyDownCapture = (event: KeyboardEvent) => {
-      if (document.activeElement !== searchInputRef.current) {
+      if (event.isComposing || event.keyCode === 229 || document.activeElement !== searchInputRef.current) {
         return;
       }
 
@@ -219,7 +237,7 @@ function SearchPanel({
         event.stopPropagation();
         event.stopImmediatePropagation?.();
         submitSearch(latestQueryRef.current);
-        advanceActiveMatch(1);
+        advanceActiveMatch(event.shiftKey ? -1 : 1);
         return;
       }
 
@@ -232,7 +250,7 @@ function SearchPanel({
     };
 
     const handleWindowKeyUpCapture = (event: KeyboardEvent) => {
-      if (document.activeElement !== searchInputRef.current) {
+      if (event.isComposing || event.keyCode === 229 || document.activeElement !== searchInputRef.current) {
         return;
       }
 
@@ -290,12 +308,15 @@ function SearchPanel({
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck={false}
+            onCompositionStart={() => { composing.current = true; }}
+            onCompositionEnd={() => { composing.current = false; setCompositionRevision(value => value + 1); }}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
               if (e.key === "Enter") {
                 stopNativeKeyEvent(e);
                 submitSearch(query);
-                advanceActiveMatch(1);
+                advanceActiveMatch(e.shiftKey ? -1 : 1);
                 return;
               }
 
@@ -463,7 +484,7 @@ function SearchPanel({
                                 setActiveMatchKey(
                                   `${file.relativePath}:${match.line}:${match.preview}`
                                 );
-                                onOpenResult(file.relativePath, match.line, activeQuery);
+                                if (match.ranges?.[0]) onOpenResult(file.relativePath, match.line, activeQuery, match.ranges[0].from + 1, { ...match.ranges[0], preview: match.preview }); else onOpenResult(file.relativePath, match.line, activeQuery);
                               }}
                             >
                               <span className="mt-0.5 shrink-0 min-w-7 text-right font-code text-[10px] text-(--overlay1)">
@@ -474,10 +495,11 @@ function SearchPanel({
                                   preview={match.preview}
                                   query={query}
                                   matchCase={matchCase}
+                                  ranges={match.ranges}
                                 />
                               </span>
                             </button>
-                            {onReplaceMatch && replaceQuery && (
+                            {onReplaceMatch && (
                               <button
                                 type="button"
                                 aria-label={`Replace match in ${file.relativePath} line ${match.line}`}

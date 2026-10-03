@@ -121,7 +121,7 @@ describe("EditorShell panels", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("requires the desktop app");
     fireEvent.click(screen.getByRole("button", { name: "Close" }));
     fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
-    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
     fireEvent.change(input, { target: { value: "Go: Inspect Toolchain" } }); fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByRole("dialog", { name: "Go Toolchain" })).toBeInTheDocument();
   });
@@ -129,7 +129,7 @@ describe("EditorShell panels", () => {
   it("opens the shared command palette with Ctrl+Shift+P and executes a searched command", async () => {
     render(<EditorShell />);
     fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
-    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
     fireEvent.change(input, { target: { value: "Toggle Terminal Panel" } });
     fireEvent.keyDown(input, { key: "Enter" });
     await waitFor(() => expect(screen.queryByTestId("command-palette")).toBeNull());
@@ -141,7 +141,7 @@ describe("EditorShell panels", () => {
     render(<EditorShell />);
     await userEvent.setup().click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
     fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
-    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    const input = await screen.findByRole("combobox", { name: "Search commands" });
     fireEvent.change(input, { target: { value: "Go: Inspect Project and Environment" } });
     fireEvent.keyDown(input, { key: "Enter" });
     expect(await screen.findByRole("dialog", { name: "Go Project" })).toBeInTheDocument();

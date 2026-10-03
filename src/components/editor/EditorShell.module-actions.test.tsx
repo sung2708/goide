@@ -32,7 +32,7 @@ async function setup() {
 }
 async function inspect() {
   fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
-  const input = await screen.findByRole("textbox", { name: "Search commands" });
+  const input = await screen.findByRole("combobox", { name: "Search commands" });
   fireEvent.change(input, { target: { value: "Go: Inspect Project and Environment" } }); fireEvent.keyDown(input, { key: "Enter" });
   await waitFor(() => expect(screen.getByRole("button", { name: "Save All and Tidy Module" })).toBeEnabled());
 }

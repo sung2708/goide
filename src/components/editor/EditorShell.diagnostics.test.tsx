@@ -163,6 +163,20 @@ describe("EditorShell diagnostics", () => {
     expect(within(panel).getByText(/No problems in the current known results/)).toBeInTheDocument();
   }, 20000);
 
+  it("routes Ctrl+G line:column through the shared picker into the active editor", async () => {
+    const user = userEvent.setup();
+    openMock.mockResolvedValue("C:/workspace");
+    readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n// 😀abc\nfunc main() {}\n" });
+    fetchWorkspaceDiagnosticsMock.mockResolvedValue({ ok: true, data: { toolingAvailability: "available", diagnostics: [] } });
+    render(<EditorShell />); await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open main/i }));
+    fireEvent.keyDown(window, { key: "g", ctrlKey: true });
+    const input = await screen.findByRole("combobox", { name: "Line and column" });
+    fireEvent.change(input, { target: { value: "2:4" } }); fireEvent.keyDown(input, { key: "Enter" });
+    await waitFor(() => expect(screen.getByTestId("jump-position")).toHaveTextContent("2:4"));
+    expect(screen.queryByRole("dialog", { name: "Go to Line" })).toBeNull();
+  });
+
   it("routes F12 through the language command and opens the returned file at its column", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
@@ -284,7 +298,7 @@ describe("EditorShell diagnostics", () => {
     render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
     const invoke = async () => {
       fireEvent.keyDown(window, { key: "p", ctrlKey: true, shiftKey: true });
-      const input = await screen.findByRole("textbox", { name: "Search commands" });
+      const input = await screen.findByRole("combobox", { name: "Search commands" });
       fireEvent.change(input, { target: { value: "Organize Imports" } }); fireEvent.keyDown(input, { key: "Enter" });
       return screen.findByRole("dialog", { name: "Review Organize Imports" });
     };

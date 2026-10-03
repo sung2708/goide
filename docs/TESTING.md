@@ -424,3 +424,13 @@ PASS: commit 8346793 has successful frontend and native Windows/Linux/macOS jobs
 
 - PASS locally: 104 targeted editor, settings/theme, source-control, branch-picker and status-bar checks. New regressions verify stable editor extensions across callback replacement with Save calling the current handler, plus keyboard theme selection/focus restoration. TypeScript and production build pass. The locally started full suite was stopped after debugger/diagnostics checks passed; complete regression verification is delegated to hosted CI for the committed snapshot.
 - The existing workbench redesign is integrated with compact static branding, restored Black & White default, all named palettes and no titlebar blur or whole-editor grayscale compositing. No native process contract changes in this slice. Native window/installer acceptance and measured typing/scrolling performance remain NOT RUN; no release/tag is authorized.
+
+## Navigation/search checkpoint (2026-10-03)
+
+- PASS: 126 focused frontend checks across navigation, search workers, command registry/palette, CodeEditor, Find and workspace replacement. A further 67 regression checks cover the hardened document rescan/Undo, dirty replacement guard, SearchPanel and workbench/diagnostics flows; these suites overlap and are not summed as unique tests. The new Ctrl+G picker-to-editor integration passes independently.
+- PASS: 188 MSVC native integration checks; 20 toolchain-dependent fixtures were explicitly ignored. The latest three native replacement checks additionally pass, including selected-range preservation after a result budget. These overlap the broader native suite.
+- PASS: all-target MSVC Clippy and frontend production build/typecheck for the reviewed source; the final range-navigation/editor/workbench regression suite passes 94 checks, and the nested-picker focus check passes separately. These also overlap the earlier suites.
+- MEASURED: synthetic 20,000-file ranking initially took 651–1,032 ms per query on this loaded machine. Reusable prepared index data reduced the recorded warm query timings to 149–294 ms. This measures the ranking function, not user-visible picker latency, memory, indexing or editor performance.
+- NOT RUN / BLOCKED BY ENVIRONMENT: complete native desktop walkthrough, keyboard focus under all OS webviews, large-workspace memory/rendering/typing acceptance, native macOS/Linux execution here. New hosted CI must validate the published source. The previous develop macOS Cargo-test failure remains unresolved; passing earlier platform checks do not close this gate.
+
+See [Navigation and Search](NAVIGATION_SEARCH.md) for deterministic contracts, budgets, capture syntax and remaining P0/P1/P2 requirements. No release/version/tag is authorized.

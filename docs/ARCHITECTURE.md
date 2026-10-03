@@ -312,3 +312,7 @@ Git command execution uses the same synchronous owner and bounded pipe workers. 
 ## Workbench editing configuration
 
 CodeEditor keeps completion, save and selection callbacks behind current refs. Replacing parent callbacks does not rebuild the CodeMirror extension array; actual editability, editor font/tab/wrap preferences and language feature availability still reconfigure it. Save uses the current handler, completion queries use the current native provider, and delayed anchor work ignores a replaced view. Theme changes use CSS tokens rather than rebuilding the editor configuration. The compact titlebar and welcome carry static brand marks; the code surface remains unobstructed.
+
+## Navigation and search ownership
+
+Quick Pick owns keyboard/focus selection; commands and navigation own ranking/history. File ranking keeps prepared index data inside a bounded worker and coalesces intermediate queries. In-file regex/capture work has a terminable worker and stale-document guards; CodeMirror owns literal search, decorations and isolated Undo transactions. Workspace replacement uses exact returned ranges, explicit preview/file exclusion, dirty-document rejection and atomic baseline writes. See [Navigation and Search](NAVIGATION_SEARCH.md) for contracts and remaining acceptance gates.

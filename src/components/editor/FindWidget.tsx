@@ -8,6 +8,7 @@ import {
 } from "@fortawesome/free-solid-svg-icons";
 
 export type FindWidgetProps = {
+  error?: string | null;
   query: string;
   replaceText: string;
   matchCase: boolean;
@@ -79,6 +80,7 @@ function NavBtn({
 }
 
 export default function FindWidget({
+  error,
   query,
   replaceText,
   matchCase,
@@ -121,6 +123,7 @@ export default function FindWidget({
       data-testid="find-widget"
       className="absolute right-3 top-2 z-50 w-[min(420px,calc(100%-1.5rem))] overflow-hidden rounded-none border border-(--border-muted) bg-(--mantle) shadow-(--panel-shadow-soft)"
     >
+      {error && <p role="alert" className="px-2 py-1 text-xs text-(--red)">{error}</p>}
       {/* Find row */}
       <div className="flex items-center gap-1 border-b border-(--surface1) px-2 py-1">
         <span className="shrink-0 text-(--overlay1)">
@@ -135,6 +138,7 @@ export default function FindWidget({
           aria-label="Find in file"
           onChange={(e) => onQueryChange(e.target.value)}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Enter") {
               e.preventDefault();
               if (e.shiftKey) {
@@ -189,6 +193,7 @@ export default function FindWidget({
           aria-label="Replace text"
           onChange={(e) => onReplaceTextChange(e.target.value)}
           onKeyDown={(e) => {
+            if (e.nativeEvent.isComposing || e.keyCode === 229) return;
             if (e.key === "Escape") {
               e.preventDefault();
               onClose();

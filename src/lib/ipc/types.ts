@@ -293,6 +293,7 @@ export type ToggleBreakpointRequest = {
 export type WorkspaceSearchMatch = {
   line: number;
   preview: string;
+  ranges?: { from: number; to: number }[];
 };
 
 export type WorkspaceSearchFile = {

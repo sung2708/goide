@@ -40,3 +40,5 @@ We maintain documentation integrity:
 ## Brand identity
 
 The product is **Goro**; repository paths and GitHub URLs remain **goide**. See [Brand & Artwork](BRAND.md) for logos, app icons, color tokens, licensing, and icon export.
+
+- [Navigation and Search](NAVIGATION_SEARCH.md): input, matching/replacement contracts, worker ownership, budgets and acceptance gates.

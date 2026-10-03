@@ -516,3 +516,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 
 - Delivered: Git shares SDK tools' bounded output/process owner, atomically suspended Windows registration and pinned Unix leader authority. Existing mutation cancellation is checked before launch/resume and throughout execution. Descendants retaining pipes after a fast root exit retire through the same owner; cleanup failure retains authority and blocks unsafe retry.
 - Validation: 31 real Git/SDK/output checks and all-target MSVC Clippy pass locally; hosted frontend and Windows/Linux/macOS CI pass at 3f9e288. Cancellation after external root deletion/retargeting, Unix interactive PTY containment and complete Git/addendum acceptance remain unfinished; no release/tag is authorized.
+
+## Navigation and search hardening checkpoint (2026-10-03)
+
+Delivered: shared Quick Pick for files/commands, fuzzy highlighting and bounded command history; prepared/coalesced worker ranking; registry-backed in-file search/replace and Go to Line; terminable regex/capture worker; exact workspace ranges, significant whitespace, nested basename globs and reviewed file exclusions. Dirty destination buffers block workspace replacement, and truncated result ranges cannot expand into unlisted changes.
+
+Remaining P0/P1/P2 and known limitations are explicit in [Navigation and Search](NAVIGATION_SEARCH.md). Native desktop performance/manual acceptance and the hosted matrix remain required; no release/tag is authorized.
