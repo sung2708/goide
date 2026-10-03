@@ -157,17 +157,16 @@ describe("EditorShell document safety", () => {
   });
 
   it("keeps all dirty buffers when Save All fails on a non-active document", async () => {
-    await openMain();
+    await openMain("off");
     writeMock.mockResolvedValue({ ok: false, error: { code: "write_failed", message: "Permission denied" } });
     edit("valuable edits");
     fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other"));
     edit("other edits");
     fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, altKey: true });
-    await waitFor(() => expect(writeMock).toHaveBeenCalled());
+    await screen.findByText(/permission denied/i);
     expect(readMock).toHaveBeenCalledTimes(2);
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other edits");
-    expect(screen.getByText(/permission denied/i)).toBeInTheDocument();
     expect(writeMock).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("tab", { name: /main.go/ }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits"));
