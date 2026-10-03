@@ -193,3 +193,7 @@ node --test scripts/package-artifacts.node-test.mjs
 ## Code Actions gate update (2026-10-03)
 
 Reviewed direct gopls edits and edit-only ApplyFix actions are implemented and tested, including actual native gopls queries. Full Code Actions support is incomplete: selection refactorings, interactive/other command workflows and resource operations still need dedicated ownership and review handling. The overall addendum and source-control acceptance gates remain open. Do not create or push a release tag from this checkpoint.
+
+## Final audit hardening
+
+Release Cargo tests use the same serial fixture scheduling as CI because native fixtures share process/tool registries. Dedicated concurrency fixtures still test overlapping operations. Every valid prerelease suffix is marked prerelease after synchronized SemVer validation, rather than only recognizing alpha/beta/rc words. These changes do not establish hosted release execution, signing, installer acceptance or authorization to publish.

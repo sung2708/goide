@@ -1,6 +1,6 @@
 # Goro Release Readiness
 
-Reviewed 2026-10-03 against develop `0455c6e41b882d5a6fa32155a59d9b3873d7913d`. This is the current release decision checklist; historical milestone text in ROADMAP/TESTING is evidence for its named revision, not current acceptance.
+Initial readiness review on 2026-10-03 used develop `0455c6e41b882d5a6fa32155a59d9b3873d7913d`. The subsequent [final product audit](FINAL_PRODUCT_AUDIT.md) records full-suite, installed-tool and Windows build/launch evidence against `00b741d36b1b210937e55ad0d901ae09c6fac081` plus hardening changes. This remains the release decision checklist; historical milestone text in ROADMAP/TESTING is evidence for its named revision, not current acceptance.
 
 **Release classification: NOT READY. Recommended release version: NONE.**
 
@@ -69,7 +69,7 @@ Set and approve budgets before acceptance; record observations and failures with
 
 The current CI validates source; it does not build/install all distributable targets. The tag workflow publishes automatically after builds, so a non-publishing build/validation path is needed to inspect candidate artifacts before tagging.
 
-CI serializes native tests because fixtures share app/tool registries. The release workflow currently calls default parallel Cargo test; align it with the proven fixture scheduling, while retaining dedicated intentional concurrency tests. Install/run the real-tool protocol separately. Review prerelease parsing, branch/candidate authorization, immutable tags, artifact/version checks and failure recovery before using this workflow.
+CI serializes native tests because fixtures share app/tool registries. Final hardening aligns the release workflow with that scheduling, retaining dedicated intentional concurrency tests, and recognizes all validated prerelease suffixes. The 24 ignored real-tool fixtures passed when explicitly run on Windows with Go 1.26.5, gopls v0.23.0 and Delve 1.27.2; this does not certify other tool/platform combinations. See [the final product audit](FINAL_PRODUCT_AUDIT.md) for current suite results and environment limitations. Candidate authorization, immutable tags, artifact/version checks and failure recovery still need acceptance before using tag-driven publication.
 
 Tracked config/workflow does not establish signing/notarization credentials or their successful use. Decide and document the trust model. A polished public macOS distribution should validate Developer ID signing/notarization according to [Tauri's signing guide](https://v2.tauri.app/distribute/sign/macos/); Windows signing and SmartScreen behavior also need an explicit policy. Checksums provide integrity verification, not trusted publisher identity.
 
@@ -77,7 +77,7 @@ Test Windows NSIS/MSI, macOS Apple Silicon/Intel DMG and Linux AppImage/deb if a
 
 Rust dependency audit is NOT RUN here (cargo-audit unavailable), and security.yml currently checks npm only. Audit Cargo.lock and vendored dependencies, review license notices and capability scopes, and retain dated results. Address or explicitly disposition dev-tool advisories; do not run an uncontrolled major-version audit fix.
 
-## Evidence collected during this review
+## Evidence collected during the initial readiness review
 
 | Check | Result | Scope/limit |
 | --- | --- | --- |
@@ -91,7 +91,7 @@ Rust dependency audit is NOT RUN here (cargo-audit unavailable), and security.ym
 | Latest index local verification | Previously PASS | 40 frontend + 7 Windows native checks, typecheck/build/Clippy; see TESTING.md |
 | Native complete journey / installers / performance | NOT RUN in this review | Browser previews and unit mocks do not establish desktop acceptance |
 
-No full suite was rerun solely for this documentation audit; exact-commit hosted status and preceding scoped results are reported separately. No claim of a newly reproduced data-loss bug, zero process leaks or global vulnerability clearance is made.
+No full suite was rerun solely for that initial documentation audit; the subsequent full validation is recorded in FINAL_PRODUCT_AUDIT.md. Exact-commit hosted status and preceding scoped results remain separate evidence. No claim of a newly reproduced data-loss bug, zero process leaks or global vulnerability clearance is made.
 
 ## Native release acceptance journey
 

@@ -30,7 +30,7 @@ The public product name is **Goro**. The repository remains **goide**, and exist
 
 ## 4. Core IDE Expectations
 
-- **Rapid Startup**: Launches to an interactive editor state in under 1 second.
+- **Rapid Startup target**: An interactive editor state in under 1 second. This is a target; native startup/performance acceptance has not been measured.
 - **Responsive Source Editing**: CodeMirror 6 editor engine with Go syntax highlighting, bracket pairing, smart indentation, and in-file find/replace.
 - **Native File Tree Explorer**: Workspace-oriented file explorer supporting file creation, folder creation, renaming, moving, and deletion with filesystem auto-synchronization.
 - **Workspace-Owned Terminal Sessions**: Integrated PTY shell sessions that remain active across file switches and persist splitter geometry across layouts.
@@ -38,11 +38,11 @@ The public product name is **Goro**. The repository remains **goide**, and exist
 
 ### Document Save Behavior
 
-The active document autosaves after 2.5 seconds without typing. Manual saves cancel the pending autosave. Opening another file or workspace first saves the current dirty buffer; a failed save blocks the transition and keeps the buffer open with an error. Edits made during a transition save or file read are retained and require retrying the transition. Failed file reads also retain the current document.
+The default Auto Save mode saves after 2.5 seconds without typing; settings can disable it or select focus-change saving. Manual saves cancel the pending autosave. File tabs retain independent dirty buffers and disk baselines. Workspace/close transitions use Save / Don't Save / Cancel and Save All where required; failed saves or newer edits block unsafe transitions and retain drafts. Failed reads retain the current document.
 
 Git branch selection also saves the active buffer before refreshing disk-based Git status. A save failure, pending write or new edit blocks checkout. Changes created by the save require the existing commit/stash/discard decision; confirmation saves any newer buffer again. Editor mutation and document navigation are blocked while Git inspects/changes files. The destination document is reloaded directly, without saving the previous branch's buffer; if unavailable, the old document is retired with an error. Git errors also trigger a reload because a pre-switch action may have already changed disk. Stop an active run/debug session before switching branches.
 
-These safeguards cover editor-driven file/workspace opening and the branch transaction. Application shutdown, external modifications, and Explorer rename/delete still require separate data-safety implementation and validation before Beta. Explorer/search operations already in flight and external terminal/CLI changes need coordinated filesystem conflict handling; sidebar input is temporarily disabled during branch preparation/mutation.
+These safeguards cover editor-driven file/workspace opening and the branch transaction. Application shutdown, external modifications and Explorer rename/delete have preservation/conflict implementations, but still require complete native data-safety acceptance before Beta. Explorer/search operations already in flight and external terminal/CLI changes need coordinated filesystem conflict handling; sidebar input is temporarily disabled during branch preparation/mutation.
 
 ---
 
