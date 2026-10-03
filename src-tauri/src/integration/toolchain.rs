@@ -1,6 +1,7 @@
 use crate::integration::{command, owned_tool_output};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+pub mod paths;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]

@@ -100,3 +100,11 @@ Lists show the latest 100 entries and direct older history to the terminal. Stag
 Inspect Go Toolchain from the status bar or the Go: Inspect Toolchain command. Native probes report the concrete executable path, actual bounded version output, Ready/Missing/Failed/Unknown status and genuine execution errors. Refresh retries detection; stale responses cannot replace a newer result. Browser preview explicitly reports that native detection is unavailable. Successful version commands do not certify project/debugger compatibility.
 
 Tool launches and inspection resolve PATH first, then Go-installed tool directories for Go/gopls/Delve. Configurable executable paths, project Go environment/module awareness and explicit probe cancellation remain separate unfinished gates.
+
+## Executable preferences and source-control defaults (2026-10-03)
+
+Settings now includes application-scoped Go executable, gopls executable and Delve executable paths. Blank values retain automatic resolution; explicit values must name existing absolute regular executable files (.exe on Windows, executable permissions on Unix). The selected Go must be named go/go.exe, and its directory is placed first in the environment of child tools. Inspection reports the actual selected executable and version/probe result rather than certifying compatibility.
+
+Preferences are applied on field commit, serialized to the native service, and followed by inspection. Native validation or busy errors retain the previous native profile and remain visible; correct the setting and retry Tools inspection after stopping Run/Debug or the current language operation. Changing an accepted profile stops the previous gopls session before subsequent queries start a new one. Git settings also choose the initial Source Control view (Changes, Git Graph or Stashes); explicit navigation commands still select their requested view.
+
+Module/environment workflows, explicit probe cancellation, session restoration and full Git/platform acceptance remain unfinished. This checkpoint does not authorize a release or tag.

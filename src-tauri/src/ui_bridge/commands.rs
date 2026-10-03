@@ -1079,6 +1079,58 @@ pub async fn get_toolchain_status() -> ApiResponse<ToolchainStatusDto> {
 }
 
 #[tauri::command]
+pub async fn configure_toolchain_paths(
+    paths: super::types::ToolPathsDto,
+) -> ApiResponse<super::types::ToolPathsDto> {
+    let paths = match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::toolchain::paths::validate(paths)
+    })
+    .await
+    {
+        Ok(Ok(paths)) => paths,
+        Ok(Err(error)) => return ApiResponse::err("tool_configuration_failed", &error),
+        Err(error) => return ApiResponse::err("tool_configuration_failed", &error.to_string()),
+    };
+    if paths == crate::integration::toolchain::paths::current() {
+        return ApiResponse::ok(paths);
+    }
+    let _registration = match tokio::time::timeout(
+        Duration::from_secs(10),
+        crate::integration::lifecycle::gate().operation(),
+    )
+    .await
+    {
+        Ok(Ok(guard)) => guard,
+        Ok(Err(error)) => return ApiResponse::err("tool_configuration_failed", &error),
+        Err(_) => {
+            return ApiResponse::err(
+                "tool_configuration_busy",
+                "Wait for process startup/cleanup before changing tool paths.",
+            )
+        }
+    };
+    let runs = get_process_handle();
+    let run_guard = runs.lock().await;
+    let debugger = get_dap_session_handle();
+    let debug_guard = debugger.lock().await;
+    if run_guard.is_some() || debug_guard.is_some() {
+        return ApiResponse::err(
+            "tool_configuration_busy",
+            "Stop the active Go run/debugger before changing tool paths.",
+        );
+    }
+    match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::toolchain::paths::install(paths)
+    })
+    .await
+    {
+        Ok(Ok(paths)) => ApiResponse::ok(paths),
+        Ok(Err(error)) => ApiResponse::err("tool_configuration_failed", &error),
+        Err(error) => ApiResponse::err("tool_configuration_failed", &error.to_string()),
+    }
+}
+
+#[tauri::command]
 pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
     let signals_handle = get_runtime_signals_handle();
     let store = signals_handle.lock().await;
@@ -2618,6 +2670,47 @@ pub async fn dispose_shell_session(request: DisposeShellSessionRequestDto) -> Ap
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn tool_configuration_rejects_an_owned_running_process_without_changing_paths() {
+        use crate::integration::{
+            command::tokio_command,
+            process_job::OwnedChild,
+            toolchain::paths::{self, ToolPaths},
+        };
+        let before = paths::current();
+        let handle = super::get_process_handle();
+        assert!(handle.lock().await.is_none());
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = tokio_command("ping.exe");
+            command.args(["-n", "30", "127.0.0.1"]);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = {
+            let mut command = tokio_command("sleep");
+            command.arg("30");
+            command
+        };
+        let child = command
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+        *handle.lock().await = Some(OwnedChild::new(child).await.unwrap());
+        let response = super::configure_toolchain_paths(ToolPaths {
+            gopls: std::env::current_exe()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned(),
+            ..Default::default()
+        })
+        .await;
+        let mut child = handle.lock().await.take().unwrap();
+        child.stop().await.unwrap();
+        assert_eq!(response.error.unwrap().code, "tool_configuration_busy");
+        assert_eq!(paths::current(), before);
+    }
     use super::{
         build_workspace_branch_snapshot_with_git_runner, deactivate_deep_trace,
         debugger_toggle_breakpoint, get_dap_session_handle, get_runtime_signals,

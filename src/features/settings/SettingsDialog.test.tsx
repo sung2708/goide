@@ -23,3 +23,14 @@ it("reports invalid preferences and restores a corrupt profile only after Reset"
   expect(screen.getByRole("alert")).toHaveTextContent("Invalid setting: editor.tabSize"); expect(settingsStore.snapshot().values["editor.tabSize"]).toBe(4);
   act(() => settingsStore.reset());
 });
+it("commits executable drafts on blur and exposes meaningful Debug/Git choices and native errors", () => {
+  render(<SettingsDialog open onClose={() => {}} toolchainError="Executable validation failed; previous tools retained" />);
+  const go = screen.getByRole("textbox", { name: "Go executable path (blank: automatic)" });
+  fireEvent.change(go, { target: { value: "C:/Go/bin/go.exe" } });
+  expect(settingsStore.snapshot().values["go.executablePath"]).toBe(""); fireEvent.blur(go);
+  expect(settingsStore.snapshot().values["go.executablePath"]).toBe("C:/Go/bin/go.exe");
+  expect(screen.getByRole("textbox", { name: "Delve executable path (blank: automatic)" })).toBeInTheDocument();
+  fireEvent.change(screen.getByRole("combobox", { name: "Default Source Control view" }), { target: { value: "stashes" } });
+  expect(settingsStore.snapshot().values["git.defaultView"]).toBe("stashes");
+  expect(screen.getByRole("alert")).toHaveTextContent("previous tools retained");
+});
