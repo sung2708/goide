@@ -134,3 +134,10 @@ Use **Go: Test Current Package**, **Go: Test Workspace** or **Go: Open Test Runn
 The runner shows package/test states, durations and bounded real output after completion. Located test failures and confirmed compiler failures offer source navigation. Cancel retains document ownership until native completion; lost IPC transport requires cleanup confirmation with an explicit retry. Commands have a 180-second native budget and a 120-second Go test timeout. Tests execute project code only after the explicit action.
 
 Live incremental results, semantic test CodeLens, Debug Test and the richer Test Explorer are still pending. The terminal remains available for additional testing flags and unsupported workflows.
+
+
+## Recent workspaces and safe session restore
+
+The desktop app remembers up to ten recent workspace folders and up to 100 open relative file paths per workspace, including the active tab and bounded selection/scroll metadata. Reopen or remove a recent entry from the welcome view. Existing workspace layout storage remains separate. Startup restores current file content and permissions from disk; unavailable files are reported and omitted. A missing/moved/inaccessible root leaves the welcome view available for explicit retry or choosing a new location, without repeated automatic attempts. Restricted history storage leaves editing available.
+
+Restoration never persists unsaved text, diagnostics, terminal/debug/test state or process handles. Existing safe-close rules still protect edits. User document changes cancel remaining restoration rather than being overwritten. Close Workspace is available in the command registry (Ctrl/Cmd+Shift+W) and shares Save/Don't Save/Cancel and owned Run/debug cleanup with workspace switching. Explicit close prevents automatic workspace reopen while retaining its recent entry.

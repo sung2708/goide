@@ -1,3 +1,4 @@
+import { useWorkspaceHistory } from "../../features/workspaces/useWorkspaceHistory";
 import { DebuggerStartup } from "../../features/debugger/startup";
 import { RunOwnership } from "./runOwnership";
 import type { SemanticEntryAction } from "../../features/semantics/types";
@@ -42,6 +43,7 @@ import {
   cancelDebuggerStartup,
   getRuntimeAvailability,
   getRuntimeSignals,
+  listWorkspaceEntries,
   readWorkspaceFile,
   getWorkspaceFileInfo,
   writeWorkspaceFile,
@@ -1742,32 +1744,36 @@ function EditorShell() {
     [workspaceLayout]
   );
 
-  const handleOpenWorkspace = useCallback(async () => {
+  const handleOpenWorkspace = useCallback(async (requestedPath?: string | null): Promise<boolean> => {
     if (isOpening || documentTransitionRef.current) {
-      return;
+      return false;
     }
 
     documentTransitionRef.current = true;
     setIsOpening(true);
     try {
-      const selected = await open({
+      const selected = requestedPath === null || typeof requestedPath === "string" ? requestedPath : await open({
         directory: true,
         multiple: false,
         title: "Open Workspace",
       });
 
-      if (!selected) {
-        return;
+      if (!selected && requestedPath !== null) {
+        return false;
       }
 
       const resolvedPath = Array.isArray(selected) ? selected[0] : selected;
-      if (typeof resolvedPath === "string") {
+      if (typeof resolvedPath === "string" || resolvedPath === null) {
+        if (resolvedPath !== null) {
+          const validation = await listWorkspaceEntries(resolvedPath);
+          if (!validation.ok) throw new Error(validation.error?.message ?? "Workspace is unavailable. Choose its new location with Open Workspace.");
+        }
         if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
         branchMutationRef.current = true; setExplorerOperationBusy(true);
         const choice = documents.dirty || hasConflictDrafts(workspacePathRef.current)
           ? await documentDecision.ask("Save all editor and conflict-result changes before changing workspace?") : "save";
-        if (choice === "cancel") return;
-        if (choice === "save" && !(await preserveAllDocuments())) return;
+        if (choice === "cancel") return false;
+        if (choice === "save" && !(await preserveAllDocuments())) return false;
         await runOwnershipRef.current!.stop();
         if (ownedDebuggerSessionRef.current) {
           const stopped = await deactivateDeepTrace({ sessionId: ownedDebuggerSessionRef.current });
@@ -1802,10 +1808,13 @@ function EditorShell() {
         setSelectedLine(null);
         setInteractionAnchor(null);
         setFileError(null);
+        return true;
       }
+      return false;
     } catch (error) {
       setFileError(error instanceof Error ? error.message : "Unable to change workspace safely.");
       console.error("Failed to open workspace dialog:", error);
+      return false;
     } finally {
       branchMutationRef.current = false; setExplorerOperationBusy(false);
       documentTransitionRef.current = false;
@@ -1928,6 +1937,8 @@ function EditorShell() {
     },
     [documents, clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, refreshDiagnosticsForFile, rememberOpenedFile, workspacePath]
   );
+
+  const workspaceHistory = useWorkspaceHistory(documents, documentSnapshot, handleOpenWorkspace, setFileError);
 
   // Git has already preserved the buffer before entering this callback. Never
   // route reload through handleOpenFile: its save targets the *new* branch.
@@ -2107,7 +2118,8 @@ function EditorShell() {
     { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
     { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
     { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
-    { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: handleOpenWorkspace },
+    { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: () => handleOpenWorkspace() },
+    { id: "workspace.close", title: "Close Workspace", shortcut: "Mod+Shift+w", disabled: !workspacePath || commandBusy ? "Open a workspace and finish document operations." : undefined, run: () => handleOpenWorkspace(null) },
     { id: "file.quickOpen", title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); } },
     { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || documents.active?.readOnly || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
     { id: "file.cancelSavePreparation", title: "Cancel Save Preparation", disabled: !savePreparation.isPreparing ? "No Go save preparation is running." : undefined, run: savePreparation.cancel },
@@ -2547,7 +2559,10 @@ function EditorShell() {
                   <WelcomeScreen
                     workspacePath={workspacePath}
                     isOpening={isOpening}
-                    onOpenWorkspace={handleOpenWorkspace}
+                    onOpenWorkspace={() => void handleOpenWorkspace()}
+                    recentWorkspaces={workspaceHistory.recent}
+                    onReopenWorkspace={workspaceHistory.reopen}
+                    onForgetWorkspace={workspaceHistory.forget}
                     onQuickOpen={() => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); }}
                     onSearch={() => { setActiveTab("search"); setSearchFocusTrigger((n) => n + 1); }}
                     onTerminal={() => { setBottomPanelTab("shell"); setIsBottomPanelOpen(true); }}

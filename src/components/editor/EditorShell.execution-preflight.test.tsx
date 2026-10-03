@@ -11,6 +11,7 @@ vi.mock("../../lib/ipc/git", async () => ({ ...await vi.importActual("../../lib/
 vi.mock("../panels/BottomPanel", () => ({ default: () => null }));
 vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
+  listWorkspaceEntries: async () => ({ ok: true, data: [] }),
   subscribeGoTestOutput: async () => () => {}, readWorkspaceFile: read, writeWorkspaceFile: write,
   configureToolchainPaths: async (paths: import("../../lib/ipc/types").ToolPaths) => ({ ok: true, data: paths }), getToolchainStatus: tools,
   runWorkspaceFile: run, startDebugSession: debug, runGoTests: testRun, stopCurrentRun: stop,

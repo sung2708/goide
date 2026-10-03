@@ -505,3 +505,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Isolated implementation under verification: a waitable original leader pins process-group signal authority; raw mutable child/reaping access is replaced by owned I/O and explicit waits. Status is consumed only after scoped group/root signalling or the confirmed-exited EPERM fallback; cleanup still requires kernel group absence. Repeated teardown never signals a saved number after reaping. Lost wait authority fails closed.
 - Async failure/cancellation retains original child/group/UUID authority for cleanup retry and SDK preflight. Linux/macOS regression CI must pass before integration. Unix interactive-PTY/session containment and native manual/platform acceptance remain separate unfinished P0 work.
 - Full Git/addendum completion and release gates remain unfinished; no release/tag is authorized.
+
+
+## Workspace navigation persistence checkpoint (2026-10-03)
+
+- Implemented under branch verification: bounded recent workspaces, disk-backed tab/active-view restoration, explicit removal/retry, no failed-root automatic loop, and Close Workspace through the existing preservation/owned-process transition. Runtime handles/diagnostics and unsaved text are excluded from persisted metadata.
+- Validation: 46 relevant frontend checks pass, including cancelled/stale restoration and explicit dirty-workspace close. Hosted regression CI and native manual acceptance remain required. Unix interactive PTY/session containment and full Git/addendum completion remain unfinished; no release/tag is authorized.

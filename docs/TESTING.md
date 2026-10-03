@@ -407,3 +407,9 @@ PASS: commit 8346793 has successful frontend and native Windows/Linux/macOS jobs
 - Unix interactive-PTY/session ownership, native window/installer/manual acceptance and the remaining Git/addendum work remain unfinished or NOT RUN. No release/tag is authorized.
 
 - PASS locally on Windows: 5 SDK owner, 4 owned-output, 2 module-cancellation checks and the installed-gopls completion/unsaved-Unicode/restart fixture (12 checks), plus all-target MSVC Clippy and Cargo formatting. Seven new Unix-only checks are not locally run; they require branch CI before integration.
+
+
+## Workspace history/session restore validation (2026-10-03)
+
+- PASS: 46 relevant frontend checks in five files, including 12 new history/restoration checks and 22 document-safety checks. Coverage includes dirty-buffer exclusion from storage, malformed/escaping paths, bounded views/recency, unavailable files, disk read-only state, user edits during reads, stale root/unmount responses, StrictMode startup and explicit close/retry. All workbench IPC fixtures retain their existing assertions and now model root validation explicitly; the Quick Open fixture uses path-aware directory responses.
+- PASS: TypeScript typecheck and production frontend build. Complete hosted frontend/native verification for this combined branch remains pending; native window/installer/manual session acceptance is NOT RUN. No release/tag is authorized.
