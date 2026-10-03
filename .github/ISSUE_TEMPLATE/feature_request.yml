@@ -1,12 +1,12 @@
 name: Feature Request
-description: Propose a new feature, improvement, or workflow for GoIDE
+description: Propose a new feature, improvement, or workflow for Goro
 title: "feat: "
 labels: ["enhancement"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for suggesting an improvement to GoIDE. Please check `docs/PRODUCT.md` and `docs/ROADMAP.md` first to see whether the feature aligns with GoIDE's product principles and roadmap.
+        Thank you for suggesting an improvement to Goro. Please check `docs/PRODUCT.md` and `docs/ROADMAP.md` first to see whether the feature aligns with Goro's product principles and roadmap.
   - type: textarea
     id: problem
     attributes:

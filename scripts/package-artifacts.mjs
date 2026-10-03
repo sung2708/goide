@@ -141,51 +141,54 @@ function main() {
   console.log(`Searching for bundle outputs in:`, bundleDirs);
 
   const matchedArtifacts = [];
+  const productName = JSON.parse(readFileSync(resolve(ROOT_DIR, "src-tauri", "tauri.conf.json"), "utf8")).productName;
+  const productPrefix = `${productName}_${tag.slice(1)}_`.toLowerCase();
+  const isCurrentProduct = (name) => name.toLowerCase().startsWith(productPrefix);
 
   for (const bDir of bundleDirs) {
     if (platform === "windows") {
-      // 1. NSIS setup executable: goide-v{VERSION}-windows-{ARCH}-setup.exe
-      const nsisFiles = findFilesRecursive(bDir, (name) => name.endsWith(".exe") && !name.endsWith(".exe.sig"));
+      // 1. NSIS setup executable: goro-v{VERSION}-windows-{ARCH}-setup.exe
+      const nsisFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".exe") && !name.endsWith(".exe.sig"));
       for (const nsis of nsisFiles) {
         matchedArtifacts.push({
           source: nsis,
-          targetName: `goide-${tag}-windows-${arch}-setup.exe`,
+          targetName: `goro-${tag}-windows-${arch}-setup.exe`,
         });
       }
 
-      // 2. MSI installer: goide-v{VERSION}-windows-{ARCH}.msi
-      const msiFiles = findFilesRecursive(bDir, (name) => name.endsWith(".msi"));
+      // 2. MSI installer: goro-v{VERSION}-windows-{ARCH}.msi
+      const msiFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".msi"));
       for (const msi of msiFiles) {
         matchedArtifacts.push({
           source: msi,
-          targetName: `goide-${tag}-windows-${arch}.msi`,
+          targetName: `goro-${tag}-windows-${arch}.msi`,
         });
       }
     } else if (platform === "macos") {
-      // 3. DMG: goide-v{VERSION}-macos-{ARCH}.dmg
-      const dmgFiles = findFilesRecursive(bDir, (name) => name.endsWith(".dmg"));
+      // 3. DMG: goro-v{VERSION}-macos-{ARCH}.dmg
+      const dmgFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".dmg"));
       for (const dmg of dmgFiles) {
         matchedArtifacts.push({
           source: dmg,
-          targetName: `goide-${tag}-macos-${arch}.dmg`,
+          targetName: `goro-${tag}-macos-${arch}.dmg`,
         });
       }
     } else if (platform === "linux") {
-      // 4. AppImage: goide-v{VERSION}-linux-{ARCH}.AppImage
-      const appImageFiles = findFilesRecursive(bDir, (name) => name.endsWith(".AppImage"));
+      // 4. AppImage: goro-v{VERSION}-linux-{ARCH}.AppImage
+      const appImageFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".AppImage"));
       for (const appImg of appImageFiles) {
         matchedArtifacts.push({
           source: appImg,
-          targetName: `goide-${tag}-linux-${arch}.AppImage`,
+          targetName: `goro-${tag}-linux-${arch}.AppImage`,
         });
       }
 
-      // 5. Debian package: goide-v{VERSION}-linux-{ARCH}.deb
-      const debFiles = findFilesRecursive(bDir, (name) => name.endsWith(".deb"));
+      // 5. Debian package: goro-v{VERSION}-linux-{ARCH}.deb
+      const debFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".deb"));
       for (const deb of debFiles) {
         matchedArtifacts.push({
           source: deb,
-          targetName: `goide-${tag}-linux-${arch}.deb`,
+          targetName: `goro-${tag}-linux-${arch}.deb`,
         });
       }
     }

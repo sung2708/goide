@@ -13,6 +13,7 @@ const docs = [
   "CODE_OF_CONDUCT.md",
   "docs/README.md",
   "docs/PRODUCT.md",
+  "docs/BRAND.md",
   "docs/ARCHITECTURE.md",
   "docs/DEVELOPMENT.md",
   "docs/BUILDING.md",

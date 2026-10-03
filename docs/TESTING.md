@@ -1,6 +1,6 @@
-# Testing GoIDE
+# Testing Goro
 
-GoIDE maintains a comprehensive automated testing suite to prevent behavioral regressions across editor operations, runtime inspection, and IPC communication.
+Goro maintains a comprehensive automated testing suite to prevent behavioral regressions across editor operations, runtime inspection, and IPC communication.
 
 ---
 
@@ -102,9 +102,11 @@ Multi-document regressions exercise independent dirty tab buffers, reread avoida
 
 Problems tests cover actual diagnostic coordinates/codes, compiler paths with Windows drives and spaces, outside-workspace/traversal rejection, race stack exclusion, severity filtering, keyboard navigation, and stale row removal. EditorShell integration verifies that located gopls errors appear in Problems and disappear immediately when their buffer changes. Existing diagnostics polling, autosave, BottomPanel, and editor navigation tests remain applicable. Workspace-wide LSP and structured test/race diagnostics are not claimed complete.
 
+
 ## gopls teardown hardening
 
 The persistent gopls process now owns its process tree through a synchronous native owner. Teardown terminates descendants even when the root exits first, reaps the root, then joins its bounded protocol reader. Explicit application shutdown propagates teardown failures. LSP headers are bounded at 16 KiB before allocation, duplicate Content-Length headers are rejected, and bodies remain bounded at 16 MiB. Windows tests verify scoped descendant termination, an unrelated process surviving, and repeated stop calls; parser and session teardown tests pass. This is lifecycle hardening, not completion of the addendum's language features or platform release gates.
+
 
 ## Workspace language queries milestone
 
@@ -114,11 +116,13 @@ Requests validate scoped Go files and positions, limit the synchronized set to 1
 
 Validation includes real gopls definition/reference/hover queries over unsaved changes across two files without writing disk, protocol content/location parsing, Windows URI normalization, frontend stale-response/error handling, and EditorShell F12 navigation to the returned file/detailed position. The implementation follows the [LSP 3.17 language feature specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#languageFeatures).
 
+
 ## Reviewed Format Document milestone
 
 Format Document (Shift+Alt+F, also in the command palette) requests actual gopls formatting edits for the current unsaved Go buffer. A review dialog shows complete before/after source. Cancel leaves the buffer unchanged; Apply marks the edited buffer dirty without writing disk or changing its saved baseline. A later Save/Save All retains optimistic conflict checks. The shared document edit operation validates an entire proposed set before publishing any change, refuses changed snapshots/read-only files/invalid or duplicate paths/pending saves, and retains baselines for already-open and newly opened documents.
 
 Native edit conversion validates UTF-16 positions, Unicode scalar boundaries, range ordering and overlaps, and the existing size limits. Reviewed controlled values synchronize immediately before the editor wrapper can defer them behind a typing timer. CodeMirror changes retain cursor placement through whitespace-only formatting and support Undo; other changes conservatively retain a clamped line/column. Applying a format retires stale diagnostics and completion requests. Tests cover real gopls formatting without disk writes, CRLF/Unicode/range safety, review cancellation and stale results, multi-file atomicity and baseline retention, real CodeMirror cursor/Undo behavior, and EditorShell format-review-save integration. Format on Save, Organize Imports, Rename and Code Actions remain unfinished. This milestone does not complete the addendum or release gates.
+
 
 ## Reviewed Organize Imports milestone
 
@@ -127,6 +131,7 @@ Organize Imports is available in the shared command palette and requests the act
 The persistent session tracks the versions it sends for each open document. Both WorkspaceEdit `changes` and versioned `documentChanges` are accepted for the requested file; stale versions, other files, overlaps and resource operations are rejected before applying. Disabled actions show their returned reason. Unresolved actions may be resolved through gopls; actions requiring unsupported command execution or multiple-choice selection report that limitation. Automatic import organization on Save and the broader Code Actions chooser remain unfinished.
 
 Validation includes real gopls adding a missing fmt import and removing an unused os import from unsaved text without writing disk, version/path/resource-operation rejection, palette review/Cancel/Apply integration, and completion/server-teardown compatibility. See the official [gopls code transformation documentation](https://go.dev/gopls/features/transformation).
+
 
 ### Reviewed symbol rename checkpoint — 2026-10-03
 
@@ -367,3 +372,10 @@ The full latest repository suite, complete Git/addendum requirements, Windows su
 - PASS: 5 synchronous-owner tests, including no first instruction before job assignment, registration failure preventing project execution, cancellation after assignment before resumption, retained failed cleanup and scoped descendant retirement.
 - PASS: 4 owned-output tests and all-target MSVC Clippy. Actual Go test and Go/gopls/Delve probe fixtures also passed for the suspended SDK path.
 - This native-only change does not alter frontend contracts. Async Run/Delve/PTY spawn registration and Linux/macOS/native-window/manual performance acceptance remain NOT RUN or unfinished; this is not a release gate pass.
+
+
+## Goro brand integration validation (2026-10-03)
+
+- PASS: the exact staged brand snapshot passes TypeScript, production build (261 modules), documentation links, synchronized version checks, the artifact-selection test and 19 theme/settings/safe-close frontend tests.
+- PASS: exported PNG dimensions/RGBA, native 32 px icon consistency and ICO entry bounds; the 128 px mascot was visually inspected.
+- The staged change includes canonical brand assets, native/display names, favicon, documentation/attribution and selective welcome/titlebar/close copy. The separate workbench redesign is not part of this checkpoint. Existing black-and-white default and named palettes remain in the committed frontend. Native installer/window/platform icon acceptance is NOT RUN; no release/tag is created.

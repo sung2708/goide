@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 198 52" fill="none"><title>GoIDE</title><g transform="scale(.48)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 174 52" fill="none"><title>Goro</title><g transform="scale(.48)">
   
-  <desc>GoIDE adaptation of Renee French's Go gopher, CC BY 4.0. Redrawn with three concurrent flow trails.</desc>
+  <desc>Goro adaptation of Renee French's Go gopher, CC BY 4.0. Redrawn with three concurrent flow trails.</desc>
   <g stroke="#35CDBE" stroke-width="6" stroke-linecap="round">
     <path d="M64 48C81 48 78 34 95 34"/><path d="M65 61H95"/><path d="M64 74C81 74 78 88 95 88"/>
   </g>
@@ -24,4 +24,4 @@
   <circle cx="29" cy="77" r="2" fill="#F4B45F"/>
   <circle cx="85" cy="61" r="2.8" fill="#F4B45F"/>
 
-</g><g transform="translate(58 12) scale(.65)"><path transform="translate(0 0)" d="M36 10C30 3 7 2 7 25S28 50 38 40V27H25" stroke="#158D83" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(45 0)" d="M8 25C8 9 34 9 34 25S8 42 8 25Z" stroke="#158D83" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(87 0)" d="M8 6H32M20 6V44M8 44H32" stroke="#123A50" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(123 0)" d="M8 6H20C44 6 44 44 20 44H8Z" stroke="#123A50" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(167 0)" d="M34 6H8V44H34M8 25H30" stroke="#123A50" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/></g></svg>
+</g><g transform="translate(58 12) scale(.65)"><path transform="translate(0 0)" d="M36 10C30 3 7 2 7 25S28 50 38 40V27H25" stroke="#158D83" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(45 0)" d="M8 28C8 10 34 10 34 28S8 46 8 28Z" stroke="#158D83" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(87 0)" d="M8 43V15M8 26C8 15 21 10 29 16" stroke="#123A50" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/><path transform="translate(120 0)" d="M8 28C8 10 34 10 34 28S8 46 8 28Z" stroke="#123A50" stroke-width="5" stroke-linecap="square" stroke-linejoin="round"/></g></svg>

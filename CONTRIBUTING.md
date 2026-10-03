@@ -1,8 +1,8 @@
-# Contributing to GoIDE
+# Contributing to Goro
 
-Thank you for your interest in contributing to GoIDE!
+Thank you for your interest in contributing to Goro!
 
-GoIDE is a desktop IDE focused on Go source editing, runtime inspection, concurrency analysis, race-detector workflows, and lightweight debugger controls.
+Goro is a desktop IDE focused on Go source editing, runtime inspection, concurrency analysis, race-detector workflows, and lightweight debugger controls.
 
 Please take a few moments to review these guidelines before submitting code, issues, or documentation.
 
@@ -55,7 +55,7 @@ For complete platform-specific setup details, consult [docs/BUILDING.md](docs/BU
 
 ## Branching Model
 
-GoIDE follows a lightweight trunk-friendly branching model:
+Goro follows a lightweight trunk-friendly branching model:
 
 - `main`: The primary stable development branch. Must remain green and releasable at all times.
 - `develop`: Integration branch for larger multi-feature merges before landing in `main`.
@@ -70,7 +70,7 @@ Always branch from the latest `main` (or `develop` for active milestone cycles).
 
 ## Commit Message Conventions
 
-GoIDE enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). This allows our automated release tooling to generate accurate changelogs and categorize release notes.
+Goro enforces [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/). This allows our automated release tooling to generate accurate changelogs and categorize release notes.
 
 Format:
 ```

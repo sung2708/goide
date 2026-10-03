@@ -1,12 +1,12 @@
-# GoIDE Versioning Policy
+# Goro Versioning Policy
 
-GoIDE adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`).
+Goro adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`).
 
 ---
 
 ## 1. Pre-1.0 Versioning Track
 
-GoIDE has not yet reached stable 1.0 production maturity. During the pre-1.0 lifecycle, versions are structured as:
+Goro has not yet reached stable 1.0 production maturity. During the pre-1.0 lifecycle, versions are structured as:
 
 ```
 0.MINOR.PATCH[-PRERELEASE]
@@ -45,7 +45,7 @@ The repository contains version declarations across three configuration files:
 2. `src-tauri/tauri.conf.json`: `"version": "..."`
 3. `src-tauri/Cargo.toml`: `version = "..."`
 
-To prevent version drift, GoIDE provides an automated version manager tool (`scripts/version-manager.mjs`):
+To prevent version drift, Goro provides an automated version manager tool (`scripts/version-manager.mjs`):
 
 ```bash
 # Check that all version sources are synchronized
@@ -75,6 +75,6 @@ Early repository development created tags `v1.0.0`, `v1.0.1`, `v1.0.2`, and `v1.
 We strongly recommend **Option A**:
 1. **Preserve Historical Git Tags**: Keep `v1.0.0`, `v1.0.1`, `v1.0.2`, and `v1.1` in Git history to ensure no commit references or external links break.
 2. **Archive Old GitHub Release Descriptions**: Edit existing GitHub Release entries for `v1.0.0` through `v1.1` to add a notice:
-   > *"Notice: This release represents an early developer prototype. GoIDE is currently undergoing a formal pre-1.0 stabilization track leading to the true v1.0.0 production release."*
+   > *"Notice: This release represents an early developer prototype. Goro is currently undergoing a formal pre-1.0 stabilization track leading to the true v1.0.0 production release."*
 3. **Current Synchronized Baseline**: Repository metadata (`package.json`, `tauri.conf.json`, `Cargo.toml`) is synchronized at **`0.2.0-alpha.1`** as the first official release candidate of the Alpha stabilization milestone.
 4. **No Destructive Deletions**: Do not delete remote Git tags or rewrite history without explicit written maintainer approval.

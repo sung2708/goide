@@ -2159,7 +2159,7 @@ function EditorShell() {
           language.close();
           void handleOpenFile(location.path).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === location.path) requestJump(location.line, location.column); });
         }} />
-        <span className="workspace-brand"><img src="/brand/icon-small.svg" alt="" width="20" height="20" />GoIDE</span>
+        <span className="workspace-brand"><img src="/brand/icon-small.svg" alt="" width="20" height="20" />Goro</span>
         <button
           type="button"
           className="workspace-search"

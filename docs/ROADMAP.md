@@ -1,9 +1,9 @@
-# GoIDE Product Roadmap
+# Goro Product Roadmap
 
-This document outlines the engineering and product roadmap for GoIDE leading toward its first production-stable 1.0 release.
+This document outlines the engineering and product roadmap for Goro leading toward its first production-stable 1.0 release.
 
 > [!NOTE]
-> Historical `v1.x` prototype tags do not indicate product maturity. GoIDE is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
+> Historical `v1.x` prototype tags do not indicate product maturity. Goro is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
 
 ---
 
@@ -69,7 +69,7 @@ Phase 1: Foundation & Hygiene  ──►  Phase 2: Alpha (0.2.x)  ──►  Pha
 
 ### Priority and Evidence Rules
 
-P0 is required core before approaching Beta. P1 is the strong initial-stable target. P2 differentiates GoIDE after P0 workflows are reliable. Post-1.0 is explicitly outside the initial release. Missing P2 alone does not block Alpha/Beta/RC unless selected as part of that release's feature set.
+P0 is required core before approaching Beta. P1 is the strong initial-stable target. P2 differentiates Goro after P0 workflows are reliable. Post-1.0 is explicitly outside the initial release. Missing P2 alone does not block Alpha/Beta/RC unless selected as part of that release's feature set.
 
 Do not implement P1 while fundamental P0 architecture is broken or P2 while P0 workflows are unreliable. Existing checked entries describe implemented baseline capabilities, not full compliance with the expanded requirements or release readiness. Unchecked entries include missing capabilities and partial implementations whose required behavior is not yet verified.
 
@@ -175,7 +175,7 @@ Implementation order is baseline green, data safety, process ownership, command/
 - [ ] Extensions and marketplace only after API stability, sandbox/security and compatibility design.
 - [ ] AI features only with separate product/privacy/security design; not required for the Go-native core.
 - [ ] Accounts/cloud sync, remote SSH/container development and real-time collaboration only with explicit product justification.
-- [ ] Database/Docker/Kubernetes IDE tooling is outside the initial GoIDE scope.
+- [ ] Database/Docker/Kubernetes IDE tooling is outside the initial Goro scope.
 
 ## 3. Product Completion Evidence
 
@@ -228,9 +228,11 @@ The workbench now combines known gopls diagnostics with located Go compiler erro
 
 Editing invalidates the affected diagnostics and the previous compiler results. Filesystem changes invalidate cached diagnostics and schedule a fresh active-file query. Workspace/branch transitions retire prior results. Build output remains available in Logs after its Problems results become obsolete. Persistent LSP workspace diagnostics, related information, and structured test/race problem sources remain unfinished; this milestone does not meet the complete addendum or release gate.
 
+
 ## gopls teardown hardening
 
 The persistent gopls process now owns its process tree through a synchronous native owner. Teardown terminates descendants even when the root exits first, reaps the root, then joins its bounded protocol reader. Explicit application shutdown propagates teardown failures. LSP headers are bounded at 16 KiB before allocation, duplicate Content-Length headers are rejected, and bodies remain bounded at 16 MiB. Windows tests verify scoped descendant termination, an unrelated process surviving, and repeated stop calls; parser and session teardown tests pass. This is lifecycle hardening, not completion of the addendum's language features or platform release gates.
+
 
 ## Workspace language queries milestone
 
@@ -240,11 +242,13 @@ Requests validate scoped Go files and positions, limit the synchronized set to 1
 
 Validation includes real gopls definition/reference/hover queries over unsaved changes across two files without writing disk, protocol content/location parsing, Windows URI normalization, frontend stale-response/error handling, and EditorShell F12 navigation to the returned file/detailed position. The implementation follows the [LSP 3.17 language feature specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#languageFeatures).
 
+
 ## Reviewed Format Document milestone
 
 Format Document (Shift+Alt+F, also in the command palette) requests actual gopls formatting edits for the current unsaved Go buffer. A review dialog shows complete before/after source. Cancel leaves the buffer unchanged; Apply marks the edited buffer dirty without writing disk or changing its saved baseline. A later Save/Save All retains optimistic conflict checks. The shared document edit operation validates an entire proposed set before publishing any change, refuses changed snapshots/read-only files/invalid or duplicate paths/pending saves, and retains baselines for already-open and newly opened documents.
 
 Native edit conversion validates UTF-16 positions, Unicode scalar boundaries, range ordering and overlaps, and the existing size limits. Reviewed controlled values synchronize immediately before the editor wrapper can defer them behind a typing timer. CodeMirror changes retain cursor placement through whitespace-only formatting and support Undo; other changes conservatively retain a clamped line/column. Applying a format retires stale diagnostics and completion requests. Tests cover real gopls formatting without disk writes, CRLF/Unicode/range safety, review cancellation and stale results, multi-file atomicity and baseline retention, real CodeMirror cursor/Undo behavior, and EditorShell format-review-save integration. Format on Save, Organize Imports, Rename and Code Actions remain unfinished. This milestone does not complete the addendum or release gates.
+
 
 ## Reviewed Organize Imports milestone
 
@@ -253,6 +257,7 @@ Organize Imports is available in the shared command palette and requests the act
 The persistent session tracks the versions it sends for each open document. Both WorkspaceEdit `changes` and versioned `documentChanges` are accepted for the requested file; stale versions, other files, overlaps and resource operations are rejected before applying. Disabled actions show their returned reason. Unresolved actions may be resolved through gopls; actions requiring unsupported command execution or multiple-choice selection report that limitation. Automatic import organization on Save and the broader Code Actions chooser remain unfinished.
 
 Validation includes real gopls adding a missing fmt import and removing an unused os import from unsaved text without writing disk, version/path/resource-operation rejection, palette review/Cancel/Apply integration, and completion/server-teardown compatibility. See the official [gopls code transformation documentation](https://go.dev/gopls/features/transformation).
+
 
 ### Reviewed symbol rename checkpoint — 2026-10-03
 

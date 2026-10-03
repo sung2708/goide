@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-  <title>GoIDE runtime gopher</title>
-  <desc>GoIDE adaptation of Renee French's Go gopher, CC BY 4.0.</desc>
+  <title>Goro runtime gopher</title>
+  <desc>Goro adaptation of Renee French's Go gopher, CC BY 4.0.</desc>
   <rect width="32" height="32" rx="7" fill="#10232F"/>
   <g fill="none" stroke="#35CDBE" stroke-width="2.5" stroke-linecap="round">
     <path d="M20 13q4 0 4-3h4M20 18h8M20 23q4 0 4 3h4"/>
