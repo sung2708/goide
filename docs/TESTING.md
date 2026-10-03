@@ -217,3 +217,7 @@ PASS: native path validation rejects relative paths, directories and NUL input; 
 PASS: affected frontend tests cover committing path drafts, persisted Debug/Git preferences, initial Source Control view, failed native configuration, serialized application, obsolete queued preferences, retry after failed IPC and tool-inspection request invalidation. TypeScript and production build pass.
 
 NOT RUN: complete desktop/platform/tool-version matrix, interactive executable switching during debugger sessions, cross-window configuration contention and the full release acceptance suite. These results do not establish release readiness.
+
+## Early terminal-exit regression (2026-10-03)
+
+A full frontend run exposed a real ordering bug: shell exit could precede the setup acknowledgement, causing a dead shell to appear connected. The fix retains a bounded event ledger until the returned ID can be checked. PASS: 40 terminal view/ownership/ledger tests, including deterministic early exit and degraded cleanup on initial setup, early exit during retry, failed-cleanup retry, bounded event retention and existing workspace transitions. TypeScript and production build pass. Cross-platform desktop process-tree acceptance remains NOT RUN.

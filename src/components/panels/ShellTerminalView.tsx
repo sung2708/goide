@@ -11,6 +11,7 @@ import type { ShellOutputPayload } from "../../lib/ipc/types";
 import { createLatencyMetrics } from "../../features/perf/latencyMetrics";
 import { useShellTerminalOutput } from "../../features/terminal/useShellTerminalOutput";
 import { ShellWorkspaceOwnership } from "../../features/terminal/ShellWorkspaceOwnership";
+import { ShellExitLedger } from "../../features/terminal/ShellExitLedger";
 import TerminalSurface from "./TerminalSurface";
 import type { TerminalFocusOwner } from "./TerminalSurface";
 
@@ -119,6 +120,20 @@ function ShellTerminalView({
    */
   const sessionMapRef = useRef<Map<string, string>>(new Map());
   const pendingCleanupRef = useRef(new Set<string>());
+  const exitLedgerRef = useRef(new ShellExitLedger());
+  const rejectEndedSession = useCallback((id: string) => {
+    const ended = exitLedgerRef.current.get(id);
+    if (!ended) return false;
+    if (ended === "degraded") pendingCleanupRef.current.add(id);
+    else {
+      ownership.forget(id);
+      for (const [key, session] of sessionMapRef.current) if (session === id) sessionMapRef.current.delete(key);
+    }
+    shellSessionIdRef.current = null;
+    setShellSessionId(null);
+    setShellError(ended === "degraded" ? "Terminal cleanup is pending or failed. Retry cleanup before reconnecting." : "Shell session ended unexpectedly.");
+    return true;
+  }, [ownership]);
   const cleanupSurface = useCallback(async (key: string) => {
     const id = sessionMapRef.current.get(key);
     if (!id || !pendingCleanupRef.current.has(id)) return;
@@ -227,6 +242,7 @@ function ShellTerminalView({
 
         if (response.ok && response.data) {
           const newSessionId = response.data.shellSessionId;
+          if (rejectEndedSession(newSessionId)) return;
           const replay = response.data.replay ?? "";
           setShellSessionId(newSessionId);
           // Record this session in the workspace-scoped map.
@@ -264,7 +280,7 @@ function ShellTerminalView({
   // re-initialization when it changes (e.g. on file switches with a stable
   // workspace-owned surfaceKey).  The ref keeps it readable inside the effect.
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking, cleanupSurface, ownership]);
+  }, [workspacePath, surfaceKey, isWorkspaceSwitching, clearPendingTerminalWrites, resetLatencyTracking, cleanupSurface, ownership, rejectEndedSession]);
 
   // ---- Listen for shell-exit events (backend signals PTY death) ----
 
@@ -275,12 +291,14 @@ function ShellTerminalView({
     const setupExitListener = async () => {
       const dispose = await listen<{ shellSessionId: string; shellHealth?: "launch" | "degraded" | "exit" }>("shell-exit", (event) => {
         const id = event.payload.shellSessionId;
+        exitLedgerRef.current.record(id, event.payload.shellHealth === "degraded" ? "degraded" : "exit");
         const isActive = id === shellSessionIdRef.current;
         const isTracked = [...sessionMapRef.current.values()].includes(id);
         if (!isActive && !isTracked) return;
         if (event.payload.shellHealth === "degraded") {
           pendingCleanupRef.current.add(id);
           if (isActive) {
+            shellSessionIdRef.current = null;
             setShellSessionId(null);
             setShellError("Terminal cleanup is pending or failed. Retry cleanup before reconnecting.");
           }
@@ -289,6 +307,7 @@ function ShellTerminalView({
         ownership.forget(id); pendingCleanupRef.current.delete(id);
         for (const [key, session] of sessionMapRef.current) if (session === id) sessionMapRef.current.delete(key);
         if (isActive) {
+          shellSessionIdRef.current = null;
           setShellSessionId(null); setShellError("Shell session ended unexpectedly.");
         }
       });
@@ -370,8 +389,9 @@ function ShellTerminalView({
       if (switchToken !== workspaceSwitchTokenRef.current) return;
       if (response.ok && response.data) {
         const newSessionId = response.data.shellSessionId;
-        setShellSessionId(newSessionId);
         sessionMapRef.current.set(surfaceKey, newSessionId);
+        if (rejectEndedSession(newSessionId)) return;
+        setShellSessionId(newSessionId);
       } else {
         setShellError(response.error?.message ?? "Failed to start shell session.");
       }
@@ -380,7 +400,7 @@ function ShellTerminalView({
     } finally {
       setIsRetrying(false);
     }
-  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking, cleanupSurface, ownership]);
+  }, [workspacePath, surfaceKey, isRetrying, isWorkspaceSwitching, resetLatencyTracking, cleanupSurface, ownership, rejectEndedSession]);
 
   // ---- Terminal callbacks ----
 

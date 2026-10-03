@@ -362,3 +362,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: serialized preference application, obsolete queued-request rejection, visible retryable errors, native Run/Debug ownership guards and retirement of the previous gopls session.
 - Delivered: meaningful Debug executable and Git initial-view settings, with explicit command navigation taking precedence over the default view.
 - Remaining: project module/environment inspection and explicit tidy/download workflows, probe cancellation, complete platform/tool-version acceptance, and the other unfinished Git/addendum gates. No release/tag is authorized.
+
+## Early terminal-exit checkpoint (2026-10-03)
+
+- Delivered: bounded retention of native shell-exit/degraded events received before initial setup or retry returns its session ID. Ended sessions remain disconnected; degraded sessions retain cleanup ownership.
+- Delivered: retry uses a fresh native session identity after successful cleanup, without silently reviving an exited shell.
+- Remaining: the complete cross-platform process-ownership acceptance matrix and other unfinished addendum/Git requirements. No release/tag is authorized.
