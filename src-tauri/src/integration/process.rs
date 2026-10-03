@@ -141,6 +141,9 @@ pub async fn run_go_file<R: tauri::Runtime>(
         .operation()
         .await
         .map_err(|e| anyhow!(e))?;
+    crate::integration::delve::ownership::retry_cleanup()
+        .await
+        .map_err(|error| anyhow!(error))?;
     // Kill any previously running process
     {
         let mut guard = process_handle.lock().await;

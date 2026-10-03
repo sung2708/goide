@@ -118,7 +118,7 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
         "package main\nimport \"time\"\nfunc main() {\n time.Sleep(30*time.Second)\n}\n",
     )
     .unwrap();
-    let mut process = spawn_dlv_dap(&root).await.unwrap();
+    let process = spawn_dlv_dap(&root).await.unwrap();
     let result: Result<()> = async {
         let mut client = DapClient::connect(process.listen_addr).await?;
         client.initialize().await?;
@@ -158,7 +158,7 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
         Ok(())
     }
     .await;
-    let cleanup = process.child.stop().await;
+    let cleanup = process.owner.stop().await;
     std::fs::remove_dir_all(&root).unwrap();
     cleanup.unwrap();
     result.unwrap();

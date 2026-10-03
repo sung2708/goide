@@ -242,6 +242,7 @@ export type DebuggerBreakpoint = {
  */
 export type DebuggerState = {
   sessionActive: boolean;
+  cleanupPending?: boolean;
   paused: boolean;
   activeRelativePath?: string | null;
   activeLine?: number | null;

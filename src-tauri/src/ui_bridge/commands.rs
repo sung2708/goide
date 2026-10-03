@@ -64,7 +64,7 @@ struct RuntimeSignalStore {
 }
 
 struct DapSessionHandle {
-    child: crate::integration::process_job::OwnedChild,
+    owner: delve::ownership::Owner,
     stop_tx: oneshot::Sender<()>,
     control_tx: mpsc::UnboundedSender<DebuggerControlCommand>,
     sampler_task: tokio::task::JoinHandle<()>,
@@ -106,22 +106,37 @@ fn is_blocked_wait_reason(wait_reason: &str) -> bool {
         || normalized.contains("io wait")
 }
 
+async fn take_dap_session_for_cleanup() -> Option<DapSessionHandle> {
+    let handle = get_dap_session_handle();
+    let mut guard = handle.lock().await;
+    if let Some(session) = guard.as_mut() {
+        session.owner.mark_cleanup_pending();
+    }
+    guard.take()
+}
+
 async fn stop_dap_session(session: DapSessionHandle) -> Result<(), String> {
     let DapSessionHandle {
-        mut child,
+        mut owner,
         stop_tx,
         control_tx: _,
         sampler_task,
     } = session;
-    let mut sampler_task = sampler_task;
-
     let _ = stop_tx.send(());
-    let stopped = child.stop().await;
-    let timeout_result = tokio::time::timeout(Duration::from_secs(1), &mut sampler_task).await;
-    if timeout_result.is_err() {
-        // The sampler task did not complete within the timeout, abort it.
-        sampler_task.abort();
-        let _ = sampler_task.await;
+    // Keep the sampler join handle with the process and pipe readers even if
+    // teardown or this command future fails. Cleanup joins/aborts all workers.
+    owner.attach_worker(sampler_task);
+    let stopped = owner.stop().await;
+    if stopped.is_ok() {
+        let signals = get_runtime_signals_handle();
+        let mut store = signals.lock().await;
+        store.signals.clear();
+        store.healthy = false;
+        store.paused = false;
+        store.active_relative_path = None;
+        store.active_line = None;
+        store.active_column = None;
+        store.active_thread_id = None;
     }
     stopped
 }
@@ -381,10 +396,13 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
     if !stopped.ok {
         return stopped;
     }
-    if let Some(session) = get_dap_session_handle().lock().await.take() {
+    if let Some(session) = take_dap_session_for_cleanup().await {
         if let Err(error) = stop_dap_session(session).await {
             return ApiResponse::err("shutdown_failed", &error);
         }
+    }
+    if let Err(error) = delve::ownership::retry_cleanup().await {
+        return ApiResponse::err("shutdown_failed", &error);
     }
     let sessions = {
         let store = get_shell_sessions_handle();
@@ -595,6 +613,9 @@ async fn start_debug_session_internal(
     scope_column: usize,
     scope_symbol: Option<String>,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
+    if let Err(error) = delve::ownership::retry_cleanup().await {
+        return ApiResponse::err("debug_cleanup_pending", &error);
+    }
     let request = ActivateDeepTraceRequestDto {
         workspace_root,
         relative_path,
@@ -684,7 +705,14 @@ async fn start_debug_session_internal(
     // legacy launch; for package launches target_file is unused.
     let target_file = workspace_root.join(&request.relative_path);
 
-    let mut dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
+    let previous_session = take_dap_session_for_cleanup().await;
+    if let Some(previous) = previous_session {
+        if let Err(error) = stop_dap_session(previous).await {
+            return ApiResponse::err("debug_stop_failed", &error);
+        }
+    }
+
+    let dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
         Err(error) => {
             let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
@@ -695,14 +723,17 @@ async fn start_debug_session_internal(
     let mut client = match DapClient::connect(dap_process.listen_addr).await {
         Ok(client) => client,
         Err(error) => {
-            let _ = dap_process.child.stop().await;
-            return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
+            let message = dap_process.owner.cleanup_failure(&error.to_string()).await;
+            return ApiResponse::err("deep_trace_runtime_unavailable", &message);
         }
     };
 
     if let Err(error) = client.initialize().await {
-        let _ = dap_process.child.stop().await;
-        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+        let message = dap_process
+            .owner
+            .cleanup_failure(&format!("{error:#}"))
+            .await;
+        return ApiResponse::err("deep_trace_runtime_unavailable", &message);
     }
 
     if let Err(error) = client
@@ -710,8 +741,11 @@ async fn start_debug_session_internal(
         .await
     {
         let _ = client.disconnect().await;
-        let _ = dap_process.child.stop().await;
-        return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
+        let message = dap_process
+            .owner
+            .cleanup_failure(&format!("{error:#}"))
+            .await;
+        return ApiResponse::err("deep_trace_runtime_unavailable", &message);
     }
 
     let signals_handle = get_runtime_signals_handle();
@@ -734,20 +768,26 @@ async fn start_debug_session_internal(
         let resolved_path = workspace_root.join(relative_path);
         if let Err(error) = client.set_breakpoints(&resolved_path, lines).await {
             let _ = client.disconnect().await;
-            let _ = dap_process.child.stop().await;
-            return ApiResponse::err("debugger_breakpoint_failed", &format!("{error:#}"));
+            let message = dap_process
+                .owner
+                .cleanup_failure(&format!("{error:#}"))
+                .await;
+            return ApiResponse::err("debugger_breakpoint_failed", &message);
         }
     }
 
     if let Err(error) = client.configuration_done().await {
         let _ = client.disconnect().await;
-        let _ = dap_process.child.stop().await;
-        return ApiResponse::err("debugger_configuration_failed", &format!("{error:#}"));
+        let message = dap_process
+            .owner
+            .cleanup_failure(&format!("{error:#}"))
+            .await;
+        return ApiResponse::err("debugger_configuration_failed", &message);
     }
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
     let (control_tx, mut control_rx) = mpsc::unbounded_channel::<DebuggerControlCommand>();
-    let session_pid = dap_process.child.id();
+    let session_identity = dap_process.owner.identity();
     let session_handle_for_sampler = get_dap_session_handle();
     let runtime_scope = RuntimeSignalScope {
         scope_key: scope_key.clone(),
@@ -896,10 +936,18 @@ async fn start_debug_session_internal(
                                 let mut session_guard = session_handle_for_sampler.lock().await;
                                 let should_clear_current = session_guard
                                     .as_ref()
-                                    .and_then(|session| session.child.id())
-                                    == session_pid;
-                                if should_clear_current {
-                                    *session_guard = None;
+                                    .map(|session| session.owner.identity())
+                                    == Some(session_identity);
+                                let failed = if should_clear_current {
+                                    if let Some(session) = session_guard.as_mut() {
+                                        session.owner.mark_cleanup_pending();
+                                    }
+                                    session_guard.take()
+                                } else { None };
+                                drop(session_guard);
+                                if let Some(session) = failed {
+                                    // Retain failed cleanup; never retire a replacement owner by PID.
+                                    let _ = session.owner.stop().await;
                                 }
                                 should_clear_current
                             };
@@ -907,6 +955,11 @@ async fn start_debug_session_internal(
                                 let mut store = signals_handle.lock().await;
                                 store.signals.clear();
                                 store.healthy = false;
+                                store.paused = false;
+                                store.active_relative_path = None;
+                                store.active_line = None;
+                                store.active_column = None;
+                                store.active_thread_id = None;
                             }
                             break;
                         }
@@ -917,19 +970,14 @@ async fn start_debug_session_internal(
     });
 
     let session_handle = get_dap_session_handle();
-    let previous_session = {
+    {
         let mut guard = session_handle.lock().await;
-        guard.replace(DapSessionHandle {
-            child: dap_process.child,
+        *guard = Some(DapSessionHandle {
+            owner: dap_process.owner,
             stop_tx,
             control_tx,
             sampler_task,
-        })
-    };
-    if let Some(previous) = previous_session {
-        if let Err(error) = stop_dap_session(previous).await {
-            return ApiResponse::err("debug_stop_failed", &error);
-        }
+        });
     }
 
     ApiResponse::ok(ActivateDeepTraceResponseDto {
@@ -1024,10 +1072,10 @@ pub(crate) async fn start_debug_session_internal_for_test(
     .await;
 
     match spawn_result {
-        Ok(mut dap_process) => {
+        Ok(dap_process) => {
             // Minimal cleanup – kill the process immediately; we only care about
             // whether Delve could be launched at all in this test helper.
-            let _ = dap_process.child.stop().await;
+            let _ = dap_process.owner.stop().await;
             ApiResponse::ok(ActivateDeepTraceResponseDto {
                 mode: "deep-trace".to_string(),
                 scope_key: None,
@@ -1104,6 +1152,9 @@ pub async fn configure_toolchain_paths(
             )
         }
     };
+    if let Err(error) = delve::ownership::retry_cleanup().await {
+        return ApiResponse::err("tool_configuration_busy", &error);
+    }
     let runs = get_process_handle();
     let run_guard = runs.lock().await;
     let debugger = get_dap_session_handle();
@@ -1134,6 +1185,7 @@ pub(super) async fn with_idle_go_tools<T: Send + 'static>(
     )
     .await
     .map_err(|_| "Wait for process startup/cleanup before running module commands.")??;
+    delve::ownership::retry_cleanup().await?;
     let runs = get_process_handle();
     let run_guard = runs.lock().await;
     let debugger = get_dap_session_handle();
@@ -1291,6 +1343,7 @@ fn flatten_breakpoints(store: &RuntimeSignalStore) -> Vec<DebuggerBreakpointDto>
 fn map_debugger_state(session_active: bool, store: &RuntimeSignalStore) -> DebuggerStateDto {
     DebuggerStateDto {
         session_active,
+        cleanup_pending: delve::ownership::is_pending(),
         paused: store.paused,
         active_relative_path: store.active_relative_path.clone(),
         active_line: store.active_line,
@@ -1548,7 +1601,7 @@ pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
     let session_handle = get_dap_session_handle();
     let session_active = {
         let guard = session_handle.lock().await;
-        guard.is_some()
+        guard.is_some() || delve::ownership::is_pending()
     };
     let signals_handle = get_runtime_signals_handle();
     let store = signals_handle.lock().await;
@@ -1557,12 +1610,26 @@ pub async fn get_debugger_state() -> ApiResponse<DebuggerStateDto> {
     // shape for frontend compatibility.
     let snapshot = map_debugger_state_snapshot(&store, session_active, None);
     let adapted_session_active = snapshot.status != "idle";
+    let cleanup_pending = delve::ownership::is_pending();
     ApiResponse::ok(DebuggerStateDto {
-        session_active: adapted_session_active,
-        paused: snapshot.paused,
-        active_relative_path: snapshot.active_relative_path,
-        active_line: snapshot.active_line,
-        active_column: snapshot.active_column,
+        session_active: adapted_session_active || cleanup_pending,
+        cleanup_pending,
+        paused: snapshot.paused && !cleanup_pending,
+        active_relative_path: if cleanup_pending {
+            None
+        } else {
+            snapshot.active_relative_path
+        },
+        active_line: if cleanup_pending {
+            None
+        } else {
+            snapshot.active_line
+        },
+        active_column: if cleanup_pending {
+            None
+        } else {
+            snapshot.active_column
+        },
         breakpoints: snapshot.breakpoints,
     })
 }
@@ -2281,9 +2348,19 @@ pub async fn get_workspace_branches(
 
 #[tauri::command]
 pub async fn deactivate_deep_trace() -> ApiResponse<()> {
+    let _registration = match crate::integration::lifecycle::gate().operation().await {
+        Ok(guard) => guard,
+        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
+    };
+    if let Err(error) = delve::ownership::retry_cleanup().await {
+        return ApiResponse::err("debug_stop_failed", &error);
+    }
     let session_handle = get_dap_session_handle();
     let existing_session = {
         let mut guard = session_handle.lock().await;
+        if let Some(session) = guard.as_mut() {
+            session.owner.mark_cleanup_pending();
+        }
         guard.take()
     };
 
