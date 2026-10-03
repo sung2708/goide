@@ -1,0 +1,41 @@
+import { act, renderHook } from "@testing-library/react";
+import { beforeEach, expect, it, vi } from "vitest";
+import { useExecutionPreparation } from "./useExecutionPreparation";
+import { configureToolchainPaths, getToolchainStatus } from "../../lib/ipc/client";
+import type { ToolchainStatus } from "../../lib/ipc/types";
+vi.mock("../../lib/ipc/client", () => ({ configureToolchainPaths: vi.fn(), getToolchainStatus: vi.fn() }));
+const configuration = vi.mocked(configureToolchainPaths), tools = vi.mocked(getToolchainStatus);
+const status: ToolchainStatus = { go: { available: true, status: "ready" }, gopls: { available: false, status: "missing" }, delve: { available: false, status: "missing", error: "Delve missing" } };
+const params = () => ({ root: "D:/workspace", paths: { go: "", gopls: "", dlv: "" }, cancelSave: vi.fn(), transaction: vi.fn(async (operation: () => Promise<void>) => { await operation(); return true; }) });
+beforeEach(() => { vi.clearAllMocks(); configuration.mockResolvedValue({ ok: true, data: { go: "", gopls: "", dlv: "" } }); tools.mockResolvedValue({ ok: true, data: status }); });
+it("requires Delve for Debug while Go Run does not depend on language/debugger availability", async () => {
+  const p = params(); const hook = renderHook(() => useExecutionPreparation(p)); const operation = vi.fn(async () => "actual-start");
+  await act(async () => { await expect(hook.result.current.prepare(operation, ["go", "delve"])).rejects.toThrow("Delve missing"); });
+  expect(operation).not.toHaveBeenCalled();
+  await act(async () => { expect(await hook.result.current.prepare(operation, ["go"])).toBe("actual-start"); });
+  expect(p.transaction).toHaveBeenCalledWith(expect.any(Function), true, true);
+});
+it("never launches after cancellation or a preference change while the actual probe is pending", async () => {
+  let finish!: (value: { ok: boolean; data: ToolchainStatus }) => void;
+  tools.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
+  const p = params(); const { result, rerender } = renderHook(props => useExecutionPreparation(props), { initialProps: p });
+  const operation = vi.fn(); let pending!: Promise<unknown>;
+  await act(async () => { pending = result.current.prepare(operation, ["go"]); void pending.catch(() => {}); });
+  expect(result.current.phase).toBe("preparing");
+  rerender({ ...p, paths: { ...p.paths, go: "D:/other/go.exe" } });
+  await act(async () => { finish({ ok: true, data: status }); await expect(pending).rejects.toThrow(/preferences changed/); });
+  expect(operation).not.toHaveBeenCalled();
+  await act(async () => { pending = result.current.prepare(operation, ["go"]); void pending.catch(() => {}); });
+  act(() => result.current.cancel());
+  await act(async () => { finish({ ok: true, data: status }); await expect(pending).rejects.toThrow(/cancelled/); });
+  expect(operation).not.toHaveBeenCalled(); expect(p.cancelSave).toHaveBeenCalledOnce();
+});
+it("does not configure or launch when Save All fails, and does not fall back to previous tool paths", async () => {
+  const p = params(); p.transaction.mockRejectedValueOnce(new Error("inactive file conflict"));
+  const { result } = renderHook(() => useExecutionPreparation(p)); const operation = vi.fn();
+  await act(async () => { await expect(result.current.prepare(operation, ["go"])).rejects.toThrow("inactive file conflict"); });
+  expect(configuration).not.toHaveBeenCalled(); expect(operation).not.toHaveBeenCalled();
+  configuration.mockResolvedValue({ ok: false, error: { code: "invalid_path", message: "configured Go path missing" } });
+  await act(async () => { await expect(result.current.prepare(operation, ["go"])).rejects.toThrow("configured Go path missing"); });
+  expect(tools).not.toHaveBeenCalled(); expect(operation).not.toHaveBeenCalled();
+});

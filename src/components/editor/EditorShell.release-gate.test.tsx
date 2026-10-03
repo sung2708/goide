@@ -17,6 +17,8 @@ const branchSnapshot = {
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...args: unknown[]) => openMock(...args) }));
 vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
+  configureToolchainPaths: async (paths: import("../../lib/ipc/types").ToolPaths) => ({ ok: true, data: paths }),
+  getToolchainStatus: async () => ({ ok: true, data: { go: { available: true, status: "ready" }, gopls: { available: false, status: "missing" }, delve: { available: true, status: "ready" } } }),
   readWorkspaceFile: (...args: unknown[]) => readMock(...args),
   writeWorkspaceFile: (...args: unknown[]) => writeMock(...args),
   getWorkspaceBranches: (...args: unknown[]) => branchesMock(...args),
@@ -219,10 +221,12 @@ describe("Release gate: branch switching document safety", () => {
     let finish!: (value: { ok: boolean }) => void;
     runMock.mockImplementation(() => new Promise((resolve) => { finish = resolve; }));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Run active Go file" })); });
+    await waitFor(() => expect(runMock).toHaveBeenCalledOnce());
+    // Startup acknowledges ownership before document preparation releases its lock.
+    await act(async () => { finish({ ok: true }); });
     await selectMain();
     expect(switchMock).not.toHaveBeenCalled();
     expect(screen.getByText(/stop the active run or debug session/i)).toBeInTheDocument();
-    await act(async () => { finish({ ok: true }); });
   });
 
   it("does not lose an edit made in the microtask gap after a clean save check", async () => {
