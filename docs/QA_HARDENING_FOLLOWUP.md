@@ -71,3 +71,9 @@ The Windows and macOS backend jobs in run 37146247220 failed in different fixtur
 Windows focused output tests passed (6 tests), the inherited-pipe regression passed 20 consecutive subprocess runs, and all-target Clippy passed with warnings denied. Full Windows suite results and hosted macOS verification are recorded after completion; this fixture correction does not certify native platform acceptance or resolve the outstanding Unix PTY containment gate.
 
 The existing `v0.2.0-alpha.1` tag continues to point to its original commit. Rerunning that tag's workflow does not incorporate later fixes on main; a release containing this correction needs a new version/tag.
+
+## Release frontend fixture follow-up (2026-10-04)
+
+The alpha.4 Windows release job failed because the Save All failure test waited for the writer invocation, then synchronously queried the error banner before the awaited write failure and React update completed. The test now waits for the actual permission-denied banner and disables Auto Save for this explicit Save All scenario. It still verifies exactly one write, no extra reads, and preservation of both dirty buffers. Production save behavior and test timeouts are unchanged.
+
+Validation: 23 document-safety tests and the complete 798-test/124-file frontend suite passed on Windows. Typecheck, production build, all 31 release script tests, release workflow actionlint, version consistency and documentation links passed; npm audit reported zero vulnerabilities. Native code is unchanged by this correction. Hosted release execution, actual installers and native acceptance still require their own results.
