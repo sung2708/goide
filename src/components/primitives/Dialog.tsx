@@ -83,7 +83,8 @@ function Dialog({
       style={style}
       className={className}
       tabIndex={-1}
-      onCancel={() => {
+      onCancel={(event) => {
+        event.preventDefault();
         onOpenChange(false);
       }}
       onClick={(event) => {

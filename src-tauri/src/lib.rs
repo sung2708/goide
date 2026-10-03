@@ -61,6 +61,8 @@ pub fn run() {
             ui_bridge::commands::get_runtime_availability,
             ui_bridge::commands::get_toolchain_status,
             ui_bridge::project_commands::inspect_go_project,
+            ui_bridge::project_commands::run_go_module_action,
+            ui_bridge::project_commands::confirm_go_module_cleanup,
             ui_bridge::commands::get_runtime_signals,
             ui_bridge::commands::get_runtime_panel_snapshot,
             ui_bridge::commands::get_runtime_topology_snapshot,

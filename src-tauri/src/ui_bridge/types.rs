@@ -15,6 +15,7 @@ pub use crate::integration::rename_symbol::{
 };
 use serde::{Deserialize, Serialize};
 pub use crate::integration::go_project::{ProjectInfo as GoProjectInfoDto, Request as GoProjectRequestDto};
+pub use crate::integration::go_project::actions::{Output as GoModuleOutputDto, Request as GoModuleRequestDto};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
