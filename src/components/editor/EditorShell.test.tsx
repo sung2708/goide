@@ -5,6 +5,7 @@ import EditorShell from "./EditorShell";
 
 const openMock = vi.fn();
 const listWorkspaceEntriesMock = vi.fn();
+const indexWorkspaceFilesMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
@@ -15,6 +16,7 @@ vi.mock("../../lib/ipc/client", async () => {
   const actual = await vi.importActual("../../lib/ipc/client");
   return {
     ...actual,
+    indexWorkspaceFiles: (...args: unknown[]) => indexWorkspaceFilesMock(...args),
     listWorkspaceEntries: (...args: unknown[]) => listWorkspaceEntriesMock(...args),
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
   };
@@ -52,6 +54,7 @@ describe("EditorShell panels", () => {
     vi.clearAllMocks();
     openMock.mockResolvedValue(null);
     listWorkspaceEntriesMock.mockResolvedValue({ ok: true, data: [] });
+    indexWorkspaceFilesMock.mockResolvedValue({ ok: true, data: { files: [], notice: null } });
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
   });
 
@@ -197,6 +200,7 @@ describe("EditorShell panels", () => {
   it("opens quick file picker with Ctrl+P and opens selected file on Enter", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
+    indexWorkspaceFilesMock.mockResolvedValue({ ok: true, data: { files: ["main.go", "pkg/helper.go"], notice: null } });
     listWorkspaceEntriesMock.mockImplementation(async (_root: string, path?: string) => ({ ok: true, data: path === "pkg"
       ? [{ name: "helper.go", path: "pkg/helper.go", isDir: false }]
       : [{ name: "main.go", path: "main.go", isDir: false }, { name: "pkg", path: "pkg", isDir: true }] }));

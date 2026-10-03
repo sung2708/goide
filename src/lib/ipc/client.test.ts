@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { deactivateDeepTrace, debuggerToggleBreakpoint, debuggerContinue, debuggerPause, debuggerStepOver, debuggerStepInto, debuggerStepOut, queryDebuggerInspection, runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { indexWorkspaceFiles, deactivateDeepTrace, debuggerToggleBreakpoint, debuggerContinue, debuggerPause, debuggerStepOver, debuggerStepInto, debuggerStepOut, queryDebuggerInspection, runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   it("requires native debugger data and preserves the workspace and observed stop identity", async () => {
@@ -136,4 +136,17 @@ describe("observed debugger control IPC", () => {
     await operation(request);
     expect(invokeMock).toHaveBeenCalledWith(command, { request });
   });
+});
+
+it("requires desktop indexing and forwards the request identity without changing partial results", async () => {
+  delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+  invokeMock.mockReset();
+  expect(await indexWorkspaceFiles("C:/workspace", "index-id")).toMatchObject({ ok: false, error: { code: "index_native_required" } });
+  expect(invokeMock).not.toHaveBeenCalled();
+  (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+  const result = { ok: true, data: { files: ["src/name Ω.go"], notice: "Partial index" } };
+  invokeMock.mockResolvedValue(result);
+  expect(await indexWorkspaceFiles("C:/workspace", "index-id")).toEqual(result);
+  expect(invokeMock).toHaveBeenCalledWith("index_workspace_files", { workspaceRoot: "C:/workspace", requestId: "index-id" });
+  delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
 });

@@ -77,6 +77,130 @@ pub fn cancel(id: &str) -> Result<bool, String> {
     active.cancelled.insert(id.into(), Instant::now());
     Ok(false)
 }
+fn register(id: &str) -> Result<(Arc<AtomicBool>, Request), String> {
+    if id.is_empty() || id.len() > 128 {
+        return Err("Invalid search request identity".into());
+    }
+    let token = Arc::new(AtomicBool::new(false));
+    {
+        let mut active = ACTIVE
+            .get_or_init(Default::default)
+            .lock()
+            .map_err(|_| "Search registry unavailable")?;
+        active
+            .cancelled
+            .retain(|_, time| time.elapsed() < Duration::from_secs(30));
+        if active.cancelled.remove(id).is_some() {
+            return Err("Search cancelled before execution".into());
+        }
+        if active.active.contains_key(id) || active.active.len() >= 8 {
+            return Err("Search capacity reached. Cancel pending requests first.".into());
+        }
+        active.active.insert(id.into(), token.clone());
+    }
+    Ok((token, Request(id.into())))
+}
+
+fn workspace_walker(root: &Path) -> WalkBuilder {
+    let mut walker = WalkBuilder::new(root);
+    walker
+        .follow_links(false)
+        .hidden(false)
+        .require_git(false)
+        .max_depth(Some(64))
+        .filter_entry(|entry| {
+            !entry.file_type().is_some_and(|kind| kind.is_dir())
+                || !matches!(
+                    entry.file_name().to_str(),
+                    Some(
+                        ".git"
+                            | "node_modules"
+                            | "target"
+                            | "dist"
+                            | ".turbo"
+                            | ".cache"
+                            | "vendor"
+                    )
+                )
+        });
+    walker
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileIndexReport {
+    pub files: Vec<String>,
+    pub notice: Option<String>,
+}
+
+/// Index names only; never read source contents or follow links.
+pub fn index_files(root: &str, id: &str) -> Result<FileIndexReport, String> {
+    let root = Path::new(root).canonicalize().map_err(|e| e.to_string())?;
+    if !root.is_dir() {
+        return Err("Workspace must be a directory".into());
+    }
+    let (token, _request) = register(id)?;
+    let started = Instant::now();
+    let mut report = FileIndexReport {
+        files: vec![],
+        notice: None,
+    };
+    let mut bytes = 0;
+    for (entries, entry) in workspace_walker(&root).build().enumerate() {
+        if token.load(Ordering::Acquire) || crate::integration::lifecycle::gate().is_closing() {
+            return Err("File indexing cancelled".into());
+        }
+        if started.elapsed() >= Duration::from_secs(5)
+            || entries >= 40000
+            || report.files.len() >= 20000
+            || bytes >= 4 * 1024 * 1024
+        {
+            report.notice = Some(
+                "File index reached its time/entry/file/path budget. Some files are omitted."
+                    .into(),
+            );
+            break;
+        }
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => {
+                report.notice =
+                    Some("Some folders could not be indexed. Results are incomplete.".into());
+                continue;
+            }
+        };
+        if entry.error().is_some() {
+            report.notice =
+                Some("Some ignore rules could not be read. Results may be incomplete.".into());
+        }
+        if entry.depth() >= 64 && entry.file_type().is_some_and(|kind| kind.is_dir()) {
+            report.notice = Some("Folders beyond depth 64 were omitted from the index.".into());
+        }
+        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let path = entry.path();
+        // Recheck a path that may have been replaced since the walker observed it.
+        if !std::fs::symlink_metadata(path).is_ok_and(|metadata| metadata.is_file())
+            || !path
+                .canonicalize()
+                .is_ok_and(|resolved| resolved.starts_with(&root))
+        {
+            report.notice =
+                Some("Some files changed or could not be indexed. Results are incomplete.".into());
+            continue;
+        }
+        let Some(relative) = path.strip_prefix(&root).ok().and_then(|path| path.to_str()) else {
+            report.notice = Some("Unsupported filenames were omitted from the index.".into());
+            continue;
+        };
+        bytes += relative.len();
+        report.files.push(relative.replace('\\', "/"));
+    }
+    report.files.sort();
+    Ok(report)
+}
+
 pub(super) fn globs(patterns: &[String]) -> Result<GlobSet, String> {
     if patterns.len() > 32 || patterns.iter().any(|pattern| pattern.len() > 1024) {
         return Err("At most 32 glob filters of 1024 bytes are supported.".into());
@@ -142,24 +266,7 @@ pub fn search(
     let include = globs(&options.include)?;
     let exclude = globs(&options.exclude)?;
     let matcher = matcher(query, &options)?;
-    let token = Arc::new(AtomicBool::new(false));
-    {
-        let mut active = ACTIVE
-            .get_or_init(Default::default)
-            .lock()
-            .map_err(|_| "Search registry unavailable")?;
-        active
-            .cancelled
-            .retain(|_, time| time.elapsed() < Duration::from_secs(30));
-        if active.cancelled.remove(id).is_some() {
-            return Err("Search cancelled before execution".into());
-        }
-        if active.active.contains_key(id) || active.active.len() >= 8 {
-            return Err("Search capacity reached. Cancel pending requests first.".into());
-        }
-        active.active.insert(id.into(), token.clone());
-    }
-    let _request = Request(id.into());
+    let (token, _request) = register(id)?;
     let started = Instant::now();
     let mut report = SearchReport {
         files: vec![],
@@ -169,27 +276,7 @@ pub fn search(
     };
     let mut bytes = 0;
     let mut matches_count = 0;
-    let mut walker = WalkBuilder::new(&root);
-    walker
-        .follow_links(false)
-        .hidden(false)
-        .require_git(false)
-        .max_depth(Some(64))
-        .filter_entry(|entry| {
-            !entry.file_type().is_some_and(|kind| kind.is_dir())
-                || !matches!(
-                    entry.file_name().to_str(),
-                    Some(
-                        ".git"
-                            | "node_modules"
-                            | "target"
-                            | "dist"
-                            | ".turbo"
-                            | ".cache"
-                            | "vendor"
-                    )
-                )
-        });
+    let walker = workspace_walker(&root);
     for entry in walker.build() {
         if token.load(Ordering::Acquire) || crate::integration::lifecycle::gate().is_closing() {
             return Err("Search cancelled. Results were not replaced.".into());
