@@ -375,3 +375,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: command-palette navigation, meaningful environment disclosure, loading/retry/cancel, serialized executable configuration and stale-result rejection.
 - Delivered: root/directory/symlink boundary checks, outside-module reporting without content reads, bounded native processes, app-shutdown ownership and request cancellation.
 - Remaining: explicit tidy/download actions with document/process guards and visible output, structured test workflows, debugger inspection, workspace/session restore and the unfinished Git/platform acceptance matrix. No release/tag is authorized.
+
+## Git refresh integrity checkpoint (2026-10-03)
+
+- Delivered: independent repository/branch/history refresh errors, retained successful native data, rejection of obsolete workspace/reload results, one non-overlapping poll and explicit timer cleanup.
+- Delivered: legacy browser Git reads, branch changes, staging/unstaging and commits return native-required errors; no invented commit/history data or successful mutations.
+- Remaining: complete graph filters/compare/blame/hunk workflows, remaining Git/addendum features and platform acceptance. No release/tag is authorized.

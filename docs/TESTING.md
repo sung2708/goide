@@ -229,3 +229,9 @@ PASS: three native checks, including an installed-Go fixture that detects a non-
 PASS: five project hook/dialog tests cover native cancellation on context changes/unmount, stale results, configuration errors, explicit retry and actual module/environment display. Command-navigation and IPC suites pass (18 tests), as do the diagnostics/terminal/project regression suites (58 tests). TypeScript and the production build pass. The terminal fixture now resets queued mock implementations, and the cold Problems-panel integration test waits for its lazy import explicitly.
 
 The preceding full frontend rerun had six failures in diagnostics and terminal tests; those affected suites subsequently pass after the regression fixture/wait fixes. A fresh full-suite PASS is not claimed by this checkpoint. NOT RUN: complete desktop/platform matrix and full release acceptance. Tidy/download, structured tests, debugger inspection and other addendum/Git workflows remain unfinished.
+
+## Git refresh integrity regression (2026-10-03)
+
+PASS: 35 affected checks across workspace Git state, legacy IPC, branch switching and release-gate branch/document safety. Coverage includes rejected/partial refreshes with original error details, stale roots and superseded reloads, retry after failure, timer removal on disposal, native-only browser results and preserved native mutation arguments. Branch-switch verification checks the actual reloaded branch rather than requiring duplicate startup requests.
+
+The preceding full frontend baseline passed 88 files and 639 tests. That baseline predates the subsequent module-command and Git-refresh changes; it does not certify the complete addendum or release gate. Complete desktop/platform acceptance remains NOT RUN.
