@@ -1,3 +1,4 @@
+import type { WorkspaceSession } from "../../features/workspaces/history";
 type WelcomeScreenProps = {
   workspacePath: string | null;
   isOpening: boolean;
@@ -6,10 +7,13 @@ type WelcomeScreenProps = {
   onSearch: () => void;
   onTerminal: () => void;
   error?: string | null;
+  recentWorkspaces?: readonly WorkspaceSession[];
+  onReopenWorkspace?: (root: string) => void;
+  onForgetWorkspace?: (root: string) => void;
 };
 
 export default function WelcomeScreen({
-  workspacePath, isOpening, onOpenWorkspace, onQuickOpen, onSearch, onTerminal, error,
+  workspacePath, isOpening, onOpenWorkspace, onQuickOpen, onSearch, onTerminal, error, recentWorkspaces = [], onReopenWorkspace, onForgetWorkspace,
 }: WelcomeScreenProps) {
   return (
     <div className="welcome-screen">
@@ -45,6 +49,15 @@ export default function WelcomeScreen({
             </button>
           </section>
         </div>
+        {recentWorkspaces.length > 0 && <section aria-label="Recent workspaces">
+          <h3 className="welcome-section-label">RECENT WORKSPACES</h3>
+          {recentWorkspaces.map(({ root }) => <div key={root} className="flex items-center gap-2">
+            <button type="button" className="welcome-tool min-w-0 flex-1" disabled={isOpening} onClick={() => onReopenWorkspace?.(root)} title={root}>
+              <span className="truncate">{root}</span>
+            </button>
+            <button type="button" disabled={isOpening} aria-label={`Remove ${root} from recent workspaces`} onClick={() => onForgetWorkspace?.(root)}>Remove</button>
+          </div>)}
+        </section>}
         <div className="welcome-footnote"><span>CODE · RUNTIME · CONCURRENCY</span><span>BUILT FOR GO ↗</span></div>
         <p className="welcome-brand-credit">Go gopher by Renee French · CC BY 4.0 · adapted for Goro</p>
       </div>

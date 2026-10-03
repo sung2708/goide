@@ -18,6 +18,7 @@ vi.mock("../../lib/ipc/client", async () => {
   const actual = await vi.importActual("../../lib/ipc/client");
   return {
     ...actual,
+    listWorkspaceEntries: async () => ({ ok: true, data: [] }),
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
     fetchWorkspaceCompletions: (...args: unknown[]) =>
       fetchWorkspaceCompletionsMock(...args),

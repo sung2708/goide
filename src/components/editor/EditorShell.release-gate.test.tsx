@@ -17,6 +17,7 @@ const branchSnapshot = {
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...args: unknown[]) => openMock(...args) }));
 vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
+  listWorkspaceEntries: async () => ({ ok: true, data: [] }),
   configureToolchainPaths: async (paths: import("../../lib/ipc/types").ToolPaths) => ({ ok: true, data: paths }),
   getToolchainStatus: async () => ({ ok: true, data: { go: { available: true, status: "ready" }, gopls: { available: false, status: "missing" }, delve: { available: true, status: "ready" } } }),
   readWorkspaceFile: (...args: unknown[]) => readMock(...args),
