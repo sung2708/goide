@@ -4,6 +4,11 @@ Initial readiness review on 2026-10-03 used develop `0455c6e41b882d5a6fa32155a59
 
 **Release classification: NOT READY. Recommended release version: NONE.**
 
+The subsequent [update system report](UPDATE_SYSTEM_REPORT.md) records the new
+official updater and public distribution implementation. Production key/endpoint
+setup, signed platform upgrade acceptance and native Computer Use QA remain
+blocked; source implementation does not change this release decision.
+
 The implementation is substantial enough for internal Go development testing. Public release readiness is not established: process containment gaps, incomplete native acceptance, unverified installers and incomplete security/toolchain compatibility evidence remain. This is not a finding that every unfinished feature is a critical defect. No tag, version change, main merge or publication is authorized by this review.
 
 ## A focused Go IDE release scope

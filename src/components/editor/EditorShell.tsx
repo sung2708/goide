@@ -30,6 +30,9 @@ import LanguageEditReview from "../../features/language/LanguageEditReview";
 import { useSavePreparation } from "../../features/language/useSavePreparation";
 import { useSettings } from "../../features/settings/useSettings";
 import SettingsDialog from "../../features/settings/SettingsDialog";
+import { updateService } from "../../features/updates/service";
+import { UpdateNotice } from "../../features/updates/UpdatePanel";
+import { useStartupUpdates } from "../../features/updates/useStartupUpdates";
 import ToolchainDialog from "../../features/settings/ToolchainDialog";
 import GoProjectDialog from "../../features/goProject/GoProjectDialog";
 import GoTestsDialog from "../../features/goTests/GoTestsDialog";
@@ -302,6 +305,7 @@ async function getRuntimeSignalsWithTimeout(
 
 function EditorShell() {
   const settings = useSettings();
+  useStartupUpdates();
   const settingsRef = useRef(settings.values); settingsRef.current = settings.values;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isToolchainOpen, setIsToolchainOpen] = useState(false);
@@ -1246,7 +1250,9 @@ function EditorShell() {
 
   const safeCloseDialog = useSafeWindowClose({
     dirty: () => hasConflictDrafts(workspacePathRef.current) || documents.dirty,
-    busy: () => documentTransitionRef.current || isSavingRef.current,
+    busy: () => documentTransitionRef.current || isSavingRef.current || gitOperationBusy,
+    registerInstall: updateService.registerInstall,
+    install: updateService.install,
     save: preserveAllDocuments,
     cancelAutosave: () => { if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; } },
     onError: setFileError,
@@ -2113,6 +2119,8 @@ function EditorShell() {
     { id: "workbench.commands", allowInInput: true, title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", allowInInput: true, title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
     { id: "go.toolchain", title: "Go: Inspect Toolchain", run: () => setIsToolchainOpen(true) },
+    { id: "app.checkUpdates", title: "Goro: Check for Updates", run: () => { setIsSettingsOpen(true); void updateService.check(settings.values["updates.channel"] === "default" ? undefined : settings.values["updates.channel"]); } },
+    { id: "app.about", title: "Goro: About", run: () => setIsSettingsOpen(true) },
     { id: "go.project", title: "Go: Inspect Project and Environment", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => setIsGoProjectOpen(true) },
     { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
     { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
@@ -2882,6 +2890,7 @@ function EditorShell() {
           />
         </Suspense>
       ) : null}
+      <UpdateNotice />
       {safeCloseDialog}
       {replacementReview.dialog}
     </div>

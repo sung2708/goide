@@ -4,6 +4,14 @@ This document defines the complete operational procedure for preparing, validati
 
 Before executing this runbook, pass the selected maturity gate in [Release Readiness](RELEASE_READINESS.md). The current audit is NOT READY; this runbook is not authorization to create a tag or publish.
 
+The secure updater/distribution contract is defined in [UPDATES.md](UPDATES.md).
+The release workflow now requires real version-bound signatures, a separate
+public distribution repository and protected signing/distribution configuration.
+It verifies artifacts before committing public Pages channel pointers. A manual
+workflow dispatch defaults to candidate-only validation. Source-repository releases
+are no longer the distribution mechanism; use the instructions below together
+with the public distribution contract.
+
 The workflow initializes MSVC on Windows, runs Rust tests as well as frontend tests, explicitly builds each matrix target, and uses Bash for artifact packaging on every runner. The Intel macOS job uses `macos-15-intel`, replacing the retired `macos-13` image ([GitHub runner retirement notice](https://github.com/actions/runner-images/issues/13046)). These configuration checks and local Windows builds do not establish that hosted Linux/macOS builds, installation, signing, or publication have succeeded.
 
 ---
@@ -100,7 +108,9 @@ git push origin v<NEW_VERSION>
 
 ### Step 8: Verify the Published GitHub Release
 Once the workflow completes:
-1. Verify the GitHub Release at `https://github.com/sung2708/goide/releases/tag/v<NEW_VERSION>`.
+1. Verify the GitHub Release in the configured public distribution repository
+   (`GORO_RELEASE_REPOSITORY`), plus the matching public Pages updater/website
+   contracts. The source repository's release page is not the download endpoint.
 2. Ensure the release is correctly marked as **Prerelease** (for `-alpha`, `-beta`, `-rc`) or **Latest**.
 3. Verify that all expected platform bundles follow the canonical naming convention:
    - Windows Setup: `goro-v<VER>-windows-x86_64-setup.exe`

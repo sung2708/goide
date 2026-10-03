@@ -12,7 +12,20 @@ pub fn run() {
         .manage(integration::fs_watch::FsWatchService::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .setup(|app| {
+            use tauri::Manager;
+            app.manage(std::sync::Arc::new(integration::updates::Store::new(
+                app.package_info().version.clone(),
+            )));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            ui_bridge::update_commands::goro_update_state,
+            ui_bridge::update_commands::goro_update_check,
+            ui_bridge::update_commands::goro_update_download,
+            ui_bridge::update_commands::goro_update_cancel,
+            ui_bridge::update_commands::goro_update_install,
             ui_bridge::git_commands::git_repository_status,
             ui_bridge::git_commands::git_file_diff,
             ui_bridge::git_commands::git_mutate,

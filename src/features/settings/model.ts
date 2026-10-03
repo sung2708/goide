@@ -7,6 +7,7 @@ export const THEMES = [
 ] as const;
 export type ThemeId = (typeof THEMES)[number]["id"];
 export type Settings = {
+  "updates.autoCheck": boolean; "updates.autoDownload": boolean; "updates.channel": "default" | "stable" | "beta" | "alpha";
   "editor.fontSize": number; "editor.tabSize": number; "editor.wordWrap": boolean;
   "files.autoSave": "off" | "afterDelay" | "onFocusChange"; "files.autoSaveDelay": number;
   "go.formatOnSave": boolean; "go.organizeImportsOnSave": boolean;
@@ -20,6 +21,9 @@ const integer = (min: number, max: number) => (value: unknown) => typeof value =
 const boolean = (value: unknown) => typeof value === "boolean";
 const executable = (value: unknown) => typeof value === "string" && value.length <= 4096 && !value.includes("\0");
 export const SETTING_DEFINITIONS: readonly Descriptor[] = [
+  { key: "updates.autoCheck", type: "boolean", group: "Updates", label: "Automatically check for updates", scope: "application", default: true, validate: boolean },
+  { key: "updates.autoDownload", type: "boolean", group: "Updates", label: "Automatically download verified updates", scope: "application", default: false, validate: boolean },
+  { key: "updates.channel", type: "select", group: "Updates", label: "Update channel", scope: "application", default: "default", validate: value => ["default", "stable", "beta", "alpha"].includes(String(value)), options: [{ id: "default", label: "Build default" }, { id: "stable", label: "Stable" }, { id: "beta", label: "Beta / RC" }, { id: "alpha", label: "Alpha" }] },
   { key: "go.executablePath", type: "string", group: "Go", label: "Go executable path (blank: automatic)", scope: "application", default: "", validate: executable },
   { key: "go.goplsPath", type: "string", group: "Go", label: "gopls executable path (blank: automatic)", scope: "application", default: "", validate: executable },
   { key: "debug.delvePath", type: "string", group: "Debug", label: "Delve executable path (blank: automatic)", scope: "application", default: "", validate: executable },
