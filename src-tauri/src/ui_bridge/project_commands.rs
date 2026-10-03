@@ -7,7 +7,14 @@ pub async fn run_go_tests(
         .await
     {
         Ok(output) => ApiResponse::ok(output),
-        Err(error) => ApiResponse::err("go_test_failed", &error),
+        Err(error) => ApiResponse::err(
+            if error.starts_with("owned_go_cleanup_pending:") {
+                "go_test_cleanup_pending"
+            } else {
+                "go_test_failed"
+            },
+            &error,
+        ),
     }
 }
 #[tauri::command]
@@ -135,7 +142,14 @@ pub async fn run_go_module_action(
     .await
     {
         Ok(output) => ApiResponse::ok(output),
-        Err(error) => ApiResponse::err("go_module_failed", &error),
+        Err(error) => ApiResponse::err(
+            if error.starts_with("owned_go_cleanup_pending:") {
+                "go_module_cleanup_pending"
+            } else {
+                "go_module_failed"
+            },
+            &error,
+        ),
     }
 }
 #[tauri::command]

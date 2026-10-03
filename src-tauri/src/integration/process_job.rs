@@ -60,6 +60,28 @@ mod windows {
             }
             Ok(())
         }
+        pub fn is_empty(&self) -> Result<bool, String> {
+            use windows_sys::Win32::System::JobObjects::{
+                JobObjectBasicAccountingInformation, QueryInformationJobObject,
+                JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+            };
+            let mut accounting: JOBOBJECT_BASIC_ACCOUNTING_INFORMATION =
+                unsafe { std::mem::zeroed() };
+            // SAFETY: The owned job handle and correctly sized output structure remain valid.
+            if unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle() as HANDLE,
+                    JobObjectBasicAccountingInformation,
+                    &mut accounting as *mut _ as *mut _,
+                    std::mem::size_of_val(&accounting) as u32,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            Ok(accounting.ActiveProcesses == 0)
+        }
     }
     pub fn install() -> Result<(), String> {
         static APP_JOB: OnceLock<Result<Job, String>> = OnceLock::new();
@@ -119,7 +141,28 @@ impl OwnedChild {
     }
     pub async fn stop(&mut self) -> Result<(), String> {
         #[cfg(windows)]
-        self.tree.terminate()?;
+        {
+            self.tree.terminate()?;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
+            tokio::time::timeout_at(deadline, self.child.wait())
+                .await
+                .map_err(|_| {
+                    "Owned process is still stopping; retain its handle and retry cleanup."
+                        .to_string()
+                })?
+                .map_err(|error| error.to_string())?;
+            while !self.tree.is_empty()? {
+                if tokio::time::Instant::now() >= deadline {
+                    return Err(
+                        "Owned descendants are still stopping; retain their job and retry cleanup."
+                            .into(),
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+            Ok(())
+        }
+        #[cfg(not(windows))]
         crate::integration::process::kill_process_group(&mut self.child)
             .await
             .map_err(|e| e.to_string())

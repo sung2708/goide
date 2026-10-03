@@ -21,13 +21,22 @@ impl Drop for Running {
 
 pub fn wait_for_shutdown() -> Result<(), String> {
     let deadline = Instant::now() + Duration::from_secs(10);
-    while RUNNING.load(Ordering::Acquire) != 0 {
+    loop {
+        let cleanup = super::owned_sync_process::retry_pending_cleanup();
+        if cleanup.is_ok() && RUNNING.load(Ordering::Acquire) == 0 {
+            return Ok(());
+        }
         if Instant::now() >= deadline {
-            return Err("Owned native tools are still stopping; the window remains open.".into());
+            return Err(format!(
+                "Owned native tools are still stopping; retain ownership and retry cleanup. {}",
+                cleanup
+                    .err()
+                    .map(|error| error.to_string())
+                    .unwrap_or_default()
+            ));
         }
         std::thread::sleep(Duration::from_millis(25));
     }
-    Ok(())
 }
 
 fn capture(mut pipe: impl Read) -> io::Result<Vec<u8>> {
