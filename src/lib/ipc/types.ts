@@ -159,6 +159,7 @@ export type ActivateDeepTraceRequest = {
 };
 
 export type ActivateDeepTraceResponse = {
+  debuggerState?: DebuggerState | null;
   mode: "deep-trace";
   scopeKey?: string | null;
 };
@@ -240,7 +241,13 @@ export type DebuggerBreakpoint = {
  * controls. Keep this aligned with `DebugSessionSnapshot`, which is the
  * higher-level frontend lifecycle wrapper for the rebuilt debug flow.
  */
+export type DebuggerControlObservation = { sessionId: string; stopToken: string | null };
+export type DebuggerStopContext = { sessionId: string | null };
+export type DebuggerControlContext = { workspaceRoot: string; sessionId: string; stopToken: string | null };
+
 export type DebuggerState = {
+  workspaceRoot?: string | null;
+  sessionId?: string | null;
   sessionActive: boolean;
   stopToken?: string | null;
   selectedThreadId?: number | null;
@@ -270,6 +277,8 @@ export type DebugSessionSnapshot = {
 };
 
 export type ToggleBreakpointRequest = {
+  workspaceRoot: string;
+  sessionId: string | null;
   relativePath: string;
   line: number;
 };

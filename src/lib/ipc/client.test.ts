@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { queryDebuggerInspection, runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { deactivateDeepTrace, debuggerToggleBreakpoint, debuggerContinue, debuggerPause, debuggerStepOver, debuggerStepInto, debuggerStepOut, queryDebuggerInspection, runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   it("requires native debugger data and preserves the workspace and observed stop identity", async () => {
@@ -106,5 +106,34 @@ describe("filesystem watcher IPC", () => {
     invokeMock.mockResolvedValue({ ok: true });
     await stopWorkspaceFsWatch("watch-a");
     expect(invokeMock).toHaveBeenCalledWith("stop_workspace_fs_watch", { watchId: "watch-a" });
+  });
+});
+
+
+describe("observed debugger control IPC", () => {
+  beforeEach(() => { vi.clearAllMocks(); delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__; });
+  it("does not invent successful breakpoint registration or Stop in preview and sends captured owners natively", async () => {
+    const breakpoint = { workspaceRoot: "D:/workspace", sessionId: "actual-owner", relativePath: "main.go", line: 7 };
+    const stop = { sessionId: "actual-owner" };
+    expect(await debuggerToggleBreakpoint(breakpoint)).toMatchObject({ ok: false });
+    expect(await deactivateDeepTrace(stop)).toMatchObject({ ok: false });
+    expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true });
+    await debuggerToggleBreakpoint(breakpoint); await deactivateDeepTrace(stop);
+    expect(invokeMock).toHaveBeenCalledWith("debugger_toggle_breakpoint", { request: breakpoint });
+    expect(invokeMock).toHaveBeenCalledWith("deactivate_deep_trace", { request: stop });
+  });
+  it.each([
+    [debuggerContinue, "debugger_continue"], [debuggerPause, "debugger_pause"],
+    [debuggerStepOver, "debugger_step_over"], [debuggerStepInto, "debugger_step_into"], [debuggerStepOut, "debugger_step_out"],
+  ] as const)("binds %s to the captured native session and stop", async (operation, command) => {
+    const request = { workspaceRoot: "D:/workspace", sessionId: "actual-owner", stopToken: "actual-stop:3" };
+    expect(await operation(request)).toMatchObject({ ok: false, error: { code: "debugger_native_required" } });
+    expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true });
+    await operation(request);
+    expect(invokeMock).toHaveBeenCalledWith(command, { request });
   });
 });

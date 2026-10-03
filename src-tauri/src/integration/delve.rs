@@ -42,7 +42,7 @@ pub enum LaunchMode {
     Package { package: String, cwd: String },
 }
 
-fn serialize_dap_path(path: &Path) -> String {
+pub fn serialize_dap_path(path: &Path) -> String {
     normalize_platform_path_for_dap(&path.to_string_lossy())
 }
 

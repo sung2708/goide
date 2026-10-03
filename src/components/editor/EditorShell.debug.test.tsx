@@ -25,6 +25,8 @@ function setMockDebuggerState(overrides: Partial<DebuggerState>) {
   mockDebuggerState = {
     ...mockDebuggerState,
     ...overrides,
+    sessionId: overrides.sessionId ?? "actual-owner",
+    workspaceRoot: overrides.workspaceRoot ?? "C:/workspace",
   };
 }
 
@@ -154,6 +156,27 @@ describe("EditorShell debug controller", () => {
     // The debug tab should now be visible since main.go is a .go file
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
   };
+
+  it("uses the owner returned by startup for immediate Stop and only that owner during unmount", async () => {
+    const user = userEvent.setup();
+    const nativeState: DebuggerState = { workspaceRoot: "C:/workspace", sessionId: "started-owner", sessionActive: true, paused: false, breakpoints: [] };
+    vi.mocked(startDebugSession).mockResolvedValue({ ok: true, data: { mode: "deep-trace", scopeKey: "runtime_session", debuggerState: nativeState } });
+    getDebuggerStateMock.mockImplementation(async () => ({ ok: true, data: nativeState }));
+    const rendered = render(<EditorShell />);
+    await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(await screen.findByRole("button", { name: /^stop debugging$/i }));
+    expect(deactivateDeepTraceMock).toHaveBeenCalledWith({ sessionId: "started-owner" });
+    deactivateDeepTraceMock.mockClear();
+    rendered.unmount();
+    expect(deactivateDeepTraceMock).not.toHaveBeenCalled();
+  });
+
+  it("does not send global debugger teardown when an idle editor unmounts", () => {
+    const rendered = render(<EditorShell />);
+    rendered.unmount();
+    expect(deactivateDeepTraceMock).not.toHaveBeenCalled();
+  });
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -337,7 +360,7 @@ describe("EditorShell debug controller", () => {
     await user.click(screen.getByRole("button", { name: /debug active go file/i }));
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
     await user.click(await screen.findByRole("button", { name: /^pause debugging$/i }));
-    await waitFor(() => expect(debuggerPause).toHaveBeenCalled());
+    await waitFor(() => expect(debuggerPause).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", sessionId: "actual-owner", stopToken: null }));
     expect(screen.queryByRole("button", { name: /step over/i })).toBeNull();
     setMockDebuggerState({ paused: true });
     expect(await screen.findByRole("button", { name: /step over/i })).toBeInTheDocument();

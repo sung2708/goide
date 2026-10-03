@@ -18,8 +18,19 @@ describe("inspection execution gate", () => {
   });
   it("restores the same observed stop after an explicit rejected control", async () => {
     const { result } = renderHook(() => useInspectionGate("paused"));
-    await act(async () => { await result.current.control(async () => ({ ok: false, error: { code: "step_failed", message: "Step rejected" } })); });
+    await act(async () => { await result.current.control(async () => ({ ok: false, data: { stopToken: "paused" }, error: { code: "step_failed", message: "Step rejected" } }), (reply, captured) => reply.data?.stopToken === captured); });
     expect(result.current.token).toBe("paused");
     expect(result.current.pending).toBe(false);
+  });
+  it("does not restore old values after an unconfirmed failure or lost transport", async () => {
+    const { result, rerender } = renderHook(({ token }) => useInspectionGate(token), { initialProps: { token: "first" } });
+    await act(async () => { await result.current.control(async () => ({ ok: false, error: { code: "timeout", message: "Outcome unknown" } })); });
+    expect(result.current.token).toBeNull();
+    rerender({ token: "second" });
+    await act(async () => { await expect(result.current.control(async () => { throw new Error("IPC lost"); })).rejects.toThrow("IPC lost"); });
+    expect(result.current.token).toBeNull();
+    expect(result.current.pending).toBe(true);
+    rerender({ token: "third" });
+    expect(result.current.token).toBe("third");
   });
 });

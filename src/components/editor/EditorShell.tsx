@@ -1,3 +1,4 @@
+import { ownsDebuggerWorkspace } from "../../features/debugger/workspace";
 import { useInspectionGate } from "../../features/debugger/useInspectionGate";
 import DebuggerInspector from "../../features/debugger/DebuggerInspector";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -351,6 +352,8 @@ function EditorShell() {
   const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
+  const ownedDebuggerSessionRef = useRef<string | null>(null);
+  const debuggerStateRef = useRef(debuggerState); debuggerStateRef.current = debuggerState;
   const debuggerInspectionGate = useInspectionGate(debuggerState?.stopToken);
   const debuggerStopTokenRef = useRef<string | null>(null);
   debuggerStopTokenRef.current = debuggerInspectionGate.token;
@@ -547,7 +550,7 @@ function EditorShell() {
     const previousMode = previousModeRef.current;
     previousModeRef.current = mode;
     if (previousMode === "deep-trace" && mode !== "deep-trace") {
-      void deactivateDeepTrace();
+      if (ownedDebuggerSessionRef.current) void deactivateDeepTrace({ sessionId: ownedDebuggerSessionRef.current });
       setDeepTraceScope(null);
       setActiveBlockedSignal(null);
     }
@@ -555,7 +558,7 @@ function EditorShell() {
 
   useEffect(() => {
     return () => {
-      void deactivateDeepTrace();
+      if (ownedDebuggerSessionRef.current) void deactivateDeepTrace({ sessionId: ownedDebuggerSessionRef.current });
     };
   }, []);
 
@@ -927,10 +930,16 @@ function EditorShell() {
         workspacePathRef.current !== requestWorkspacePath ||
         activeFilePathRef.current !== requestFilePath
       ) {
+        if (response.data?.debuggerState?.sessionId) void deactivateDeepTrace({ sessionId: response.data.debuggerState.sessionId });
         return;
       }
 
       if (response.ok && response.data?.mode === "deep-trace") {
+        if (response.data.debuggerState) {
+          ownedDebuggerSessionRef.current = response.data.debuggerState.sessionId ?? null;
+          debuggerStateRef.current = response.data.debuggerState;
+          setDebuggerState(response.data.debuggerState);
+        }
         markRuntimeAvailable();
         setDeepTraceScope({
           workspacePath: requestWorkspacePath,
@@ -1366,6 +1375,15 @@ function EditorShell() {
       return;
     }
 
+    if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) {
+      if (response.data?.debuggerState?.sessionId) void deactivateDeepTrace({ sessionId: response.data.debuggerState.sessionId });
+      return;
+    }
+    if (response.data?.debuggerState) {
+      ownedDebuggerSessionRef.current = response.data.debuggerState.sessionId ?? null;
+      debuggerStateRef.current = response.data.debuggerState;
+      setDebuggerState(response.data.debuggerState);
+    }
     setDebugUiState("running");
 
     if (DEBUG_UI_ENABLED) {
@@ -1385,10 +1403,11 @@ function EditorShell() {
     debugStopInFlightRef.current = true;
     setDebugUiState("stopping");
     try {
-      const deactivateResponse = await deactivateDeepTrace();
+      const deactivateResponse = await deactivateDeepTrace({ sessionId: ownsDebuggerWorkspace(workspacePathRef.current, debuggerStateRef.current) ? debuggerStateRef.current?.sessionId ?? null : null });
       if (!deactivateResponse.ok) {
         throw new Error(deactivateResponse.error?.message ?? "Failed to stop debug session.");
       }
+      ownedDebuggerSessionRef.current = null;
       setDebugUiState("idle");
       setRunStatus("done");
       setRunMode("standard");
@@ -1429,7 +1448,7 @@ function EditorShell() {
             failureCount = 0;
             setDebuggerState(state.data);
             setBreakpoints(
-              activeFilePath
+              activeFilePath && ownsDebuggerWorkspace(workspacePath, state.data)
                 ? state.data.breakpoints
                     .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
                     .map((breakpoint) => breakpoint.line)
@@ -1456,7 +1475,7 @@ function EditorShell() {
         clearTimeout(timeoutId);
       }
     };
-  }, [activeFilePath, runStatus, runMode]);
+  }, [activeFilePath, runStatus, runMode, workspacePath]);
 
   useEffect(() => {
     if (runMode !== "debug" || runStatus !== "running") {
@@ -1504,9 +1523,9 @@ function EditorShell() {
       }
       setDebuggerState((current) => current ?? state.data ?? null);
       setBreakpoints(
-        state.data.breakpoints
+        ownsDebuggerWorkspace(workspacePath, state.data) ? state.data.breakpoints
           .filter((breakpoint) => breakpoint.relativePath === activeFilePath)
-          .map((breakpoint) => breakpoint.line),
+          .map((breakpoint) => breakpoint.line) : [],
       );
     });
 
@@ -1517,12 +1536,16 @@ function EditorShell() {
 
   const handleToggleBreakpoint = useCallback(async (line: number) => {
     if (!workspacePath || !activeFilePath) return;
+    const sessionId = debuggerStateRef.current?.sessionActive ? debuggerStateRef.current.sessionId ?? null : null;
     try {
       const resp = await debuggerToggleBreakpoint({
+        workspaceRoot: workspacePath, sessionId,
         relativePath: activeFilePath,
         line,
       });
-      if (resp.ok && resp.data) {
+      if (workspacePathRef.current !== workspacePath || activeFilePathRef.current !== activeFilePath || (debuggerStateRef.current?.sessionActive ? debuggerStateRef.current.sessionId ?? null : null) !== sessionId) return;
+      if (!resp.ok) { setFileError(resp.error?.message ?? "Unable to register breakpoint."); return; }
+      if (resp.data && ownsDebuggerWorkspace(workspacePath, resp.data)) {
         setDebuggerState(resp.data);
         setBreakpoints(
           resp.data.breakpoints
@@ -1531,7 +1554,7 @@ function EditorShell() {
         );
       }
     } catch (err) {
-      console.error("Failed to toggle breakpoint:", err);
+      if (workspacePathRef.current === workspacePath && activeFilePathRef.current === activeFilePath) setFileError(err instanceof Error ? err.message : "Unable to register breakpoint.");
     }
   }, [workspacePath, activeFilePath, runStatus, runMode]);
 
@@ -1546,10 +1569,20 @@ function EditorShell() {
 
   // A DAP acknowledgement does not prove that the target paused/continued.
   // Runtime polling updates the UI from backend-observed debugger state.
-  const handleToggleDebugPause = useCallback(
-    () => debuggerInspectionGate.control(isDebugPaused ? debuggerContinue : debuggerPause),
-    [isDebugPaused, debuggerInspectionGate]
-  );
+  const runObservedDebugControl = async (operation: typeof debuggerContinue) => {
+    try {
+      const result = await debuggerInspectionGate.control(() => ownsDebuggerWorkspace(workspacePath, debuggerState) && debuggerState?.sessionId ? operation({
+        workspaceRoot: workspacePath!, sessionId: debuggerState.sessionId, stopToken: debuggerState.stopToken ?? null,
+      }) : Promise.resolve({ ok: false, error: { code: "debugger_context_changed", message: "Refresh the debugger's observed workspace/session before controlling execution." } }), (result, captured) => captured !== null && result.data?.sessionId === debuggerState?.sessionId && result.data?.stopToken === captured);
+      if (!result.ok && workspacePathRef.current === workspacePath) setFileError(result.error?.message ?? "Debugger control failed.");
+      return result;
+    } catch (error) {
+      if (workspacePathRef.current === workspacePath) setFileError(error instanceof Error ? error.message : "Debugger control failed.");
+      return { ok: false };
+    }
+  };
+  const debuggerControlsUnavailable = debuggerInspectionGate.pending || !ownsDebuggerWorkspace(workspacePath, debuggerState) || !debuggerState?.sessionId;
+  const handleToggleDebugPause = () => runObservedDebugControl(isDebugPaused ? debuggerContinue : debuggerPause);
 
   // Fall back to explorer when the debug tab becomes unavailable while active.
   useEffect(() => {
@@ -2066,12 +2099,12 @@ function EditorShell() {
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
     { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
-    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: debuggerState?.cleanupPending ? "Retry Stop to finish debugger cleanup." : debuggerInspectionGate.pending ? "Wait for the debugger's observed state." : !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
+    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: debuggerState?.cleanupPending ? "Retry Stop to finish debugger cleanup." : isDebugSessionRunning && debuggerControlsUnavailable ? "Wait for the debugger's observed workspace/session state." : !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
     { id: "debug.stop", title: "Stop Debugging", shortcut: "Shift+F5", disabled: !isDebugSessionRunning && !debuggerState?.cleanupPending ? "No active debug session." : undefined, run: handleStopDebug },
     { id: "debug.breakpoint", title: "Toggle Breakpoint", shortcut: "F9", disabled: !activeFilePath || !selectedLine ? "Place the cursor on a source line." : undefined, run: () => selectedLine ? handleToggleBreakpoint(selectedLine) : undefined },
-    { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepOver) },
-    { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepInto) },
-    { id: "debug.stepOut", title: "Debug: Step Out", shortcut: "Shift+F11", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepOut) },
+    { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused || debuggerControlsUnavailable ? "Pause debugging and wait for observed state." : undefined, run: () => runObservedDebugControl(debuggerStepOver) },
+    { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused || debuggerControlsUnavailable ? "Pause debugging and wait for observed state." : undefined, run: () => runObservedDebugControl(debuggerStepInto) },
+    { id: "debug.stepOut", title: "Debug: Step Out", shortcut: "Shift+F11", disabled: !isDebugPaused || debuggerControlsUnavailable ? "Pause debugging and wait for observed state." : undefined, run: () => runObservedDebugControl(debuggerStepOut) },
     { id: "navigation.nextSymbol", title: "Next Document Symbol", shortcut: "F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("next") },
     { id: "navigation.previousSymbol", title: "Previous Document Symbol", shortcut: "Shift+F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("previous") },
   ];
@@ -2272,7 +2305,7 @@ function EditorShell() {
                     <button
                       type="button"
                       aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
-                      disabled={debuggerState?.cleanupPending === true}
+                      disabled={debuggerState?.cleanupPending === true || debuggerControlsUnavailable}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
                       onClick={() => void executeCommand("debug.startOrContinue")}
                     >
@@ -2293,6 +2326,7 @@ function EditorShell() {
                       <button
                         type="button"
                         aria-label="Step over"
+                        disabled={debuggerControlsUnavailable}
                         className="rounded-md border border-[rgba(129,200,190,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--teal)] hover:bg-[rgba(129,200,190,0.12)]"
                         onClick={() => void executeCommand("debug.stepOver")}
                       >
@@ -2301,6 +2335,7 @@ function EditorShell() {
                       <button
                         type="button"
                         aria-label="Step into"
+                        disabled={debuggerControlsUnavailable}
                         className="rounded-md border border-[rgba(229,200,144,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--yellow)] hover:bg-[rgba(229,200,144,0.12)]"
                         onClick={() => void executeCommand("debug.stepInto")}
                       >
@@ -2309,6 +2344,7 @@ function EditorShell() {
                       <button
                         type="button"
                         aria-label="Step out"
+                        disabled={debuggerControlsUnavailable}
                         className="rounded-md border border-[rgba(239,159,118,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--peach)] hover:bg-[rgba(239,159,118,0.12)]"
                         onClick={() => void executeCommand("debug.stepOut")}
                       >
@@ -2589,7 +2625,7 @@ function EditorShell() {
                             editable={!documents.active?.readOnly && !isBranchMutationInProgress && !gitOperationBusy && !explorerOperationBusy}
                             value={activeFileContent}
                             filePath={activeFilePath}
-                            executionLine={!debuggerInspectionGate.pending && debuggerState?.activeRelativePath === activeFilePath ? debuggerState.activeLine ?? null : null}
+                            executionLine={ownsDebuggerWorkspace(workspacePath, debuggerState) && !debuggerInspectionGate.pending && debuggerState?.activeRelativePath === activeFilePath ? debuggerState.activeLine ?? null : null}
                             breakpoints={breakpoints}
                             onToggleBreakpoint={handleToggleBreakpoint}
                             diagnostics={diagnostics}
