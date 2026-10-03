@@ -44,10 +44,13 @@ export function useGoTests(params: Params) {
         const request: GoTestRequest = { workspaceRoot: root, relativeDirectory: directory, requestId: crypto.randomUUID(), target, testName };
         active.current = request; started = true;
         let response;
-        try { response = await runGoTests(request); }
+        try {
+          response = await runGoTests(request);
+          if (response.error?.code === "go_test_cleanup_pending") throw new Error(response.error.message);
+        }
         catch (failure) {
           const confirmation = new Promise<void>(done => { recovery.current = { request, done }; });
-          if (mounted.current) { setNeedsCleanup(true); setError("Test IPC failed; waiting for native cleanup confirmation."); }
+          if (mounted.current) { setNeedsCleanup(true); setError("Test completion/cleanup is unconfirmed; waiting for native cleanup confirmation."); }
           void retryCleanup(); await confirmation;
           throw new Error(`Test outcome unavailable; native cleanup is confirmed. ${String(failure)}`);
         }

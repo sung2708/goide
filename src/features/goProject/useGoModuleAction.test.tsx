@@ -67,3 +67,10 @@ it("retains the document transaction after transport failure until native cleanu
   await act(async () => { await hook.result.current.retryCleanup(); await work; });
   expect(hook.result.current.busy).toBe(false); expect(hook.result.current.error).toContain("native cleanup is confirmed"); expect(hook.result.current.output).toBeNull(); expect(onChanged).toHaveBeenCalledWith("/root");
 });
+it("keeps the mutation guard after native reports incomplete teardown", async () => {
+  native.mockResolvedValueOnce({ ok: false, error: { code: "go_module_cleanup_pending", message: "tree still stopping" } });
+  confirm.mockResolvedValueOnce({ ok: false, error: { message: "cleanup pending" } });
+  const { hook, onBusy } = setup(); let work!: Promise<void>; act(() => { work = hook.result.current.run("tidy", "."); });
+  await waitFor(() => expect(hook.result.current.needsCleanup).toBe(true)); expect(onBusy).not.toHaveBeenCalledWith(false);
+  await act(async () => { await hook.result.current.retryCleanup(); await work; }); expect(onBusy).toHaveBeenCalledWith(false);
+});

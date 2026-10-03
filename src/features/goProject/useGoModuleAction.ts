@@ -43,10 +43,13 @@ export function useGoModuleAction(params: Params) {
         const request = { workspaceRoot: owner.root!, relativeDirectory, action, expectedWorkFile: owner.info!.workFile, requestId: crypto.randomUUID() };
         active.current = request; started = true;
         let response;
-        try { response = await runGoModuleAction(request); }
+        try {
+          response = await runGoModuleAction(request);
+          if (response.error?.code === "go_module_cleanup_pending") throw new Error(response.error.message);
+        }
         catch (failure) {
           const confirmed = new Promise<void>(done => { recovery.current = { request, done }; });
-          if (mounted.current) { setNeedsCleanup(true); setError("Module IPC failed; waiting for native cleanup confirmation before editing or closing."); }
+          if (mounted.current) { setNeedsCleanup(true); setError("Module completion/cleanup is unconfirmed; waiting for native cleanup confirmation before editing or closing."); }
           void retryCleanup();
           await confirmed;
           throw new Error(`Module command outcome unavailable; native cleanup is confirmed. ${failure instanceof Error ? failure.message : String(failure)}`);
