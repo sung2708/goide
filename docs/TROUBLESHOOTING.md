@@ -42,15 +42,11 @@ Goro runs preflight checks on startup. Missing external tools are surfaced in th
 - **Cause**: Git for Windows includes a Unix `link` utility in its `usr/bin` folder, or an active Zig installation overrides `CC`/`CXX`.
 - **Resolution**:
   - Use Goro's built-in wrapper: `scripts/cargo_check_msvc.cmd` or `scripts/tauri_build_msvc.cmd`.
-  - Alternatively, launch from a Visual Studio Developer Command Prompt:
+  - From PowerShell, run the repository helper; it initializes MSVC in the same cmd.exe process as Cargo:
     ```powershell
-    & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64
-    $env:CC="cl"
-    $env:CXX="cl"
-    $env:HOST_CC="cl"
-    $env:HOST_CXX="cl"
-    cargo check --manifest-path src-tauri/Cargo.toml
+    .\scripts\cargo_check_msvc.cmd --locked
     ```
+    Running VsDevCmd.bat as a child of PowerShell does not import its environment into PowerShell. A Developer Command Prompt can also invoke Cargo directly.
 
 ---
 
@@ -60,7 +56,7 @@ Goro runs preflight checks on startup. Missing external tools are surfaced in th
 - **Symptom**: Bottom terminal dock opens with an error or fails to display a prompt.
 - **Resolution**:
   - On Windows, verify PowerShell is accessible: `powershell.exe` or `pwsh.exe`.
-  - On Linux/macOS, verify your default shell in `$SHELL` exists and is executable (`/bin/bash` or `/bin/zsh`).
+  - On Linux/macOS, the current implementation launches `bash -l`; verify bash is installed and executable. `$SHELL` and configurable default-shell selection are not currently honored.
   - Close and reopen the terminal tab to force session re-initialization.
 
 ---

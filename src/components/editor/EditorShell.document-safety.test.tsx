@@ -1,6 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
+import { settingsStore } from "../../features/settings/SettingsStore";
 
 const openMock = vi.fn();
 const readMock = vi.fn();
@@ -40,7 +41,8 @@ vi.mock("./CodeEditor", () => ({
   ),
 }));
 
-async function openMain() {
+async function openMain(autoSave: "afterDelay" | "off" = "afterDelay") {
+  settingsStore.update("files.autoSave", autoSave);
   const view = render(<EditorShell />);
   fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
   await waitFor(() => expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace"));
@@ -57,6 +59,7 @@ describe("EditorShell document safety", () => {
   afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => {
     vi.useRealTimers();
+    settingsStore.reset();
     entriesMock.mockReset().mockResolvedValue({ ok: true, data: [] });
     openMock.mockReset().mockResolvedValue("C:/workspace");
     readMock.mockReset().mockImplementation(async (_root: string, path: string) => ({ ok: true, data: path === "main.go" ? "original" : "other" }));
@@ -66,7 +69,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("keeps dirty documents when the selected recent/moved workspace is unavailable", async () => {
-    await openMain(); edit("valuable edits");
+    await openMain("off"); edit("valuable edits");
     openMock.mockResolvedValue("C:/missing");
     entriesMock.mockResolvedValue({ ok: false, error: { message: "Workspace permission denied" } });
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
@@ -77,7 +80,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("requires an explicit decision before closing a dirty workspace", async () => {
-    await openMain(); edit("valuable edits");
+    await openMain("off"); edit("valuable edits");
     fireEvent.keyDown(document.body, { key: "w", ctrlKey: true, shiftKey: true });
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
@@ -99,7 +102,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("workspace Cancel retains dirty tabs and Don't Save discards only after that explicit choice", async () => {
-    await openMain(); edit("valuable edits"); openMock.mockResolvedValue("C:/new-workspace");
+    await openMain("off"); edit("valuable edits"); openMock.mockResolvedValue("C:/new-workspace");
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
     fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(screen.getAllByRole("button", { name: /open workspace/i })[0]).toBeEnabled());
@@ -109,7 +112,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("offers Save, Don't Save and Cancel when closing a dirty tab", async () => {
-    await openMain(); edit("valuable edits");
+    await openMain("off"); edit("valuable edits");
     fireEvent.click(screen.getByRole("button", { name: "Close main.go" }));
     expect(await screen.findByRole("dialog", { name: "Unsaved document changes" })).toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
@@ -121,7 +124,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("retains the dirty tab after a failed close-save and closes after a successful retry", async () => {
-    await openMain(); edit("valuable edits"); writeMock.mockResolvedValueOnce({ ok: false, error: { code: "denied", message: "Permission denied" } });
+    await openMain("off"); edit("valuable edits"); writeMock.mockResolvedValueOnce({ ok: false, error: { code: "denied", message: "Permission denied" } });
     fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await screen.findByText("Permission denied"); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
     fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
@@ -132,10 +135,11 @@ describe("EditorShell document safety", () => {
   it("Save All writes each dirty tab against its own disk baseline", async () => {
     await openMain(); edit("edited main"); fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
     await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other")); edit("edited other");
+    expect(screen.getAllByTitle("Unsaved changes")).toHaveLength(2);
     fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, altKey: true });
     await waitFor(() => expect(writeMock).toHaveBeenCalledTimes(2));
     expect(writeMock.mock.calls).toEqual([["C:/workspace", "main.go", "edited main", "original"], ["C:/workspace", "other.go", "edited other", "other"]]);
-    await waitFor(() => expect(screen.getAllByRole("tab").every(tab => !tab.textContent?.includes("•"))).toBe(true));
+    await waitFor(() => expect(screen.queryAllByTitle("Unsaved changes")).toHaveLength(0));
   });
 
   it("retains independent dirty buffers when switching tabs and cancels the old active autosave", async () => {
@@ -178,7 +182,7 @@ describe("EditorShell document safety", () => {
   });
 
   it("blocks workspace switching after a failed save", async () => {
-    await openMain();
+    await openMain("off");
     openMock.mockResolvedValue("C:/other-workspace");
     writeMock.mockResolvedValue({ ok: false });
     edit("valuable edits");
@@ -187,6 +191,21 @@ describe("EditorShell document safety", () => {
     await waitFor(() => expect(writeMock).toHaveBeenCalled());
     expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace");
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+  });
+
+  it("keeps a dirty close decision available with Auto Save off beyond the default delay", async () => {
+    const view = await openMain("off");
+    vi.useFakeTimers();
+    edit("valuable edits");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+    expect(writeMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); });
+    expect(screen.getByRole("dialog", { name: "Unsaved document changes" })).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Cancel" })); });
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    expect(writeMock).not.toHaveBeenCalled();
+    view.unmount();
   });
 
   it("blocks switching tabs while a save is pending and keeps newer edits", async () => {
