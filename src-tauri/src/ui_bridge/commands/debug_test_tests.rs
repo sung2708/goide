@@ -31,6 +31,7 @@ async fn debug_test_builds_the_package_selects_one_test_and_reads_actual_locals(
         .await;
         anyhow::ensure!(bp.ok, "breakpoint failed: {:?}", bp.error);
         let started = start_debug_session(StartDebugSessionRequestDto {
+            request_id: uuid::Uuid::new_v4().to_string(),
             workspace_root: root.to_string_lossy().into(),
             relative_path: "module/checks/checks_test.go".into(),
             test_name: Some("TestSelected".into()),
@@ -146,6 +147,7 @@ async fn debug_test_builds_the_package_selects_one_test_and_reads_actual_locals(
             ("module/checks/excluded_test.go", "TestExcluded"),
         ] {
             let rejected = start_debug_session(StartDebugSessionRequestDto {
+                request_id: uuid::Uuid::new_v4().to_string(),
                 workspace_root: root.to_string_lossy().into(),
                 relative_path: file.into(),
                 test_name: Some(name.into()),

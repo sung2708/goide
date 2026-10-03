@@ -8,7 +8,7 @@ it("keeps startup pending until acknowledgement and stops only the captured owne
   const launch = owner.start(context, () => new Promise(resolve => { finish = resolve; }), vi.fn());
   expect(owner.current()).toEqual(context);
   await expect(owner.start({ ...context, runId: "other" }, vi.fn(), vi.fn())).rejects.toThrow("Stop the current run");
-  await owner.stop(); expect(stop).toHaveBeenCalledWith(context);
+  await Promise.resolve(); await owner.stop(); expect(stop).toHaveBeenCalledWith(context);
   finish({ ok: false, error: { code: "run_start_failed", message: "Startup cancelled" } }); await launch;
   expect(owner.current()).toBeNull();
 });
@@ -36,4 +36,14 @@ it("accepts an authoritative rejection without inventing a started process", asy
   const response = { ok: false, error: { code: "run_start_failed", message: "invalid package" } };
   expect(await owner.start(context, async () => response, vi.fn())).toEqual(response);
   expect(stop).not.toHaveBeenCalled(); expect(owner.current()).toBeNull();
+});
+
+it("releases the launch caller when a transport failure arrives after confirmed Stop", async () => {
+  const stop = vi.fn().mockResolvedValue({ ok: true }); const owner = new RunOwnership(stop);
+  let reject!: (reason: Error) => void;
+  const launch = owner.start(context, () => new Promise((_resolve, fail) => { reject = fail; }), vi.fn());
+  await Promise.resolve(); await owner.stop();
+  expect((await launch).error?.code).toBe("run_start_cancelled");
+  reject(new Error("late transport error")); await Promise.resolve(); expect(stop).toHaveBeenCalledTimes(1);
+  expect(owner.cleanupPending()).toBe(false);
 });

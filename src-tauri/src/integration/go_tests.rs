@@ -162,6 +162,7 @@ pub(crate) fn test_filter(name: Option<&str>) -> Result<Option<String>> {
 }
 /// Resolve the saved package using Go's module/workspace and build constraints.
 /// Individual Debug Test discovery is explicit execution preparation, not a background scan.
+#[cfg(test)]
 pub(crate) fn debug_target(
     root: &Path,
     relative_path: &str,

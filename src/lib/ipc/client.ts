@@ -231,6 +231,7 @@ export async function fetchWorkspaceCompletions(
 export async function activateScopedDeepTrace(
   request: ActivateDeepTraceRequest
 ): Promise<ApiResponse<ActivateDeepTraceResponse>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "debugger_native_required", message: "Debug startup requires the desktop app and actual Go/Delve." } };
   return invoke<ApiResponse<ActivateDeepTraceResponse>>(
     "activate_scoped_deep_trace",
     {
@@ -242,15 +243,15 @@ export async function activateScopedDeepTrace(
 export async function startDebugSession(
   request: StartDebugSessionRequest
 ): Promise<ApiResponse<ActivateDeepTraceResponse>> {
-  if (!hasTauriInternals()) {
-    return {
-      ok: true,
-      data: { mode: "deep-trace", scopeKey: "runtime_session" },
-    };
-  }
+  if (!hasTauriInternals()) return { ok: false, error: { code: "debugger_native_required", message: "Debug startup requires the desktop app and actual Go/Delve." } };
   return invoke<ApiResponse<ActivateDeepTraceResponse>>("start_debug_session", {
     request,
   });
+}
+
+export async function cancelDebuggerStartup(request: LanguageCancelRequest): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "debugger_native_required", message: "Debug startup cleanup requires the desktop app." } };
+  return invoke("cancel_debugger_startup", { request });
 }
 
 export async function deactivateDeepTrace(request: import("./types").DebuggerStopContext = { sessionId: null }): Promise<ApiResponse<void>> {
