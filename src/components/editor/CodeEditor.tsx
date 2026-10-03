@@ -1,3 +1,5 @@
+import { entryActionLenses, entryActionTheme } from "./entryActionLenses";
+import type { SemanticEntryAction } from "../../features/semantics/types";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useSettings } from "../../features/settings/useSettings";
 import CodeMirror from "@uiw/react-codemirror";
@@ -600,6 +602,8 @@ type CodeEditorProps = {
   signatureRequestTrigger?: number;
   filePath?: string | null;
   semanticAnalysisClient?: SemanticAnalysisClient;
+  executionActionsEnabled?: boolean;
+  onEntryAction?: (action: SemanticEntryAction, intent: "run" | "debug", source: string) => void;
   onDocumentSymbolsChange?: (symbols: DocumentOutlineItem[]) => void;
   editable?: boolean;
   diagnostics?: EditorDiagnostic[];
@@ -636,6 +640,8 @@ function CodeEditor({
   filePath = null,
   semanticAnalysisClient,
   onDocumentSymbolsChange,
+  executionActionsEnabled = false,
+  onEntryAction,
   editable = true,
   diagnostics = [],
   breakpoints = [],
@@ -645,6 +651,10 @@ function CodeEditor({
 }: CodeEditorProps) {
   const { values: settings } = useSettings();
   const [editorView, setEditorView] = useState<EditorView | null>(null);
+  const entryContextRef = useRef({ key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction });
+  entryContextRef.current = { key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction };
+  const entryLenses = useMemo(() => entryActionLenses(() => entryContextRef.current), []);
+
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (view && typeof view.state.doc.length === "number") synchronizeControlledDocument(view, value);
@@ -1018,6 +1028,8 @@ function CodeEditor({
     ...signatureExtensions,
     ...goideEditorExtensions,
     semanticFoldingExtension,
+    entryLenses,
+    entryActionTheme,
     breakpointField,
     inlineDiagnosticField,
     EditorState.readOnly.of(!editable),
@@ -1400,6 +1412,11 @@ function CodeEditor({
 
   useEffect(() => {
     const view = viewRef.current;
+    if (view) view.dispatch({ effects: setSemanticAnalysisEffect.of(view.state.field(semanticAnalysisField, false) ?? null) });
+  }, [executionActionsEnabled, selectionContextKey, onEntryAction, editorView]);
+
+  useEffect(() => {
+    const view = viewRef.current;
     if (!view) {
       return;
     }
@@ -1413,7 +1430,7 @@ function CodeEditor({
     }
 
     const unsubscribe = activeSemanticClient.subscribe((result) => {
-      if (result.filePath !== filePath || result.version < 1) {
+      if (result.filePath !== filePath || result.version < 1 || (result.sourceText !== undefined && result.sourceText !== view.state.doc.toString())) {
         return;
       }
 

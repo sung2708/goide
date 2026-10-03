@@ -12,6 +12,7 @@ async fn an_actual_program_exit_retires_the_debugger_and_its_stop_token() {
     .unwrap();
     std::fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
     let started = start_debug_session(StartDebugSessionRequestDto {
+        test_name: None,
         workspace_root: root.to_string_lossy().into(),
         relative_path: "main.go".into(),
     })
@@ -31,7 +32,13 @@ async fn an_actual_program_exit_retires_the_debugger_and_its_stop_token() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            let stopped = deactivate_deep_trace(crate::ui_bridge::types::DebuggerStopContextDto { session_id: get_debugger_state().await.data.and_then(|state| state.session_id) }).await;
+            let stopped = deactivate_deep_trace(crate::ui_bridge::types::DebuggerStopContextDto {
+                session_id: get_debugger_state()
+                    .await
+                    .data
+                    .and_then(|state| state.session_id),
+            })
+            .await;
             panic!(
                 "natural exit was not observed; explicit cleanup: {:?}",
                 stopped.error

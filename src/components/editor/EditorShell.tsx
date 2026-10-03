@@ -1,3 +1,4 @@
+import type { SemanticEntryAction } from "../../features/semantics/types";
 import { useExecutionPreparation } from "../../features/goProject/useExecutionPreparation";
 import { ownsDebuggerWorkspace } from "../../features/debugger/workspace";
 import { useInspectionGate } from "../../features/debugger/useInspectionGate";
@@ -1319,7 +1320,7 @@ function EditorShell() {
     void handleRunFile("standard");
   }, [handleRunFile]);
 
-  const handleStartDebug = useCallback(async () => {
+  const handleStartDebug = useCallback(async (testName: string | null = null) => {
     if (documentTransitionRef.current || runStopInFlightRef.current || debugStopInFlightRef.current || (runStatus === "running" && runMode !== "debug")) {
       return;
     }
@@ -1332,6 +1333,7 @@ function EditorShell() {
       response = await executionPreparation.prepare(() => startDebugSession({
         workspaceRoot: workspacePath,
         relativePath: activeFilePath,
+        ...(testName ? { testName } : {}),
       }), ["go", "delve"]);
     } catch (error) {
       if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) return;
@@ -2049,6 +2051,16 @@ function EditorShell() {
   };
   const debugStartDisabled = !workspacePath || !isGoFile(activeFilePath) || isDebugSessionBusy || debugStopInFlightRef.current || runStatus === "running" || commandBusy;
   const runDisabled = !workspacePath || !isGoFile(activeFilePath) || runStatus === "running" || isDebugSessionBusy || commandBusy;
+  const handleEntryAction = useCallback((action: SemanticEntryAction, intent: "run" | "debug", source: string) => {
+    if (!workspacePath || workspacePathRef.current !== workspacePath || activeFilePathRef.current !== activeFilePath || source !== latestEditorContentRef.current || commandBusy || runStatus === "running" || isDebugSessionBusy) return;
+    if (action.kind === "test") {
+      if (!activeFilePath?.endsWith("_test.go")) return;
+      if (intent === "debug") void handleStartDebug(action.name);
+      else { setIsGoTestsOpen(true); void goTests.run("package", testDirectory, action.name); }
+    } else if (!activeFilePath?.endsWith("_test.go")) {
+      if (intent === "debug") void handleStartDebug(); else handleRunFileStandard();
+    }
+  }, [workspacePath, activeFilePath, commandBusy, runStatus, isDebugSessionBusy, goTests.run, testDirectory, handleStartDebug, handleRunFileStandard]);
   const commands: Command[] = [
     { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
@@ -2611,7 +2623,7 @@ function EditorShell() {
                             breakpoints={breakpoints}
                             onToggleBreakpoint={handleToggleBreakpoint}
                             diagnostics={diagnostics}
-                            selectionContextKey={activeFilePath}
+                            selectionContextKey={`${workspacePath}\u0000${activeFilePath}`}
                               hintLine={activeHintLine}
                               counterpartLine={counterpartResolution?.line ?? null}
                             jumpRequest={jumpRequest}
@@ -2629,6 +2641,8 @@ function EditorShell() {
                             onRequestSignature={requestEditorSignature}
                             signatureRequestTrigger={signatureRequestTrigger}
                             externalSearchQuery={editorHighlightQuery}
+                            executionActionsEnabled={!documents.active?.readOnly && !commandBusy && runStatus !== "running" && !isDebugSessionBusy}
+                            onEntryAction={handleEntryAction}
                             onDocumentSymbolsChange={(symbols) => {
                               setDocumentSymbols(symbols);
                               setIsSymbolsPending(false);
