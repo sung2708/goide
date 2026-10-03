@@ -1033,11 +1033,6 @@ fn normalize_path_for_file_uri(path: &str) -> String {
     path.to_string()
 }
 
-#[cfg(not(windows))]
-fn normalize_path_for_file_uri(path: &str) -> String {
-    path.to_string()
-}
-
 fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionItem> {
     let Some(result) = response.get("result") else {
         return Vec::new();

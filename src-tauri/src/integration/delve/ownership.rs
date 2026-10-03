@@ -132,10 +132,11 @@ impl Drop for Resources {
 }
 
 pub fn is_pending() -> bool {
-    CLEANING.load(Ordering::Acquire) > 0
+    CLEANING.load(Ordering::Acquire) > 0 || crate::integration::process_job::async_cleanup_pending()
 }
 
 pub async fn retry_cleanup() -> Result<(), String> {
+    crate::integration::process_job::retry_async_cleanup().await?;
     let _gate = cleanup_gate().lock().await;
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
