@@ -100,6 +100,10 @@ import ShellTerminalView from "./ShellTerminalView";
 describe("ShellTerminalView", () => {
   afterEach(async () => { cleanup(); await act(async () => { await Promise.resolve(); }); });
   beforeEach(() => {
+    ensureShellSessionMock.mockReset();
+    writeShellInputMock.mockReset();
+    resizeShellSessionMock.mockReset();
+    disposeShellSessionMock.mockReset();
     capturedOnData = null;
     capturedOnResize = null;
     capturedOnMount = null;
@@ -605,6 +609,8 @@ describe("ShellTerminalView", () => {
     );
 
     // Trigger natural exit
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledOnce());
+    await act(async () => { await Promise.resolve(); });
     act(() => {
       shellExitListener?.({ payload: { shellSessionId: "session-abc" } });
     });

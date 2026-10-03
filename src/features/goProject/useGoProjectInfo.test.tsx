@@ -1,0 +1,44 @@
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { useGoProjectInfo } from "./useGoProjectInfo";
+import { settingsStore } from "../settings/SettingsStore";
+const { inspect, cancel, configure } = vi.hoisted(() => ({ inspect: vi.fn(), cancel: vi.fn(), configure: vi.fn() }));
+vi.mock("../../lib/ipc/client", () => ({ inspectGoProject: inspect, cancelLanguageRequest: cancel, configureToolchainPaths: configure }));
+beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); settingsStore.reset(); configure.mockResolvedValue({ ok: true, data: {} }); cancel.mockResolvedValue({ ok: true, data: true }); });
+afterEach(cleanup);
+it("cancels native inspection on context changes and ignores stale results", async () => {
+  let finish!: (value: unknown) => void;
+  inspect.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; })).mockResolvedValueOnce({ ok: true, data: { directory: "/new" } });
+  const view = renderHook(({ root }) => useGoProjectInfo(true, root, "."), { initialProps: { root: "/old" } });
+  await waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+  const retired = inspect.mock.calls[0][0];
+  view.rerender({ root: "/new" });
+  await waitFor(() => expect(view.result.current.info?.directory).toBe("/new"));
+  expect(cancel).toHaveBeenCalledWith(retired);
+  await act(async () => { finish({ ok: true, data: { directory: "/old" } }); });
+  expect(view.result.current.info?.directory).toBe("/new");
+});
+it("exposes configuration/native errors and can retry after cancellation", async () => {
+  configure.mockResolvedValueOnce({ ok: false, error: { message: "Stop the debugger first" } });
+  const view = renderHook(() => useGoProjectInfo(true, "/root", "."));
+  await waitFor(() => expect(view.result.current.error).toBe("Stop the debugger first"));
+  expect(inspect).not.toHaveBeenCalled();
+  let finish!: (value: unknown) => void;
+  inspect.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  act(() => { void view.result.current.refresh(); });
+  await waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+  act(() => { view.result.current.cancel(); });
+  expect(cancel).toHaveBeenCalledOnce(); expect(view.result.current.checking).toBe(false);
+  await act(async () => { finish({ ok: true, data: { directory: "retired" } }); });
+  expect(view.result.current.info).toBeNull();
+  inspect.mockResolvedValueOnce({ ok: false, error: { message: "Invalid go.work" } });
+  await act(async () => { await view.result.current.refresh(); });
+  expect(view.result.current.error).toBe("Invalid go.work");
+});
+it("does not probe while closed and cancels a live request on unmount", async () => {
+  inspect.mockImplementation(() => new Promise(() => {}));
+  const view = renderHook(({ open }) => useGoProjectInfo(open, "/root", "."), { initialProps: { open: false } });
+  expect(inspect).not.toHaveBeenCalled(); expect(configure).not.toHaveBeenCalled();
+  view.rerender({ open: true }); await waitFor(() => expect(inspect).toHaveBeenCalledOnce());
+  view.unmount(); expect(cancel).toHaveBeenCalledWith(inspect.mock.calls[0][0]);
+});

@@ -117,6 +117,12 @@ export type DiagnosticsResponse = {
 };
 
 export type LanguageQueryKind = "definition" | "references" | "hover";
+export type GoProjectRequest = { workspaceRoot: string; relativeDirectory: string; requestId: string };
+export type GoProjectInfo = {
+  directory: string; mode: "workspace" | "module" | "directory"; workFile: string | null; workError: string | null; limited: boolean;
+  modules: { directory: string; modFile: string; insideWorkspace: boolean; modulePath: string | null; goVersion: string | null; error: string | null }[];
+  environment: Record<"GOROOT" | "GOPATH" | "GOMOD" | "GOWORK" | "GOVERSION" | "GOOS" | "GOARCH" | "CGO_ENABLED" | "GOTOOLCHAIN", string>;
+};
 export type LanguageLocation = { path: string; line: number; column: number; endLine: number; endColumn: number };
 export type LanguageQuery = { requestId?: string; workspaceRoot: string; relativePath: string; line: number; column: number; kind: LanguageQueryKind; buffers: { path: string; content: string }[] };
 export type LanguageCancelRequest = { workspaceRoot: string; requestId: string };

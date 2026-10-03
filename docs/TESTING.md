@@ -221,3 +221,11 @@ NOT RUN: complete desktop/platform/tool-version matrix, interactive executable s
 ## Early terminal-exit regression (2026-10-03)
 
 A full frontend run exposed a real ordering bug: shell exit could precede the setup acknowledgement, causing a dead shell to appear connected. The fix retains a bounded event ledger until the returned ID can be checked. PASS: 40 terminal view/ownership/ledger tests, including deterministic early exit and degraded cleanup on initial setup, early exit during retry, failed-cleanup retry, bounded event retention and existing workspace transitions. TypeScript and production build pass. Cross-platform desktop process-tree acceptance remains NOT RUN.
+
+## Go project inspection checkpoint (2026-10-03)
+
+PASS: three native checks, including an installed-Go fixture that detects a non-module directory, a single module and a two-module go.work without writing project/module/sum files. Scope checks reject parent/absolute/NUL contexts, recognize Go null-file sentinels and report external modules without parsing their contents. Clippy with all targets passes.
+
+PASS: five project hook/dialog tests cover native cancellation on context changes/unmount, stale results, configuration errors, explicit retry and actual module/environment display. Command-navigation and IPC suites pass (18 tests), as do the diagnostics/terminal/project regression suites (58 tests). TypeScript and the production build pass. The terminal fixture now resets queued mock implementations, and the cold Problems-panel integration test waits for its lazy import explicitly.
+
+The preceding full frontend rerun had six failures in diagnostics and terminal tests; those affected suites subsequently pass after the regression fixture/wait fixes. A fresh full-suite PASS is not claimed by this checkpoint. NOT RUN: complete desktop/platform matrix and full release acceptance. Tidy/download, structured tests, debugger inspection and other addendum/Git workflows remain unfinished.

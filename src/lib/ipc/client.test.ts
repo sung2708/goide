@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   beforeEach(() => {
@@ -16,6 +16,15 @@ describe("ipc client searchWorkspaceText", () => {
   it("reports desktop-only toolchain inspection instead of invented availability", async () => {
     await expect(getToolchainStatus()).resolves.toMatchObject({ ok: false, error: { code: "toolchain_native_required" } });
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+  it("requires native Go project inspection and forwards the typed directory/cancellation identity", async () => {
+    const request = { workspaceRoot: "C:/workspace", relativeDirectory: "a", requestId: "actual-id" };
+    expect(await inspectGoProject(request)).toMatchObject({ ok: false, error: { code: "go_project_native_required" } });
+    expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true, data: {} });
+    expect(await inspectGoProject(request)).toEqual({ ok: true, data: {} });
+    expect(invokeMock).toHaveBeenCalledWith("inspect_go_project", { request });
   });
 
   it("reports native search unavailable in browser preview", async () => {

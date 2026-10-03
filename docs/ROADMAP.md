@@ -368,3 +368,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: bounded retention of native shell-exit/degraded events received before initial setup or retry returns its session ID. Ended sessions remain disconnected; degraded sessions retain cleanup ownership.
 - Delivered: retry uses a fresh native session identity after successful cleanup, without silently reviving an exited shell.
 - Remaining: the complete cross-platform process-ownership acceptance matrix and other unfinished addendum/Git requirements. No release/tag is authorized.
+
+## Go project inspection checkpoint (2026-10-03)
+
+- Delivered: actual selected Go environment and module/workspace context from the active directory; bounded go.work membership and scoped module metadata inspection.
+- Delivered: command-palette navigation, meaningful environment disclosure, loading/retry/cancel, serialized executable configuration and stale-result rejection.
+- Delivered: root/directory/symlink boundary checks, outside-module reporting without content reads, bounded native processes, app-shutdown ownership and request cancellation.
+- Remaining: explicit tidy/download actions with document/process guards and visible output, structured test workflows, debugger inspection, workspace/session restore and the unfinished Git/platform acceptance matrix. No release/tag is authorized.

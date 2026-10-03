@@ -46,6 +46,11 @@ function hasTauriInternals(): boolean {
   return Boolean((globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__);
 }
 
+export async function inspectGoProject(request: import("./types").GoProjectRequest): Promise<ApiResponse<import("./types").GoProjectInfo>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "go_project_native_required", message: "Go project inspection requires the desktop app and Go." } };
+  return invoke("inspect_go_project", { request });
+}
+
 export async function queryWorkspaceLanguage(request: LanguageQuery): Promise<ApiResponse<LanguageQueryResult>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Language queries require the desktop app and gopls." } };
   return invoke<ApiResponse<LanguageQueryResult>>("query_workspace_language", { request });
