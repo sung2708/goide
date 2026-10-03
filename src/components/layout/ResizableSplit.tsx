@@ -288,8 +288,10 @@ function ResizableSplit({
           tabIndex={0}
           data-testid="separator-hit-zone"
           className={cn(
-            "group relative z-50 shrink-0 select-none flex items-center justify-center outline-none focus-visible:bg-[var(--bg-active)]",
-            isHorizontal ? "w-3 cursor-col-resize" : "h-3 cursor-row-resize"
+            "group relative z-30 shrink-0 select-none flex items-center justify-center outline-none",
+            isHorizontal
+              ? "w-px cursor-col-resize before:absolute before:inset-y-0 before:-inset-x-1.5 before:content-['']"
+              : "h-px cursor-row-resize before:absolute before:inset-x-0 before:-inset-y-1.5 before:content-['']"
           )}
           style={{ touchAction: "none" }}
           onPointerDown={startDragging}
@@ -300,7 +302,7 @@ function ResizableSplit({
           <div
             aria-hidden="true"
             className={cn(
-              "pointer-events-none shrink-0 bg-(--border-muted) transition-colors duration-100 group-hover:bg-(--border-active) group-focus-visible:bg-(--border-active)",
+              "pointer-events-none shrink-0 bg-[var(--border-structural)] transition-colors duration-100 group-hover:bg-[var(--border-interaction)] group-focus-visible:bg-[var(--border-focus)]",
               isHorizontal ? "h-full w-px" : "h-px w-full"
             )}
           />

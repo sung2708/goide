@@ -246,6 +246,20 @@ describe("CodeEditor", () => {
     expect(screen.getByTestId("mock-codemirror")).toBeInTheDocument();
   });
 
+  it("keeps extensions stable across callback changes while Save uses the latest handler", () => {
+    const oldSave = vi.fn();
+    const newSave = vi.fn();
+    const firstCompletion = vi.fn(async () => []);
+    const nextCompletion = vi.fn(async () => []);
+    const { rerender } = render(<CodeEditor value="package main\n" onSave={oldSave} onRequestCompletions={firstCompletion} />);
+    const extensions = latestCodeMirrorProps?.extensions;
+    rerender(<CodeEditor value="package main\n" onSave={newSave} onRequestCompletions={nextCompletion} onSelectionLineChange={() => {}} />);
+    expect(latestCodeMirrorProps?.extensions).toBe(extensions);
+    latestKeyBindings.find((binding) => binding.key === "Mod-s")?.run?.({ state: { doc: { toString: () => "latest draft" } } });
+    expect(oldSave).not.toHaveBeenCalled();
+    expect(newSave).toHaveBeenCalledWith("latest draft");
+  });
+
   it("registers a non-passive wheel listener on the CodeMirror scroll container", () => {
     render(<CodeEditor value={"package main\n"} />);
 

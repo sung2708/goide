@@ -52,7 +52,7 @@ function HighlightedPreview({
         i % 2 === 1 ? (
           <mark
             key={i}
-            className="rounded-xs bg-[rgba(140,170,238,0.22)] text-(--blue) not-italic"
+            className="rounded-xs bg-[var(--blue)]/20 text-(--blue) not-italic"
           >
             {part}
           </mark>
@@ -82,10 +82,10 @@ function ToggleButton({
       aria-pressed={active}
       title={label}
       onClick={onClick}
-      className={`flex h-5 w-5 items-center justify-center rounded transition-colors duration-100 ${
+      className={`flex h-5 w-5 items-center justify-center rounded-none transition-colors duration-100 ${
         active
           ? "bg-(--selection-bg) text-(--blue)"
-          : "text-(--overlay1) hover:bg-[rgba(255,255,255,0.06)] hover:text-(--subtext1)"
+          : "text-(--overlay1) hover:bg-(--bg-hover) hover:text-(--subtext1)"
       }`}
     >
       <span className="text-[10px] font-semibold">{text}</span>
@@ -276,7 +276,7 @@ function SearchPanel({
         </p>
 
         {/* Search row */}
-        <div className="relative mb-1.5 flex items-center rounded border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
+        <div className="relative mb-1.5 flex items-center rounded-none border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
           <span className="ml-2 shrink-0 text-(--overlay1)">
             <FontAwesomeIcon icon={faMagnifyingGlass} className="text-[13px]" />
           </span>
@@ -321,7 +321,7 @@ function SearchPanel({
         </div>
 
         {/* Replace row */}
-        <div className="relative flex items-center rounded border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
+        <div className="relative flex items-center rounded-none border border-(--surface1) bg-(--crust) transition-colors focus-within:border-(--border-active) focus-within:ring-1 focus-within:ring-(--focus-ring)">
           <span className="ml-2 shrink-0 text-(--overlay1)">
             <FontAwesomeIcon icon={faArrowsTurnToDots} className="text-[13px]" />
           </span>
@@ -353,7 +353,7 @@ function SearchPanel({
                 aria-label="Replace All"
                 disabled={loading}
                 onClick={() => onReplaceAll(activeQuery, replaceQuery)}
-                className="rounded border border-(--border-muted) bg-(--surface0) px-2 py-0.5 text-[10px] font-semibold text-(--subtext1) transition-colors duration-100 hover:border-(--border-active) hover:bg-(--bg-hover) hover:text-(--text)"
+                className="rounded-none border border-(--border-muted) bg-(--surface0) px-2 py-0.5 text-[10px] font-semibold text-(--subtext1) transition-colors duration-100 hover:border-(--border-active) hover:bg-(--bg-hover) hover:text-(--text)"
               >
                 Replace All
               </button>

@@ -10,7 +10,7 @@ export default function GoProjectDialog({ open, onClose, root, activePath, trans
   const path = activePath?.replace(/\\/g, "/");
   const directory = path?.includes("/") ? path.slice(0, path.lastIndexOf("/")) : ".";
   const { info, error, checking, refresh, cancel } = useGoProjectInfo(open, root, directory);
-  return <Dialog open={open} onOpenChange={next => { if (!next && !busyRef.current) onClose(); }} ariaLabel="Go Project" panelClassName="w-[min(48rem,95vw)] max-h-[85vh] overflow-auto rounded border border-(--border) bg-(--base) p-5 text-(--text)">
+  return <Dialog open={open} onOpenChange={next => { if (!next && !busyRef.current) onClose(); }} ariaLabel="Go Project" panelClassName="w-[min(48rem,95vw)] max-h-[85vh] overflow-auto rounded-none border border-(--border) bg-(--base) p-5 text-(--text)">
     <h2>Go Project</h2>
     <p className="my-2 text-sm">Inspect the saved module/workspace selected by Go for the active file directory. Refresh after changing go.mod or go.work.</p>
     {!root && <p>Open a workspace first.</p>}

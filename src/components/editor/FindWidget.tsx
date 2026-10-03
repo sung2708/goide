@@ -119,7 +119,7 @@ export default function FindWidget({
   return (
     <div
       data-testid="find-widget"
-      className="absolute right-3 top-2 z-50 w-[min(420px,calc(100%-1.5rem))] overflow-hidden rounded-md border border-(--border-muted) bg-(--mantle) shadow-(--panel-shadow-soft)"
+      className="absolute right-3 top-2 z-50 w-[min(420px,calc(100%-1.5rem))] overflow-hidden rounded-none border border-(--border-muted) bg-(--mantle) shadow-(--panel-shadow-soft)"
     >
       {/* Find row */}
       <div className="flex items-center gap-1 border-b border-(--surface1) px-2 py-1">

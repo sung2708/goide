@@ -2045,7 +2045,6 @@ function EditorShell() {
     setBusy: setGitOperationBusy,
     canChangeFiles: () => runStatus !== "running" && debugUiState !== "starting" && debugUiState !== "running" && debugUiState !== "paused" && debugUiState !== "stopping",
   });
-
   const moduleDocumentTransaction = useGitDocumentTransaction({
     root: workspacePathRef, lock: documentTransitionRef, mutation: branchMutationRef,
     preserve: preserveAllDocuments,
@@ -2138,7 +2137,7 @@ function EditorShell() {
     { id: "go.testWorkspace", title: "Go: Test Workspace", disabled: !workspacePath || commandBusy || runStatus === "running" || isDebugSessionBusy ? "Open a workspace and finish document/Run/Debug operations." : undefined, run: () => { setIsGoTestsOpen(true); void goTests.run("workspace", testDirectory); } },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
-    { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
+    { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => { setHasLoadedBottomPanel(true); setIsBottomPanelOpen(value => !value); } },
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
     { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
@@ -2171,22 +2170,71 @@ function EditorShell() {
           language.close();
           void handleOpenFile(location.path).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === location.path) requestJump(location.line, location.column); });
         }} />
-        <span className="workspace-brand"><img src="/brand/icon-small.svg" alt="" width="20" height="20" />Goro</span>
+        <div className="flex items-center gap-2">
+          <img src="/brand/icon.svg" alt="" className="size-4 shrink-0" aria-hidden="true" />
+          <span className="workspace-brand text-[15px] font-bold tracking-tight">Goro</span>
+        </div>
         <button
           type="button"
           className="workspace-search"
           aria-label="Find workspace files"
-          title="Find a file (Ctrl+P)"
-          disabled={!workspacePath}
-          onClick={() => void executeCommand("file.quickOpen")}
+          title="Search files or commands (Ctrl+P)"
+          onClick={() => void executeCommand(workspacePath ? "file.quickOpen" : "workbench.commands")}
+          tabIndex={0}
         >
           <svg aria-hidden="true" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5"><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></svg>
-          <span>{workspacePath ? workspacePath.split(/[\\/]/).pop() : "Your next workspace"}</span>
+          <span>{workspacePath ? workspacePath.split(/[\\/]/).pop() : "Search or run command…"}</span>
           <kbd>Ctrl P</kbd>
         </button>
-        <button type="button" aria-label="Commands" title="Command Palette (Ctrl+Shift+P / Cmd+Shift+P)" className="rounded px-2 py-1 text-xs text-(--subtext0) hover:bg-(--bg-hover)" onClick={() => void executeCommand("workbench.commands")}>Commands</button>
-        <button type="button" aria-label="Open Settings" title="Settings (Ctrl+,)" onClick={() => setIsSettingsOpen(true)} className="px-2 text-xs">Settings</button>
-        <ThemeSwitcher />
+        <div className="flex items-center gap-1.5">
+          {activeFilePath && isGoFile(activeFilePath) && (
+            runStatus === "running" ? (
+              <button
+                type="button"
+                aria-label="Stop Go run"
+                title="Stop current Go run (Shift+F5)"
+                onClick={() => void executeCommand("go.stop")}
+                className="flex items-center gap-1 h-6 px-2 rounded bg-[var(--red)]/15 border border-[var(--red)]/30 text-[var(--red)] text-[11px] font-semibold transition-all hover:bg-[var(--red)]/25"
+              >
+                <span className="size-1.5 rounded-full bg-[var(--red)] animate-pulse" />
+                <span>Stop</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                aria-label="Run Go file"
+                title="Run active Go file (Ctrl+F5)"
+                onClick={() => void executeCommand("go.run")}
+                className="flex items-center gap-1 h-6 px-2 rounded bg-[var(--green)]/15 border border-[var(--green)]/30 text-[var(--green)] text-[11px] font-semibold transition-all hover:bg-[var(--green)]/25"
+              >
+                <svg width="9" height="9" viewBox="0 0 24 24" fill="currentColor">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                <span>Run</span>
+              </button>
+            )
+          )}
+          <button
+            type="button"
+            aria-label="Toggle terminal dock"
+            title="Toggle Terminal Panel (Ctrl+J)"
+            className={`flex size-7 items-center justify-center rounded text-[var(--subtext0)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)] ${
+              isBottomPanelOpen ? "text-[var(--text)] bg-[var(--surface0)]" : ""
+            }`}
+            onClick={() => {
+              setHasLoadedBottomPanel(true);
+              setIsBottomPanelOpen((prev) => !prev);
+            }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <rect width="18" height="18" x="3" y="3" rx="2" />
+              <line x1="3" y1="15" x2="21" y2="15" />
+            </svg>
+          </button>
+          <button type="button" aria-label="Commands" title="Command Palette (Ctrl+Shift+P)" className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" onClick={() => void executeCommand("workbench.commands")}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span className="sr-only">Commands</span></button>
+          <button type="button" aria-label="Open Settings" title="Settings (Ctrl+,)" className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" onClick={() => setIsSettingsOpen(true)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span className="sr-only">Open Settings</span></button>
+          <ThemeSwitcher />
+        </div>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ActivityBar
@@ -2194,6 +2242,9 @@ function EditorShell() {
           onTabChange={setActiveTab}
           signalCount={raceSignals.length}
           showDebugTab={showDebugTab}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onToggleBottomPanel={() => setIsBottomPanelOpen(prev => !prev)}
+          isBottomPanelOpen={isBottomPanelOpen}
         />
         <ResizableSplit
           orientation="horizontal"
@@ -2465,84 +2516,110 @@ function EditorShell() {
               <div className="flex h-full min-h-0 min-w-0 flex-1 overflow-hidden">
             <section
               data-testid="editor-workbench"
-              className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-l border-(--border-subtle) bg-(--crust)"
+              className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-(--crust)"
             >
-              {documentSnapshot.documents.length > 0 && <DocumentTabs snapshot={documentSnapshot} busy={isReading || explorerOperationBusy || gitOperationBusy || isBranchMutationInProgress} activate={path => void handleOpenFile(path)} close={id => void closeDocument(id)} />}
-              <header className="editor-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1.5 md:px-4">
-                <div className="flex items-center gap-2 min-w-0">
-                  <span className="editor-file-tab text-[12px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
-                </div>
+              {documentSnapshot.documents.length > 0 && (
+                <>
+                  <DocumentTabs snapshot={documentSnapshot} busy={isReading || explorerOperationBusy || gitOperationBusy || isBranchMutationInProgress} activate={path => void handleOpenFile(path)} close={id => void closeDocument(id)} />
+                  <header className="editor-toolbar flex flex-wrap items-center justify-between gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1 text-[12px] md:px-4">
+                    <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--overlay1)]" data-testid="editor-scope-breadcrumb">
+                      <span className="font-mono text-[11px] font-medium text-[var(--subtext1)] truncate">{editorTitle}</span>
+                      {isReading && <span className="shrink-0 text-[10px] text-[var(--overlay0)]">Loading…</span>}
+                      {activeDocumentSymbol && (
+                        <>
+                          <span className="shrink-0 text-[var(--overlay0)] opacity-40">/</span>
+                          <button
+                            type="button"
+                            className="flex min-w-0 items-center gap-1.5 rounded-none px-1.5 py-0.5 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
+                            onClick={() => requestJump(activeDocumentSymbol.line)}
+                            title={`Jump to ${activeDocumentSymbol.name} on line ${activeDocumentSymbol.line}.`}
+                          >
+                            <span className="rounded-none bg-[var(--surface0)] px-1 py-0.5 text-[9px] uppercase tracking-[0.04em]">
+                              {activeDocumentSymbol.kind}
+                            </span>
+                            <span className="truncate text-[var(--subtext1)] font-mono">
+                              {activeDocumentSymbol.name}
+                            </span>
+                            <span className="text-[var(--overlay0)]">
+                              L{activeDocumentSymbol.line}
+                            </span>
+                          </button>
+                        </>
+                      )}
+                    </div>
 
-                <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
-                  <button
-                    className={`flex size-7 cursor-pointer items-center justify-center rounded border border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] transition-colors duration-100 ease-out hover:bg-[var(--bg-hover)] ${
-                      isOpening ? "cursor-not-allowed opacity-60" : ""
-                    }`}
-                    onClick={() => void executeCommand("workspace.open")}
-                    type="button"
-                    aria-label="Open workspace folder"
-                    title="Choose a Go workspace folder."
-                    disabled={isOpening}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
-                  </button>
+                    <div className="flex min-w-0 max-w-full items-center gap-1.5 overflow-x-auto pb-0.5 md:gap-2">
+                      <button
+                        className={`flex size-6.5 cursor-pointer items-center justify-center rounded-none text-[var(--subtext1)] transition-colors duration-100 ease-out hover:bg-[var(--bg-hover)] hover:text-[var(--text)] ${
+                          isOpening ? "cursor-not-allowed opacity-60" : ""
+                        }`}
+                        onClick={() => void executeCommand("workspace.open")}
+                        type="button"
+                        aria-label="Open workspace folder"
+                        title="Choose a Go workspace folder."
+                        disabled={isOpening}
+                      >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+                      </button>
 
-                  {activeFilePath && (
-                    <button
-                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
-                        runStatus === "running" || debugUiState === "starting"
-                          ? "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[var(--border-subtle)] bg-[var(--surface0)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
-                      }`}
-                      onClick={() => void executeCommand("go.run")}
-                      type="button"
-                      aria-label="Run active Go file"
-                      title="Run the active Go file and show output in the terminal panel."
-                      disabled={runStatus === "running" || debugUiState === "starting"}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    </button>
-                  )}
-                  {isGoFile(activeFilePath) && runMode !== "debug" && (
-                    <button
-                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
-                        runStatus === "running" ||
-                        debugUiState === "starting" ||
-                        runtimeAvailability === "unavailable"
-                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
-                      }`}
-                      onClick={() => void executeCommand("go.race")}
-                      type="button"
-                      aria-label="Run active Go file with race detector"
-                      title="Run the active Go file with the Go race detector and surface confirmed race findings."
-                      disabled={
-                        runStatus === "running" ||
-                        debugUiState === "starting" ||
-                        runtimeAvailability === "unavailable"
-                      }
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
-                    </button>
-                  )}
-                  {isGoFile(activeFilePath) && (
-                    <button
-                      className={`flex size-7 cursor-pointer items-center justify-center rounded border transition-colors duration-100 ease-out ${
-                        isDebugSessionBusy || runStatus === "running"
-                          ? "border-[var(--border-subtle)] text-[var(--overlay2)] cursor-not-allowed"
-                          : "border-[var(--border-subtle)] text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
-                      }`}
-                      onClick={() => void executeCommand("debug.startOrContinue")}
-                      type="button"
-                      aria-label="Debug active Go file"
-                      title="Start a debug session for the active Go file."
-                      disabled={isDebugSessionBusy || runStatus === "running"}
-                    >
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
-                    </button>
-                  )}
-                </div>
-              </header>
+                      {activeFilePath && (
+                        <button
+                          className={`flex size-6.5 cursor-pointer items-center justify-center rounded-none transition-colors duration-100 ease-out ${
+                            runStatus === "running" || debugUiState === "starting"
+                              ? "cursor-not-allowed opacity-40 text-[var(--overlay2)]"
+                              : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                          }`}
+                          onClick={() => void executeCommand("go.run")}
+                          type="button"
+                          aria-label="Run active Go file"
+                          title="Run the active Go file and show output in the terminal panel."
+                          disabled={runStatus === "running" || debugUiState === "starting"}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                        </button>
+                      )}
+                      {isGoFile(activeFilePath) && runMode !== "debug" && (
+                        <button
+                          className={`flex size-6.5 cursor-pointer items-center justify-center rounded-none transition-colors duration-100 ease-out ${
+                            runStatus === "running" ||
+                            debugUiState === "starting" ||
+                            runtimeAvailability === "unavailable"
+                              ? "cursor-not-allowed opacity-40 text-[var(--overlay2)]"
+                              : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                          }`}
+                          onClick={() => void executeCommand("go.race")}
+                          type="button"
+                          aria-label="Run active Go file with race detector"
+                          title="Run the active Go file with the Go race detector and surface confirmed race findings."
+                          disabled={
+                            runStatus === "running" ||
+                            debugUiState === "starting" ||
+                            runtimeAvailability === "unavailable"
+                          }
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M13 2 3 14h7l-1 8 10-12h-7z"/></svg>
+                        </button>
+                      )}
+                      {isGoFile(activeFilePath) && (
+                        <button
+                          className={`flex size-6.5 cursor-pointer items-center justify-center rounded-none transition-colors duration-100 ease-out ${
+                            isDebugSessionBusy || runStatus === "running"
+                              ? "cursor-not-allowed opacity-40 text-[var(--overlay2)]"
+                              : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)]"
+                          }`}
+                          onClick={() => void executeCommand("debug.startOrContinue")}
+                          type="button"
+                          aria-label="Debug active Go file"
+                          title="Start a debug session for the active Go file."
+                          disabled={isDebugSessionBusy || runStatus === "running"}
+                        >
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="2"/><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg>
+                        </button>
+                      )}
+                    </div>
+                  </header>
+                </>
+              )}
 
               <div
                 data-testid="editor-content-region"
@@ -2555,7 +2632,7 @@ function EditorShell() {
                   <span>Open tabs changed on disk:</span>
                   {inactiveDiskConflicts.map(conflict => <button key={conflict.id} type="button" disabled={gitOperationBusy || explorerOperationBusy || isReading || documents.saving} onClick={() => void handleOpenFile(conflict.path)} className="underline">Review {conflict.path}{conflict.exists ? "" : " (deleted)"}</button>)}
                 </div>}
-                {(!workspacePath || !activeFilePath) && (
+                {(!workspacePath || !activeFilePath) && !isBranchMutationInProgress && (
                   <WelcomeScreen
                     workspacePath={workspacePath}
                     isOpening={isOpening}
@@ -2572,8 +2649,13 @@ function EditorShell() {
                 {workspacePath && activeFilePath && (
                   <div
                     data-testid="editor-active-file-region"
-                    className="flex min-h-0 flex-1 overflow-hidden"
+                    className="relative flex min-h-0 flex-1 overflow-hidden"
                   >
+                    {isBranchMutationInProgress && (
+                      <div className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--base)]/60 backdrop-blur-[2px]" aria-hidden="true">
+                        <span className="text-xs text-[var(--overlay1)]">Switching branch...</span>
+                      </div>
+                    )}
                     {fileError && (
                       <div className="absolute left-0 right-0 top-0 z-10 mx-3 mt-2 rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
                         {fileError}
@@ -2600,34 +2682,6 @@ function EditorShell() {
                       onCopy={() => void navigator.clipboard.writeText(latestEditorContentRef.current ?? "").catch(() => setFileError("Unable to copy editor text."))} />}
                     <div className="flex min-h-0 flex-1 overflow-hidden bg-[var(--crust)]">
                       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-                      <div className="flex items-center gap-2 border-b border-(--border-subtle) bg-(--mantle) px-3 py-1">
-                        <span className="min-w-0 truncate text-[12px] font-medium text-[var(--subtext1)]">{editorTitle}</span>
-                        {isReading && <span className="shrink-0 text-[10px] text-[var(--overlay0)]">Loading…</span>}
-                        <span className="shrink-0 text-[rgba(113,125,144,0.4)]">/</span>
-                        <div
-                          className="flex min-w-0 items-center gap-1.5 text-[11px] text-[var(--overlay1)]"
-                          data-testid="editor-scope-breadcrumb"
-                        >
-                          {activeDocumentSymbol ? (
-                            <button
-                              type="button"
-                              className="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors duration-100 hover:bg-[var(--bg-hover)]"
-                              onClick={() => requestJump(activeDocumentSymbol.line)}
-                              title={`Jump to ${activeDocumentSymbol.name} on line ${activeDocumentSymbol.line}.`}
-                            >
-                              <span className="rounded bg-[var(--surface0)] px-1 py-0.5 text-[9px] uppercase tracking-[0.04em]">
-                                {activeDocumentSymbol.kind}
-                              </span>
-                              <span className="truncate text-[var(--subtext1)]">
-                                {activeDocumentSymbol.name}
-                              </span>
-                              <span className="text-[rgba(113,125,144,0.5)]">
-                                L{activeDocumentSymbol.line}
-                              </span>
-                            </button>
-                          ) : null}
-                        </div>
-                      </div>
                       <div className="relative flex-1 min-h-0">
                         <HintUnderline hint={effectiveHint} />
                         <ThreadLine
@@ -2738,9 +2792,9 @@ function EditorShell() {
       {isCommandPaletteOpen && <CommandPalette commands={commands} execute={executeCommand} onClose={() => setIsCommandPaletteOpen(false)} />}
       {documentDecision.dialog}
       {isQuickOpenOpen && (
-        <Dialog open={true} onOpenChange={setIsQuickOpenOpen} ariaLabel="Quick Open" className="fixed inset-0 z-50 m-0 flex h-dvh w-full justify-center bg-black/40 pt-20" panelClassName="w-full max-w-2xl">
-          <div className="pointer-events-auto w-full max-w-2xl px-4">
-            <div className="overflow-hidden rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] shadow-[var(--panel-shadow)]">
+        <Dialog open={true} onOpenChange={setIsQuickOpenOpen} ariaLabel="Quick Open" className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-center justify-center bg-black/45 backdrop-blur-[8px] p-4" panelClassName="w-full max-w-xl">
+          <div className="pointer-events-auto w-full max-w-xl">
+            <div className="overflow-hidden rounded-none border border-[var(--surface-glass-border)] bg-[var(--surface-glass)] shadow-[0_20px_40px_-15px_rgba(0,0,0,0.7),inset_0_1px_0_0_rgba(255,255,255,0.08)] backdrop-blur-[var(--blur-elevated)]">
               <input
                 ref={quickOpenInputRef}
                 type="text"
@@ -2777,10 +2831,10 @@ function EditorShell() {
                     }
                   }
                 }}
-                className="w-full border-b border-[var(--border-subtle)] bg-[var(--crust)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+                className="w-full border-b border-[var(--border-structural)] bg-transparent px-3.5 py-2.5 text-[13px] text-[var(--text)] placeholder-[var(--overlay1)] outline-none"
                 aria-label="Quick open file"
               />
-              <div className="max-h-72 overflow-auto py-1">
+              <div className="max-h-80 overflow-y-auto p-1.5 scrollbar-thin">
                 {quickOpenError && <p role="alert" className="px-3 py-2 text-xs text-(--red)">{quickOpenError}</p>}
                 {quickOpenNotice && <p role="status" className="px-3 py-2 text-xs text-(--yellow)">{quickOpenNotice}</p>}
                 {quickOpenLoading && (
@@ -2795,7 +2849,7 @@ function EditorShell() {
                       key={path}
                       type="button"
                       onClick={() => handleQuickOpenSelect(path)}
-                      className={`block w-full px-3 py-1.5 text-left text-xs ${
+                      className={`group flex w-full items-center justify-between gap-3 rounded-none px-3 py-2 text-left text-[12px] transition-colors duration-75 ${
                         index === quickOpenSelectedIndex
                           ? "bg-[var(--selection-bg)] text-[var(--text)]"
                           : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
@@ -2809,6 +2863,21 @@ function EditorShell() {
             </div>
           </div>
         </Dialog>
+      )}
+
+      {isBranchPickerOpen && branchSnapshot && (
+        <BranchPicker
+          open={isBranchPickerOpen}
+          currentBranch={branchSnapshot.currentBranch}
+          branches={branchSnapshot.branches}
+          query={branchQuery}
+          onQueryChange={setBranchQuery}
+          onSelectBranch={handleBranchSelect}
+          onClose={() => {
+            setIsBranchPickerOpen(false);
+            setBranchQuery("");
+          }}
+        />
       )}
 
       <StatusBar
@@ -2832,25 +2901,9 @@ function EditorShell() {
         onToggleBranchPicker={() => setIsBranchPickerOpen((prev) => !prev)}
         isBottomPanelOpen={isBottomPanelOpen}
         onToggleBottomPanel={() => setIsBottomPanelOpen((prev) => !prev)}
+        selectedLine={selectedLine}
+        tabSize={settings.values["editor.tabSize"]}
       />
-
-
-      {isBranchPickerOpen && branchSnapshot && (
-        <div className="absolute bottom-10 left-[240px] z-50 w-72">
-          <BranchPicker
-            open={isBranchPickerOpen}
-            currentBranch={branchSnapshot.currentBranch}
-            branches={branchSnapshot.branches}
-            query={branchQuery}
-            onQueryChange={setBranchQuery}
-            onSelectBranch={handleBranchSelect}
-            onClose={() => {
-              setIsBranchPickerOpen(false);
-              setBranchQuery("");
-            }}
-          />
-        </div>
-      )}
 
       {isBranchDialogOpen && pendingTargetBranch && branchSnapshot && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/40">
