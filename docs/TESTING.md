@@ -293,3 +293,13 @@ PASS: the native debug filter runs 11 tests with installed fixtures enabled, inc
 PASS: 34 frontend tests across debugger inspection, execution-intent gating, EditorShell.debug and IPC. Coverage includes lazy expansion, indexed paging, frame selection, stale workspace/stop replies, native-only transport and preventing repeated control while awaiting observed state. TypeScript and production build pass (255 modules).
 
 Session-bound execution control, Debug Test/CodeLens/live streaming and Linux/macOS plus Windows spawn-assignment acceptance remain incomplete or NOT RUN. These focused checks do not authorize a release/tag.
+
+## Debugger control ownership regression (2026-10-03)
+
+PASS: four focused native context checks include installed Go/Delve. The real fixture stops at line 4, rejects foreign workspaces/UUIDs, unidentified and replaced-owner Stop, and breakpoint changes from the wrong owner; Step Over observes line 5, stale Continue is rejected with the newer actual stop, and Continue/Pause execute against the captured owner. Teardown confirms no active/pending ownership before removing the isolated fixture; Windows executable file deletion uses a bounded retry after confirmed process cleanup.
+
+PASS: adapter event tests invalidate execution authority when thread reads consume another stop, continuation or exit. Workspace template checks prevent identical relative filenames from sharing breakpoints across roots. The native debug filter passes 12 checks with installed fixtures enabled, including natural exit and retained ownership. This filter overlaps the four focused context checks. Native all-target Clippy passes.
+
+PASS: 46 frontend tests across EditorShell.debug, inspection, intent gating, workspace ownership and typed IPC; immediate Stop uses the startup UUID, idle unmount sends no global teardown, preview mutations report native-required errors, and unknown/failed transport cannot restore obsolete stop values. TypeScript and production build pass (256 modules).
+
+Run/Debug Save All preflight, semantic actions/Debug Test/live streaming, complete Git and platform acceptance remain unfinished or NOT RUN. No release/tag is authorized.

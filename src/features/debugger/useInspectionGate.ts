@@ -12,17 +12,17 @@ export function useInspectionGate(token: string | null | undefined) {
   const generation = useRef(0);
   const mounted = useRef(false);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; generation.current += 1; }; }, []);
-  const control = async <T,>(operation: () => Promise<ApiResponse<T>>): Promise<ApiResponse<T>> => {
+  const control = async <T,>(operation: () => Promise<ApiResponse<T>>, canRestore: (result: ApiResponse<T>, captured: string | null) => boolean = () => false): Promise<ApiResponse<T>> => {
     if (busy.current || (blockedRef.current !== null && blockedRef.current === active.current)) return { ok: false, error: { code: "debugger_control_pending", message: "Wait for the debugger's observed state before another control request." } };
     const captured = active.current ?? null;
     const request = ++generation.current;
     busy.current = true; blockedRef.current = captured; setInFlight(true); setBlocked(captured);
     try {
       const result = await operation();
-      if (!result.ok && mounted.current && generation.current === request) { blockedRef.current = null; setBlocked(null); }
+      if (!result.ok && canRestore(result, captured) && mounted.current && generation.current === request) { blockedRef.current = null; setBlocked(null); }
       return result;
     } catch (error) {
-      if (mounted.current && generation.current === request) { blockedRef.current = null; setBlocked(null); }
+      // Lost transport is not proof the target stayed at the old stop.
       throw error;
     } finally {
       if (mounted.current && generation.current === request) { busy.current = false; setInFlight(false); }

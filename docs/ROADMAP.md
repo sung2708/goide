@@ -424,3 +424,11 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: workspace/session/stop identity and issued-handle validation before and after requests; bounded queues, frames, variable references, values and UI expansion. Resume/Step immediately hides the old stop's inspection while execution state remains owned by observed DAP events.
 - Delivered: canonical workspace source navigation, selected frame source state, rejection of delayed results and clearing obsolete execution markers. Natural program termination retires the session through retained owned cleanup.
 - Remaining: session-bound execution control, semantic Test/Main CodeLens, Debug Test, live test streaming, session restore, complete Git workflows and the platform/process acceptance matrix. No release/tag is authorized.
+
+## Debugger control context checkpoint (2026-10-03)
+
+- Delivered: Continue/Pause/Step requests carry canonical workspace context, owner UUID and the observed stop token. Native checks reject foreign/replaced owners and stale stops, including events consumed while reading threads; stepping uses the selected/observed goroutine rather than an arbitrary fallback.
+- Delivered: Stop rejects unidentified/replaced active owners while preserving retained cleanup retry after retirement. Startup returns the actual registered session snapshot; editor unmount/mode cleanup targets only a session started by that editor.
+- Delivered: breakpoint templates belong to one canonical workspace, active changes require the owner UUID and metadata changes only after an adapter acknowledgement. Browser control/breakpoint/Stop calls fail explicitly. Workspace-bound inspection, source markers and delayed breakpoint replies are guarded.
+- Delivered: failed control replies include the actual post-request stop observation. UI restores old values only when native confirms that same owner and stop; unknown transport outcomes keep old inspection hidden until a new observation or Stop.
+- Remaining: breakpoint verification/resolution presentation, Run/Debug Save All preflight, semantic Test/Main actions, Debug Test, live test streaming, recent workspaces/session restore, complete Git workflows and platform acceptance. No release/tag is authorized.
