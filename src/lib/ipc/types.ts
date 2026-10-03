@@ -118,9 +118,12 @@ export type DiagnosticsResponse = {
 
 export type LanguageQueryKind = "definition" | "references" | "hover";
 export type GoProjectRequest = { workspaceRoot: string; relativeDirectory: string; requestId: string };
+export type GoModuleAction = "tidy" | "download";
+export type GoModuleRequest = GoProjectRequest & { action: GoModuleAction; expectedWorkFile: string | null };
+export type GoModuleOutput = { action: GoModuleAction; directory: string; success: boolean; exitCode: number | null; stdout: string; stderr: string };
 export type GoProjectInfo = {
   directory: string; mode: "workspace" | "module" | "directory"; workFile: string | null; workError: string | null; limited: boolean;
-  modules: { directory: string; modFile: string; insideWorkspace: boolean; modulePath: string | null; goVersion: string | null; error: string | null }[];
+  modules: { directory: string; relativeDirectory: string | null; modFile: string; insideWorkspace: boolean; modulePath: string | null; goVersion: string | null; error: string | null }[];
   environment: Record<"GOROOT" | "GOPATH" | "GOMOD" | "GOWORK" | "GOVERSION" | "GOOS" | "GOARCH" | "CGO_ENABLED" | "GOTOOLCHAIN", string>;
 };
 export type LanguageLocation = { path: string; line: number; column: number; endLine: number; endColumn: number };

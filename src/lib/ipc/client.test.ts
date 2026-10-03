@@ -6,7 +6,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
   beforeEach(() => {
@@ -25,6 +25,16 @@ describe("ipc client searchWorkspaceText", () => {
     invokeMock.mockResolvedValue({ ok: true, data: {} });
     expect(await inspectGoProject(request)).toEqual({ ok: true, data: {} });
     expect(invokeMock).toHaveBeenCalledWith("inspect_go_project", { request });
+  });
+  it("requires native module execution/cleanup and forwards the owned request identity", async () => {
+    const request = { workspaceRoot: "C:/workspace", relativeDirectory: ".", requestId: "actual-id", action: "tidy" as const, expectedWorkFile: null };
+    expect(await runGoModuleAction(request)).toMatchObject({ ok: false, error: { code: "go_module_native_required" } });
+    expect(await confirmGoModuleCleanup(request)).toMatchObject({ ok: false, error: { code: "go_module_native_required" } });
+    expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true, data: true });
+    await confirmGoModuleCleanup(request);
+    expect(invokeMock).toHaveBeenCalledWith("confirm_go_module_cleanup", { request });
   });
 
   it("reports native search unavailable in browser preview", async () => {

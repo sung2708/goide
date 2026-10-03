@@ -114,3 +114,9 @@ Module/environment workflows, explicit probe cancellation, session restoration a
 Use the command palette action Go: Inspect Project and Environment to inspect the saved Go context for the active file directory, or the opened workspace directory when no file is selected. The desktop runs bounded, cancellable Go commands and shows the actual selected single-module, go.work workspace or non-module directory. Workspace modules show their go.mod, module path and Go directive; outside-workspace modules are reported without inspecting their contents. The environment disclosure is limited to GOROOT, GOPATH, GOMOD, GOWORK, GOVERSION, GOOS, GOARCH, CGO_ENABLED and GOTOOLCHAIN.
 
 Refresh after saved module/workspace changes. Cancel, context changes and closing the dialog cancel native requests and reject late results. Invalid executable settings and malformed Go project data remain visible errors. Inspection does not run tidy/download or edit module files; those actions and full addendum/Git acceptance remain unfinished.
+
+## Explicit Go module commands
+
+Open **Go: Inspect Project and Environment** to select a scoped module, save all open documents and run **Tidy Module** or **Download Dependencies**. Tidy targets the selected module; download follows Go's selected module/workspace. These commands clear custom GOFLAGS, show real exit status/output and refresh project/files/Git after completion or partial failure.
+
+Document preservation must succeed before execution. Stop Run/Debug first. Cancel retains the mutation lock until native cleanup is acknowledged; transport failures require native cleanup confirmation and offer **Retry module cleanup**. Workspace members outside the opened root are rejected before download writes.

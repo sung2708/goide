@@ -53,6 +53,14 @@ export async function inspectGoProject(request: import("./types").GoProjectReque
   if (!hasTauriInternals()) return { ok: false, error: { code: "go_project_native_required", message: "Go project inspection requires the desktop app and Go." } };
   return invoke("inspect_go_project", { request });
 }
+export async function runGoModuleAction(request: import("./types").GoModuleRequest): Promise<ApiResponse<import("./types").GoModuleOutput>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "go_module_native_required", message: "Go module commands require the desktop app." } };
+  return invoke("run_go_module_action", { request });
+}
+export async function confirmGoModuleCleanup(request: LanguageCancelRequest): Promise<ApiResponse<boolean>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "go_module_native_required", message: "Module cleanup confirmation requires the desktop app." } };
+  return invoke("confirm_go_module_cleanup", { request });
+}
 
 export async function queryWorkspaceLanguage(request: LanguageQuery): Promise<ApiResponse<LanguageQueryResult>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Language queries require the desktop app and gopls." } };

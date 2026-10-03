@@ -1130,6 +1130,28 @@ pub async fn configure_toolchain_paths(
     }
 }
 
+pub(super) async fn with_idle_go_tools<T: Send + 'static>(
+    action: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<T, String> {
+    let _registration = tokio::time::timeout(
+        Duration::from_secs(10),
+        crate::integration::lifecycle::gate().operation(),
+    )
+    .await
+    .map_err(|_| "Wait for process startup/cleanup before running module commands.")??;
+    let runs = get_process_handle();
+    let run_guard = runs.lock().await;
+    let debugger = get_dap_session_handle();
+    let debug_guard = debugger.lock().await;
+    if run_guard.is_some() || debug_guard.is_some() {
+        return Err("Stop the active Go run/debugger before running module commands.".into());
+    }
+    match tauri::async_runtime::spawn_blocking(action).await {
+        Ok(result) => result.map_err(|error| format!("{error:#}")),
+        Err(error) => Err(error.to_string()),
+    }
+}
+
 #[tauri::command]
 pub async fn get_runtime_signals() -> ApiResponse<Vec<RuntimeSignalDto>> {
     let signals_handle = get_runtime_signals_handle();
@@ -2706,9 +2728,13 @@ mod tests {
             ..Default::default()
         })
         .await;
+        let module_response = super::with_idle_go_tools(|| Ok(())).await;
         let mut child = handle.lock().await.take().unwrap();
         child.stop().await.unwrap();
         assert_eq!(response.error.unwrap().code, "tool_configuration_busy");
+        assert!(module_response
+            .unwrap_err()
+            .contains("active Go run/debugger"));
         assert_eq!(paths::current(), before);
     }
     use super::{

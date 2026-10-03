@@ -76,6 +76,9 @@ fn receive<T>(receiver: mpsc::Receiver<io::Result<T>>) -> io::Result<T> {
 pub fn output(command: &mut Command, input: Option<&str>) -> io::Result<Output> {
     bounded_output(command, input, Duration::from_secs(45))
 }
+pub(crate) fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
+    bounded_output(command, None, timeout)
+}
 fn bounded_output(
     command: &mut Command,
     input: Option<&str>,

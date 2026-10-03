@@ -19,6 +19,7 @@ const ENV_KEYS: [&str; 9] = [
     "CGO_ENABLED",
     "GOTOOLCHAIN",
 ];
+pub mod actions;
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Request {
@@ -29,6 +30,7 @@ pub struct Request {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Module {
+    pub relative_directory: Option<String>,
     pub directory: String,
     pub mod_file: String,
     pub inside_workspace: bool,
@@ -102,6 +104,13 @@ fn module(root: &Path, directory: PathBuf) -> Module {
     let directory = normalize_platform_pathbuf(directory.canonicalize().unwrap_or(directory));
     let mod_file = directory.join("go.mod");
     let mut result = Module {
+        relative_directory: directory.strip_prefix(root).ok().map(|path| {
+            if path.as_os_str().is_empty() {
+                ".".into()
+            } else {
+                path.to_string_lossy().replace('\\', "/")
+            }
+        }),
         directory: directory.to_string_lossy().into_owned(),
         mod_file: mod_file.to_string_lossy().into_owned(),
         inside_workspace: false,
