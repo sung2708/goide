@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, resolve, dirname } from "node:path";
+import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { artifactMatrix, releaseChannel } from "./release-contract.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, "..");
@@ -21,9 +22,6 @@ function parseArgs() {
 
   return options;
 }
-
-const CANONICAL_ARTIFACT_REGEX =
-  /^goro-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?-(windows|macos|linux)-(x86_64|aarch64)(?:-[a-z0-9]+)?\.(exe|msi|dmg|AppImage|deb|tar\.gz|zip)$/;
 
 const FORBIDDEN_GENERIC_PATTERNS = [
   /^setup\.exe$/i,
@@ -50,6 +48,7 @@ function main() {
   }
 
   const tag = options.tag.startsWith("v") ? options.tag : `v${options.tag}`;
+  releaseChannel(tag.slice(1));
   const assetsDir = resolve(options.assetsDir);
 
   console.log(`Validating release assets for release ${tag} in: ${assetsDir}`);
@@ -116,7 +115,8 @@ function main() {
     }
 
     // Rule 2: Must match canonical naming pattern
-    if (!CANONICAL_ARTIFACT_REGEX.test(file)) {
+    const supportedName = artifactMatrix.some(entry => file === `goro-${tag}-${entry.suffix}`);
+    if (!supportedName) {
       console.error(
         `[ERROR] Asset filename "${file}" does not match canonical pattern: goro-v{VERSION}-{PLATFORM}-{ARCH}[-{PACKAGE}].{EXT}`
       );
@@ -124,9 +124,7 @@ function main() {
     }
 
     // Rule 3: Must contain exact tag
-    const versionMatch = file.match(CANONICAL_ARTIFACT_REGEX);
-    const artifactVersion = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}${versionMatch[4] ? `-${versionMatch[4]}` : ""}` : null;
-    if (artifactVersion !== tag.slice(1)) {
+    if (!supportedName) {
       console.error(
         `[ERROR] Asset filename "${file}" does not contain expected release tag "${tag}".`
       );

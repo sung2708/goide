@@ -15,6 +15,28 @@ permissions:
   contents: read
 
 jobs:
+  release-contracts:
+    name: Release Contract Verification (No Release Secrets)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Setup Rust verifier toolchain
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - name: Install fixture dependencies
+        run: npm ci
+      - name: Build official signature verifier
+        run: cargo build --locked --release --manifest-path tools/update-verifier/Cargo.toml
+      - name: Test metadata, publication and endpoint contracts locally
+        run: node --test scripts/*.node-test.mjs
+      - name: Validate release workflow syntax and expressions
+        run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.12 -shellcheck= -pyflakes= .github/workflows/release.yml
+
   frontend:
     name: Frontend Verification
     runs-on: ubuntu-latest

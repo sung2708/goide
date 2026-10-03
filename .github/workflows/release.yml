@@ -36,12 +36,26 @@ jobs:
       is_prerelease: ${{ steps.parse_tag.outputs.is_prerelease }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
 
+      - name: Require a maintainer-controlled release ref
+        env:
+          RELEASE_EVENT: ${{ github.event_name }}
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [[ "$RELEASE_EVENT" == "workflow_dispatch" && "$RELEASE_REF" != "refs/heads/develop" && "$RELEASE_REF" != "refs/heads/main" ]]; then
+            echo "::error::Candidate dispatch must run from develop or main"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor HEAD origin/develop && ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::Release commit must be reachable from develop or main"
+            exit 1
+          fi
+
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: "npm"
@@ -60,11 +74,8 @@ jobs:
           TAG="$RELEASE_TAG"
           echo "Tag: $TAG"
           
-          # Validate tag format vX.Y.Z[-prerelease]
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
-            echo "::error::Tag '$TAG' is not a valid semantic version tag (must match vX.Y.Z or vX.Y.Z-prerelease)"
-            exit 1
-          fi
+          # Use the shared canonical SemVer/channel policy, including beta/RC.
+          node --input-type=module -e 'import { releaseChannel } from "./scripts/release-contract.mjs"; const tag = process.env.RELEASE_TAG; if (!tag?.startsWith("v")) throw new Error("Release tag must start with v"); releaseChannel(tag.slice(1));'
 
           # Validate version matches package.json, tauri.conf.json, and Cargo.toml
           node scripts/version-manager.mjs check --tag "$TAG"
@@ -84,7 +95,7 @@ jobs:
           node scripts/generate-changelog.mjs --tag "${{ steps.parse_tag.outputs.tag }}" --output release-notes.md
 
       - name: Upload Release Notes artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-notes
           path: release-notes.md
@@ -117,10 +128,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
           cache: "npm"
@@ -141,7 +152,7 @@ jobs:
             librsvg2-dev
 
       - name: Setup Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable audited 2026-10-04
         with:
           targets: ${{ matrix.platform.target }}
 
@@ -197,7 +208,7 @@ jobs:
             --output-dir "dist-release"
 
       - name: Upload platform artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: artifacts-${{ matrix.platform.platform_id }}-${{ matrix.platform.arch_id }}
           path: dist-release/*
@@ -210,27 +221,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 20
       - name: Install metadata dependencies
         run: npm ci
       - name: Setup Rust signature verifier
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable audited 2026-10-04
       - name: Build signature verifier
         run: cargo build --locked --release --manifest-path tools/update-verifier/Cargo.toml
 
       - name: Download release notes
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: release-notes
           path: .
 
       - name: Download all platform artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: artifacts-*
           path: release-assets
@@ -251,27 +262,13 @@ jobs:
           node scripts/validate-release-assets.mjs \
             --tag "${{ needs.validate-and-plan.outputs.tag }}" \
             --assets-dir release-assets
-
-      - name: Append verification instructions to release notes
-        run: |
-          cat << 'EOF' >> release-notes.md
-
-          ### Artifact Verification
-          Verify artifact integrity using the published `SHA256SUMS.txt`:
-          ```bash
-          # Linux
-          sha256sum -c SHA256SUMS.txt --ignore-missing
-
-          # macOS
-          shasum -a 256 -c SHA256SUMS.txt --ignore-missing
-
-          # Windows PowerShell
-          Get-FileHash <artifact> -Algorithm SHA256
-          ```
-          EOF
+          node scripts/validate-release-metadata.mjs \
+            --tag "${{ needs.validate-and-plan.outputs.tag }}" \
+            --repository "$GORO_RELEASE_REPOSITORY" \
+            --assets-dir release-assets --metadata-dir release-metadata
 
       - name: Upload verified candidate contracts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verified-release-contracts
           path: release-metadata/*

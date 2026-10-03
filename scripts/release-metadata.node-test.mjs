@@ -27,7 +27,7 @@ test("real Tauri signatures bind artifacts and version; both public contracts sh
   if (!existsSync(verifier)) { const built = spawnSync("cargo", ["build", "--locked", "--release", "--manifest-path", "tools/update-verifier/Cargo.toml"], { encoding: "utf8", timeout: 120000 }); assert.equal(built.status, 0, built.stderr); }
   const fixture = mkdtempSync(join(tmpdir(), "goro-update-fixture-"));
   const cli = resolve("node_modules/@tauri-apps/cli/tauri.js");
-  const version = "1.2.0-beta.2";
+  const version = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
   const sign = (file, appVersion = version) => {
     const result = spawnSync(process.execPath, [cli, "signer", "sign", "--private-key-path", join(fixture, "test.key"), "--password", "", "--app-version", appVersion, file], { encoding: "utf8", timeout: 30000 });
     assert.equal(result.status, 0, "Ephemeral fixture signing failed");
@@ -50,18 +50,27 @@ test("real Tauri signatures bind artifacts and version; both public contracts sh
     sign(join(assets, `goro-v${version}-linux-x86_64.deb`));
     const options = { version, repository: "fixture/public-distribution", assetsDir: assets, publishedAt: "2026-10-03T00:00:00Z", notes: "<script>plain text only</script>", verifier, publicKey };
     const result = generateMetadata(options);
-    assert.equal(result.updater.version, result.latest.version);
-    assert.equal(result.latest.tag, `v${version}`);
-    assert.equal(result.latest.channel, "beta");
+    assert.equal(result.updater.version, result.release.version);
+    assert.equal(result.release.tag, `v${version}`);
+    assert.equal(result.release.channel, releaseChannel(version));
     assert.equal(Object.keys(result.updater.platforms).length, 7);
     assert.ok(result.updater.platforms["darwin-aarch64"].url.endsWith("-updater.tar.gz"));
     assert.equal(result.updater.platforms["linux-x86_64-deb"], undefined);
     for (const entry of Object.values(result.updater.platforms)) { assert.ok(entry.signature.length > 100); assert.ok(entry.url.startsWith(`https://github.com/fixture/public-distribution/releases/download/v${version}/`)); }
-    assert.equal(result.latest.downloads.length, 8); assert.equal(result.checksums.trim().split("\n").length, 8);
+    assert.equal(result.release.downloads.length, 8); assert.equal(result.checksums.trim().split("\n").length, 8);
+    // Exercise the actual CLI entry point and filenames, including its canonical source checks.
+    const notesPath = join(fixture, "notes.md"); writeFileSync(notesPath, options.notes);
+    const metadata = join(fixture, "metadata");
+    const generatedMetadata = spawnSync(process.execPath, [resolve("scripts/release-metadata.mjs"), "--tag", `v${version}`, "--repository", options.repository, "--assets-dir", assets, "--output-dir", metadata, "--notes", notesPath, "--verifier", verifier, "--published-at", options.publishedAt], { encoding: "utf8", env: { ...process.env, GORO_UPDATER_PUBLIC_KEY: publicKey, GORO_SIGNING_PUBLIC_KEY: publicKey } });
+    assert.equal(generatedMetadata.status, 0, generatedMetadata.stderr);
+    assert.deepEqual(JSON.parse(readFileSync(join(metadata, "release.json"), "utf8")), result.release);
+    assert.deepEqual(JSON.parse(readFileSync(join(metadata, "latest.json"), "utf8")), result.updater);
+    assert.equal(readFileSync(join(metadata, "latest.json"), "utf8"), readFileSync(join(metadata, "updater.json"), "utf8"));
+    assert.equal(readFileSync(join(assets, "SHA256SUMS.txt"), "utf8"), result.checksums);
     const path = join(assets, `goro-v${version}-${names[0]}`);
     writeFileSync(path, "tampered bytes");
     assert.throws(() => generateMetadata(options), /Signature verification failed/);
-    sign(path, "1.2.0-beta.1");
+    sign(path, semver.inc(version, "patch"));
     assert.throws(() => generateMetadata(options), /Signature verification failed/);
     sign(path);
     assert.throws(() => generateMetadata({ ...options, publicKey: Buffer.from("not a public key").toString("base64") }), /Signature verification failed/);

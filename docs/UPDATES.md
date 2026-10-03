@@ -113,12 +113,16 @@ existing `gh-pages` branch and `.nojekyll`. No publisher changes visibility.
 ```text
 channels/stable/updater.json
 channels/stable/latest.json
+channels/stable/release.json
 channels/beta/updater.json
 channels/beta/latest.json
+channels/beta/release.json
 channels/alpha/updater.json
 channels/alpha/latest.json
+channels/alpha/release.json
 versions/<exact-semver>/updater.json
 versions/<exact-semver>/latest.json
+versions/<exact-semver>/release.json
 ```
 
 Only real published channels have pointers. An absent endpoint is an actionable
@@ -127,7 +131,7 @@ result. Publish stable candidates to eligible beta/alpha pointers only when
 their SemVer is newer than that channel's current release. Never downgrade a
 pointer. Existing versions cannot be overwritten or reused.
 
-Updater JSON is the exact Tauri schema: `version`, `notes`, `pub_date` (RFC3339
+`latest.json` is the exact Tauri schema: `version`, `notes`, `pub_date` (RFC3339
 UTC) and `platforms` entries `{url, signature}`. `signature` is the actual `.sig`
 file's base64 content, not a URL. Keys: `windows-x86_64`/`-nsis`/`-msi`,
 `darwin-aarch64`, `darwin-x86_64`, `linux-x86_64`/`-appimage`. The Windows generic
@@ -137,22 +141,48 @@ entry. Native Linux checks reject non-AppImage installations, preventing an
 installed Debian package from falling back to an incompatible AppImage payload.
 Windows ARM/Linux ARM are unsupported, not invented manifest targets.
 
-Website JSON uses `schemaVersion: 1`, `product`, `version`, `tag`, `channel`,
+Website `release.json` uses `schemaVersion: 1`, `product`, `version`, `tag`, `channel`,
 `publishedAt`, `releaseNotes`, `releaseUrl`, `checksumUrl`, and `downloads`.
 `channel` classifies the release version, not the selected feed: a stable release
 can appear on beta/alpha pointers when eligible and newer. Website consumers
 validate SemVer acceptance for the chosen feed rather than requiring channel
 label equality.
-Each download has filename, platform, architecture, format, public URL, SHA-256
-and size. `latest.json` and `updater.json` come from the same verified artifact
+Each download has filename, normalized `platformKey`, platform, architecture,
+format, public URL, lowercase SHA-256 and size in bytes. The array represents
+multiple formats without ambiguous duplicate object keys. Recommended formats:
+Windows `exe`, macOS `dmg`, Linux `AppImage`; MSI/DEB are explicit alternatives.
+The macOS `app.tar.gz` format is the updater payload rather than a user installer.
+`release.json` and `latest.json` come from the same verified artifact
 set. Metadata generation requires the complete supported updater matrix.
+The native app requests `latest.json`. `updater.json` remains an identical
+compatibility alias for older builds using that endpoint. Website consumers must use `release.json`;
+the earlier unreleased website `latest.json` naming is superseded. No production
+release used that former website contract. See the exact generated local example
+in [release.fixture.json](examples/release.fixture.json) and the
+[Release Metadata Report](RELEASE_METADATA_REPORT.md).
 
-The website fetches `/channels/stable/latest.json` by default; a prerelease
+The website fetches `/channels/stable/release.json` by default; a prerelease
 selector fetches beta/alpha explicitly. Render text safely, validate schema,
 and select an exact platform/architecture. Never construct guessed asset URLs,
 scrape the source repo or embed a GitHub token. A missing platform should say
-unavailable. Cache these pointers briefly and handle network errors visibly;
-immutable `/versions/...` metadata can be cached longer. Website implementation
+unavailable. Fetch pointers with `credentials: "omit"` and `cache: "no-cache"`.
+Revalidate on page load and explicit refresh, with a five-minute UI freshness
+interval. Latest endpoints require public `Access-Control-Allow-Origin: *`
+(or the exact website origin), no credentialed CORS, and Cache-Control max-age
+at most 600 seconds. Pages/CDN defaults must be measured; if they exceed this
+limit, configure a CDN or reverse proxy in front of Pages before launch.
+Immutable `/versions/...` metadata and versioned binaries can be cached longer.
+Keep a last verified release on network/schema errors with a visible stale/error
+message; never substitute guessed links or advance to incomplete metadata.
+No live endpoint has been provisioned or certified in this task. Run the read-only
+acceptance check after provisioning and each release propagates:
+
+```sh
+node scripts/check-distribution-endpoint.mjs --base-url https://OWNER.github.io/REPOSITORY/channels/ --website-origin https://YOUR-WEBSITE --channel alpha
+```
+
+Replace both placeholder origins with actual public HTTPS configuration.
+Website implementation
 is external to this repository; this is its integration contract.
 
 ## Signing, CI and publication
@@ -182,6 +212,12 @@ Restrict deployment refs/reviewers. Grant the signing secret only to the signing
 environment, publisher credential only to distribution. Public variables can
 be repository variables. The source `GITHUB_TOKEN` has contents read only.
 Repository admins must review workflow changes before allowing secret access.
+Release workflow action references are pinned to audited commit SHAs. The
+unprivileged planning job checks release commits are reachable from develop/main;
+manual candidate dispatch accepts only those branches. These checks supplement
+protected environment reviewers/ref restrictions: an untrusted modified workflow
+must never be approved for signing or publication. Ordinary PR CI has no release
+secrets. Update pinned actions deliberately after review.
 Signing secrets are injected only into configuration preflight/build steps, not
 checkout, dependency installation or test steps. The protected build toolchain
 still has signing authority and must be reviewed accordingly.
