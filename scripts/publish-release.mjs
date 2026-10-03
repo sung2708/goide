@@ -10,8 +10,8 @@ const token = process.env.GORO_RELEASE_TOKEN;
 const args = process.argv.slice(2);
 const option = name => args[args.indexOf(name) + 1];
 async function request(path, options = {}, expected = [200, 201]) {
-  const response = await fetch(`https://api.github.com/repos/${repository}/${path}`, { ...options, redirect: "error", headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...options.headers }, signal: AbortSignal.timeout(60000) });
-  if (!expected.includes(response.status)) throw new Error(`Release API request failed (${response.status}). Latest metadata remains unchanged.`);
+  const response = await fetch(`https://api.github.com/repos/${repository}${path ? `/${path}` : ""}`, { ...options, redirect: "error", headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28", ...options.headers }, signal: AbortSignal.timeout(60000) });
+  if (!expected.includes(response.status)) throw new Error(`Release API request failed (${response.status}) at ${options.method ?? "GET"} ${path || "repository"}. Latest metadata remains unchanged.`);
   if (response.status === 404) return null;
   return response.json();
 }
