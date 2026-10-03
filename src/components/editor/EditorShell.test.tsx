@@ -197,18 +197,9 @@ describe("EditorShell panels", () => {
   it("opens quick file picker with Ctrl+P and opens selected file on Enter", async () => {
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
-    listWorkspaceEntriesMock
-      .mockResolvedValueOnce({
-        ok: true,
-        data: [
-          { name: "main.go", path: "main.go", isDir: false },
-          { name: "pkg", path: "pkg", isDir: true },
-        ],
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        data: [{ name: "helper.go", path: "pkg/helper.go", isDir: false }],
-      });
+    listWorkspaceEntriesMock.mockImplementation(async (_root: string, path?: string) => ({ ok: true, data: path === "pkg"
+      ? [{ name: "helper.go", path: "pkg/helper.go", isDir: false }]
+      : [{ name: "main.go", path: "main.go", isDir: false }, { name: "pkg", path: "pkg", isDir: true }] }));
 
     render(<EditorShell />);
     await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);

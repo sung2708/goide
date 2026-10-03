@@ -7,10 +7,12 @@ const readMock = vi.fn();
 const writeMock = vi.fn();
 const availabilityMock = vi.fn();
 const infoMock = vi.fn();
+const entriesMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: (...args: unknown[]) => openMock(...args) }));
 vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
+  listWorkspaceEntries: (...args: unknown[]) => entriesMock(...args),
   readWorkspaceFile: (...args: unknown[]) => readMock(...args),
   getWorkspaceFileInfo: (...args: unknown[]) => infoMock(...args),
   writeWorkspaceFile: (...args: unknown[]) => writeMock(...args),
@@ -55,11 +57,35 @@ describe("EditorShell document safety", () => {
   afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => {
     vi.useRealTimers();
+    entriesMock.mockReset().mockResolvedValue({ ok: true, data: [] });
     openMock.mockReset().mockResolvedValue("C:/workspace");
     readMock.mockReset().mockImplementation(async (_root: string, path: string) => ({ ok: true, data: path === "main.go" ? "original" : "other" }));
     writeMock.mockReset().mockResolvedValue({ ok: true });
     infoMock.mockReset().mockResolvedValue({ ok: true, data: { sizeBytes: 8, readOnly: false } });
     availabilityMock.mockReset().mockResolvedValue({ ok: true, data: { runtimeAvailability: "available" } });
+  });
+
+  it("keeps dirty documents when the selected recent/moved workspace is unavailable", async () => {
+    await openMain(); edit("valuable edits");
+    openMock.mockResolvedValue("C:/missing");
+    entriesMock.mockResolvedValue({ ok: false, error: { message: "Workspace permission denied" } });
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await screen.findByText("Workspace permission denied");
+    expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace");
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+
+  it("requires an explicit decision before closing a dirty workspace", async () => {
+    await openMain(); edit("valuable edits");
+    fireEvent.keyDown(document.body, { key: "w", ctrlKey: true, shiftKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    await waitFor(() => expect(screen.getAllByRole("button", { name: /open workspace/i })[0]).toBeEnabled());
+    fireEvent.keyDown(document.body, { key: "w", ctrlKey: true, shiftKey: true });
+    fireEvent.click(await screen.findByRole("button", { name: "Don't Save" }));
+    await waitFor(() => expect(screen.getByTestId("workspace")).toBeEmptyDOMElement());
+    expect(writeMock).not.toHaveBeenCalled(); expect(screen.queryByRole("tab")).toBeNull();
   });
 
   it("marks a native read-only file and prevents edit/save callbacks from changing it", async () => {

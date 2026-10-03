@@ -297,3 +297,12 @@ Actual component unmount requests cleanup, including late setup results, and rep
 The application SettingsStore owns schema validation, defaults, versioned persistence, legacy theme migration and reactive snapshots. Components consume useSettings instead of duplicating preference storage. Corrupt profiles remain stored until explicit Reset; failed persistence retains live session values with an error.
 
 DocumentSession owns save preparation and acknowledgement. useSavePreparation invokes cancellable native import/format queries against captured Go overlays and returns text without writing files. The session rejects changed contexts, publishes prepared text to the canonical buffer and writes against the original baseline. Failed writes preserve the prepared draft; successful writes acknowledge only the written snapshot. Save All prepares documents sequentially. EditorShell owns Auto Save scheduling and user cancellation, while existing native file conflict checks remain authoritative.
+
+
+## Workspace navigation persistence
+
+`features/workspaces` owns bounded versioned navigation history, validated deserialization and disk-backed document restoration. It stores paths/views only, never document content or runtime objects. `useWorkspaceHistory` consumes the startup candidate before root validation; a failed write disables that automatic attempt. `restoreWorkspaceDocuments` checks the exact DocumentSession snapshot around each asynchronous read and stops on user changes/workspace replacement/unmount. Current file metadata supplies read-only state; DocumentSession clamps selection against freshly read content. Recent reopen uses the existing workspace preservation/process-cleanup transition; backend root/path validation remains authoritative.
+
+## Unix process-group authority
+
+SDK and async Run/Delve owners retain the original child and observe exit with waitid(WNOWAIT) before raw status consumption. Numeric group/root signals are restricted to that exclusive unreaped child authority. ECHILD/automatic reaping fails closed. After consuming status, only non-mutating group probes are permitted; confirmed cleanup requires ESRCH. XNU's zombie-group EPERM fallback consumes signal authority only for a confirmed-exited leader and still cannot acknowledge live/denied descendants as retired. Failed/abandoned async cleanup retains full child/group/UUID state for retry and prevents new SDK work. Interactive Unix PTY/session containment remains unfinished.
