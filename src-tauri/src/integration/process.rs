@@ -4,8 +4,6 @@ use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
-#[cfg(not(windows))]
-use tokio::process::Child;
 use tokio::sync::Mutex;
 
 /// A running go process handle, shared across async tasks.
@@ -226,24 +224,6 @@ fn build_go_run_command(
         .stderr(Stdio::piped())
         .kill_on_drop(true);
     command
-}
-
-#[cfg(not(windows))]
-pub async fn kill_process_group(child: &mut Child) -> Result<()> {
-    if let Some(pid) = child.id() {
-        let _ = tokio_command("kill")
-            .args(["-KILL", "--", &format!("-{pid}")])
-            .output()
-            .await;
-    }
-    if child.try_wait()?.is_none() {
-        child
-            .kill()
-            .await
-            .context("Unable to terminate owned process")?;
-    }
-    child.wait().await.context("Unable to reap owned process")?;
-    Ok(())
 }
 
 /// Spawns `go run <file>` in the workspace directory.

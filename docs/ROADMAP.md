@@ -498,3 +498,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: the scoped Windows terminal Job exists before shell creation and is assigned atomically through CreateProcess job attributes. There is no spawn-then-assign project execution interval. The local portable-pty patch preserves upstream license/provenance and other platforms' behavior.
 - Delivered: terminal teardown confirms both the original root and an empty scoped Job. Failures and abandoned creation retain process/job/UUID authority for retry; new terminal creation, SDK preflight and shutdown participate in retained cleanup. Reader/store ownership remains in the existing lifecycle path.
 - Remaining: Unix process-group identity/platform acceptance, recent workspaces/session restore, remaining P0 reliability and complete Git/addendum requirements. Native window/installer/manual performance acceptance is NOT RUN; no release/tag is authorized.
+
+
+## Unix leader authority work in progress (2026-10-03)
+
+- Isolated implementation under verification: a waitable original leader pins process-group signal authority; raw mutable child/reaping access is replaced by owned I/O and explicit waits. Status is consumed only after scoped group/root signalling or the confirmed-exited EPERM fallback; cleanup still requires kernel group absence. Repeated teardown never signals a saved number after reaping. Lost wait authority fails closed.
+- Async failure/cancellation retains original child/group/UUID authority for cleanup retry and SDK preflight. Linux/macOS regression CI must pass before integration. Unix interactive-PTY/session containment and native manual/platform acceptance remain separate unfinished P0 work.
+- Full Git/addendum completion and release gates remain unfinished; no release/tag is authorized.

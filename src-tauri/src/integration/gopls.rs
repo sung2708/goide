@@ -2453,7 +2453,7 @@ func main() {
             let session = guard.as_mut().expect("active completion session");
             session
                 ._child
-                .kill()
+                .stop()
                 .expect("terminate test language server");
             session._child.wait().expect("reap test language server");
         }

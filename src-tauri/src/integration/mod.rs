@@ -24,6 +24,8 @@ pub mod search;
 pub mod shell;
 pub mod signature_help;
 pub mod toolchain;
+#[cfg(unix)]
+mod unix_process_group;
 
 pub mod code_actions;
 mod workspace_edits;
