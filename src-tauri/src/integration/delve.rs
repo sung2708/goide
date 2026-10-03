@@ -14,6 +14,10 @@ use tokio::time::timeout;
 
 const DAP_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const DAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
+mod execution;
+#[cfg(test)]
+mod session_tests;
+use execution::Execution;
 const SUPPORTED_WAIT_REASONS: &[&str] = &[
     "chan receive",
     "chan send",
@@ -111,6 +115,9 @@ pub struct DapClient {
     reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
     writer: tokio::net::tcp::OwnedWriteHalf,
     next_seq: i64,
+    execution: Execution,
+    poisoned: bool,
+    configuration_done_supported: bool,
 }
 
 impl DapClient {
@@ -129,6 +136,9 @@ impl DapClient {
             reader: BufReader::new(reader),
             writer,
             next_seq: 1,
+            execution: Execution::default(),
+            poisoned: false,
+            configuration_done_supported: false,
         })
     }
 
@@ -152,7 +162,25 @@ impl DapClient {
             .await?;
 
         ensure_success("initialize", &response)?;
+        self.configuration_done_supported =
+            response["body"]["supportsConfigurationDoneRequest"].as_bool() == Some(true);
         Ok(())
+    }
+    pub async fn configuration_done(&mut self) -> Result<()> {
+        if self.configuration_done_supported {
+            let response = self.request("configurationDone", json!({})).await?;
+            ensure_success("configurationDone", &response)?;
+        }
+        Ok(())
+    }
+    pub fn observed_pause(&self) -> Option<bool> {
+        self.execution.paused()
+    }
+    pub fn observed_thread(&self) -> Option<i64> {
+        self.execution.thread()
+    }
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned
     }
 
     pub async fn launch(
@@ -377,6 +405,11 @@ impl DapClient {
     }
 
     async fn request(&mut self, command: &str, arguments: Value) -> Result<Value> {
+        if self.poisoned {
+            return Err(anyhow!(
+                "DAP transport is incomplete; stop and restart debugging."
+            ));
+        }
         let seq = self.next_seq;
         self.next_seq += 1;
         let mut output_messages: Vec<String> = Vec::new();
@@ -387,15 +420,52 @@ impl DapClient {
             "command": command,
             "arguments": arguments
         });
-        write_dap_message(&mut self.writer, &payload).await?;
+        let budget = if command == "launch" {
+            Duration::from_secs(60)
+        } else {
+            Duration::from_secs(5)
+        };
+        let deadline = tokio::time::Instant::now() + budget;
+        if let Err(error) = timeout(
+            deadline.saturating_duration_since(tokio::time::Instant::now()),
+            write_dap_message(&mut self.writer, &payload),
+        )
+        .await
+        .context("DAP write deadline exceeded")
+        .and_then(|result| result)
+        {
+            self.poisoned = true;
+            return Err(error);
+        }
+        let revision = self.execution.revision();
+        let mut messages = 0usize;
+        let mut output_bytes = 0usize;
 
         loop {
-            let mut message = read_dap_message(&mut self.reader).await?;
+            messages += 1;
+            if messages > 1024 {
+                self.poisoned = true;
+                return Err(anyhow!("DAP message budget exceeded; restart debugging."));
+            }
+            let mut message = match read_response_until(
+                &mut self.reader,
+                deadline,
+                command != "disconnect",
+            )
+            .await
+            {
+                Ok(message) => message,
+                Err(error) => {
+                    self.poisoned = true;
+                    return Err(error);
+                }
+            };
             let message_type = message
                 .get("type")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
             if message_type == "event" {
+                self.execution.observe(&message);
                 let event_name = message
                     .get("event")
                     .and_then(Value::as_str)
@@ -409,6 +479,13 @@ impl DapClient {
                     {
                         let trimmed = output.trim();
                         if !trimmed.is_empty() {
+                            output_bytes += trimmed.len();
+                            if output_bytes > 64 * 1024 {
+                                self.poisoned = true;
+                                return Err(anyhow!(
+                                    "DAP output exceeded the 64 KiB request budget."
+                                ));
+                            }
                             output_messages.push(trimmed.to_string());
                         }
                     }
@@ -426,6 +503,13 @@ impl DapClient {
             if request_seq != seq {
                 continue;
             }
+            if message["command"].as_str() != Some(command) {
+                self.poisoned = true;
+                return Err(anyhow!("DAP response command does not match its request."));
+            }
+            if message["success"].as_bool() == Some(true) {
+                self.execution.acknowledge(command, revision);
+            }
 
             if !output_messages.is_empty() {
                 if let Some(object) = message.as_object_mut() {
@@ -436,6 +520,28 @@ impl DapClient {
                 }
             }
             return Ok(message);
+        }
+    }
+}
+
+// Keep one framing future pinned throughout shutdown polling. Restarting reads on
+// every poll could lose a partially consumed header/body and corrupt the stream.
+async fn read_response_until<R: AsyncBufRead + Unpin>(
+    reader: &mut R,
+    deadline: tokio::time::Instant,
+    interrupt_on_shutdown: bool,
+) -> Result<Value> {
+    let read = read_dap_message(reader);
+    tokio::pin!(read);
+    loop {
+        tokio::select! {
+            result = &mut read => return result,
+            _ = tokio::time::sleep_until(deadline) => return Err(anyhow!("DAP response deadline exceeded")),
+            _ = tokio::time::sleep(Duration::from_millis(25)), if interrupt_on_shutdown => {
+                if crate::integration::lifecycle::gate().is_closing() {
+                    return Err(anyhow!("DAP request interrupted by app shutdown"));
+                }
+            }
         }
     }
 }
