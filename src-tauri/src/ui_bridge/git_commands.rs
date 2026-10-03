@@ -16,10 +16,16 @@ pub async fn git_conflict_content(
     )
 }
 #[tauri::command]
-pub async fn git_cancel(workspace_root: String) -> ApiResponse<bool> {
+pub async fn git_cancel(workspace_root: String, operation_id: Option<String>) -> ApiResponse<bool> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
-            git::cancel(std::path::Path::new(&workspace_root))
+            let id = operation_id
+                .map(|id| {
+                    uuid::Uuid::parse_str(&id)
+                        .map_err(|_| "Invalid Git operation identity".to_string())
+                })
+                .transpose()?;
+            git::cancel_identified(std::path::Path::new(&workspace_root), id)
         })
         .await,
     )
@@ -137,11 +143,29 @@ pub async fn git_file_diff(
 }
 
 #[tauri::command]
-pub async fn git_mutate(workspace_root: String, mutation: GitMutationDto) -> ApiResponse<()> {
+pub async fn git_mutate(
+    workspace_root: String,
+    mutation: GitMutationDto,
+    operation_id: Option<String>,
+) -> ApiResponse<()> {
     respond(
         tauri::async_runtime::spawn_blocking(move || {
-            let root = git::repository_root(&workspace_root)?;
-            let _guard = git::mutation_lock(&root)?;
+            let id = operation_id
+                .map(|id| {
+                    uuid::Uuid::parse_str(&id)
+                        .map_err(|_| "Invalid Git operation identity".to_string())
+                })
+                .transpose()?
+                .unwrap_or_else(uuid::Uuid::new_v4);
+            let root = std::path::Path::new(&workspace_root)
+                .canonicalize()
+                .map_err(|e| e.to_string())?;
+            let _guard =
+                git::mutation_lock_identified(&root, std::path::Path::new(&workspace_root), id)?;
+            // Register cancellation before even the Git repository validation
+            // subprocess. Use the pinned canonical path rather than resolving
+            // a potentially retargeted workspace alias again.
+            let root = git::repository_root(root.to_str().ok_or("Non-UTF-8 workspace")?)?;
             git::mutate(&root, mutation)
         })
         .await,

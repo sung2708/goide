@@ -32,7 +32,12 @@ use std::sync::{
     Arc, Mutex, OnceLock,
 };
 
-static MUTATIONS: OnceLock<Mutex<HashMap<PathBuf, Arc<AtomicBool>>>> = OnceLock::new();
+struct ActiveMutation {
+    id: uuid::Uuid,
+    requested_root: PathBuf,
+    token: Arc<AtomicBool>,
+}
+static MUTATIONS: OnceLock<Mutex<HashMap<PathBuf, ActiveMutation>>> = OnceLock::new();
 
 pub struct MutationLease(PathBuf);
 impl Drop for MutationLease {
@@ -44,6 +49,14 @@ impl Drop for MutationLease {
 }
 
 pub fn mutation_lock(root: &Path) -> Result<MutationLease, String> {
+    mutation_lock_identified(root, root, uuid::Uuid::new_v4())
+}
+pub fn mutation_lock_identified(
+    root: &Path,
+    requested_root: &Path,
+    id: uuid::Uuid,
+) -> Result<MutationLease, String> {
+    let requested_root = std::path::absolute(requested_root).map_err(|e| e.to_string())?;
     let root = root.canonicalize().map_err(|e| e.to_string())?;
     let mut active = MUTATIONS
         .get_or_init(Default::default)
@@ -52,17 +65,41 @@ pub fn mutation_lock(root: &Path) -> Result<MutationLease, String> {
     if active.contains_key(&root) {
         return Err("Another GoIDE Git operation is in progress in this repository.".into());
     }
-    active.insert(root.clone(), Arc::new(AtomicBool::new(false)));
+    active.insert(
+        root.clone(),
+        ActiveMutation {
+            id,
+            requested_root,
+            token: Arc::new(AtomicBool::new(false)),
+        },
+    );
     Ok(MutationLease(root))
 }
-pub fn cancel(root: &Path) -> Result<bool, String> {
-    let root = root.canonicalize().map_err(|e| e.to_string())?;
+#[cfg(test)]
+fn cancel(root: &Path) -> Result<bool, String> {
+    cancel_identified(root, None)
+}
+pub fn cancel_identified(root: &Path, id: Option<uuid::Uuid>) -> Result<bool, String> {
+    // Authorization is bound at registration. Never resolve a live path here:
+    // a deleted/retargeted workspace must still cancel its original operation.
+    let root = std::path::absolute(root).map_err(|e| e.to_string())?;
     let active = MUTATIONS
         .get_or_init(Default::default)
         .lock()
         .map_err(|_| "Git operation registry unavailable")?;
-    if let Some(token) = active.get(&root) {
-        token.store(true, Ordering::Release);
+    let mut matches = active.iter().filter_map(|(canonical, operation)| {
+        ((canonical == &root || operation.requested_root == root)
+            && id.is_none_or(|id| id == operation.id))
+        .then_some(operation)
+    });
+    if let Some(operation) = matches.next() {
+        if matches.next().is_some() {
+            return Err(
+                "Multiple Git operations used this workspace path; supply the operation identity."
+                    .into(),
+            );
+        }
+        operation.token.store(true, Ordering::Release);
         return Ok(true);
     }
     Ok(false)
@@ -73,7 +110,7 @@ pub(super) fn cancellation(root: &Path) -> Option<Arc<AtomicBool>> {
         .lock()
         .ok()?
         .get(root)
-        .cloned()
+        .map(|operation| operation.token.clone())
 }
 
 pub fn repository_root(workspace: &str) -> Result<PathBuf, String> {

@@ -32,8 +32,8 @@ async function request<T>(command: string, args: Record<string, unknown>): Promi
 }
 export const getGitRepositoryStatus = (workspaceRoot: string) => request<GitRepositoryStatus>("git_repository_status", { workspaceRoot });
 export const getGitFileDiff = (workspaceRoot: string, path: string, staged: boolean) => request<GitFileDiff>("git_file_diff", { workspaceRoot, path, staged });
-export const mutateGit = (workspaceRoot: string, mutation: GitMutation) => request<void>("git_mutate", { workspaceRoot, mutation });
-export const cancelGit = (workspaceRoot: string) => request<boolean>("git_cancel", { workspaceRoot });
+export const mutateGit = (workspaceRoot: string, mutation: GitMutation, operationId?: string) => request<void>("git_mutate", { workspaceRoot, mutation, operationId });
+export const cancelGit = (workspaceRoot: string, operationId?: string) => request<boolean>("git_cancel", { workspaceRoot, operationId });
 export const getGitHistoryPage = (workspaceRoot: string, offset: number, tips: string[]) => request<GitHistoryPage>("git_history_page", { workspaceRoot, offset, tips });
 export const searchGitHistory = (workspaceRoot: string, search: GitHistorySearchRequest) => request<GitHistoryPage>("git_search_history", { workspaceRoot, request: search });
 export const getGitCommitDetails = (workspaceRoot: string, hash: string, parent: string | null) => request<GitCommitDetails>("git_commit_details", { workspaceRoot, hash, parent });

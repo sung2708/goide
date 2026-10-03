@@ -8,9 +8,10 @@
 import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-// Use inline factory with vi.fn() so hoisting works correctly.
+// Vitest 4 constructor mocks must use constructible functions.
+// Keep the factory inline so hoisting works correctly.
 vi.mock("@xterm/xterm", () => ({
-  Terminal: vi.fn().mockImplementation(() => ({
+  Terminal: vi.fn().mockImplementation(function () { return ({
     options: {},
     open: vi.fn(),
     write: vi.fn(),
@@ -19,14 +20,14 @@ vi.mock("@xterm/xterm", () => ({
     onData: vi.fn(() => ({ dispose: vi.fn() })),
     cols: 120,
     rows: 40,
-  })),
+  }); }),
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: vi.fn().mockImplementation(() => ({
+  FitAddon: vi.fn().mockImplementation(function () { return ({
     fit: vi.fn(),
     dispose: vi.fn(),
-  })),
+  }); }),
 }));
 
 // Import after mocks are in place.
@@ -66,19 +67,19 @@ describe("TerminalSurface — default terminal options", () => {
   afterEach(() => {
     MockedTerminal.mockReset();
     MockedFitAddon.mockReset();
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
   });
 
   it("constructs terminal with IDE-aligned default options", () => {
     // Capture the options passed to the Terminal constructor
     let capturedOptions: Record<string, unknown> | undefined;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    MockedTerminal.mockImplementation((...args: any[]) => {
+    MockedTerminal.mockImplementation(function (...args: any[]) {
       capturedOptions = args[0] as Record<string, unknown>;
       return makeTerminalInstance();
     });
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     render(<TerminalSurface />);
 
@@ -99,8 +100,8 @@ describe("TerminalSurface — default terminal options", () => {
 
   it("updates colors in place when the workspace theme changes", async () => {
     const instance = makeTerminalInstance();
-    MockedTerminal.mockImplementation(() => instance);
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return instance; });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
     const view = render(<TerminalSurface />);
     try {
       document.documentElement.style.setProperty("--crust", "#f4f5f7");
@@ -121,8 +122,8 @@ describe("TerminalSurface — default terminal options", () => {
   it("applies terminal font preferences without replacing the live terminal", async () => {
     const instance = makeTerminalInstance();
     const fit = makeFitAddonInstance();
-    MockedTerminal.mockImplementation(() => instance);
-    MockedFitAddon.mockImplementation(() => fit);
+    MockedTerminal.mockImplementation(function () { return instance; });
+    MockedFitAddon.mockImplementation(function () { return fit; });
     const view = render(<TerminalSurface />);
     try {
       act(() => settingsStore.update("terminal.fontSize", 18));
@@ -141,8 +142,8 @@ describe("TerminalSurface — fit scheduling", () => {
   afterEach(() => {
     MockedTerminal.mockReset();
     MockedFitAddon.mockReset();
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
   });
 
   it("schedules a fit via requestAnimationFrame after mount", () => {
@@ -156,8 +157,8 @@ describe("TerminalSurface — fit scheduling", () => {
     vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
 
     const fitFn = vi.fn();
-    MockedFitAddon.mockImplementation(() => ({ fit: fitFn, dispose: vi.fn() }));
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
+    MockedFitAddon.mockImplementation(function () { return ({ fit: fitFn, dispose: vi.fn() }); });
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
 
     try {
       render(<TerminalSurface />);
@@ -187,7 +188,7 @@ describe("TerminalSurface — fit scheduling", () => {
     // Intercept ResizeObserver to capture the callback
     const OriginalResizeObserver = window.ResizeObserver;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const MockResizeObserver = vi.fn((callback: (...args: any[]) => void) => {
+    const MockResizeObserver = vi.fn(function (callback: (...args: any[]) => void) {
       observer.callback = callback;
       return {
         observe: vi.fn(),
@@ -210,8 +211,8 @@ describe("TerminalSurface — fit scheduling", () => {
     const instance = makeTerminalInstance();
     instance.cols = 80;
     instance.rows = 24;
-    MockedFitAddon.mockImplementation(() => ({ fit: fitFn, dispose: vi.fn() }));
-    MockedTerminal.mockImplementation(() => instance);
+    MockedFitAddon.mockImplementation(function () { return ({ fit: fitFn, dispose: vi.fn() }); });
+    MockedTerminal.mockImplementation(function () { return instance; });
 
     const onResize = vi.fn();
 
@@ -258,13 +259,13 @@ describe("TerminalSurface — normal render", () => {
     MockedTerminal.mockReset();
     MockedFitAddon.mockReset();
     // Restore default passing implementations
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
   });
 
   it("renders the container div without an error message when init succeeds", () => {
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     const { container } = render(<TerminalSurface />);
     expect(screen.queryByTestId("terminal-init-error")).not.toBeInTheDocument();
@@ -273,8 +274,8 @@ describe("TerminalSurface — normal render", () => {
 
   it("calls onMount with the Terminal instance after successful init", () => {
     const instance = makeTerminalInstance();
-    MockedTerminal.mockImplementation(() => instance);
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return instance; });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     const onMount = vi.fn();
     render(<TerminalSurface onMount={onMount} />);
@@ -284,8 +285,8 @@ describe("TerminalSurface — normal render", () => {
 
   it("calls terminal.open() on the container element", () => {
     const openFn = vi.fn();
-    MockedTerminal.mockImplementation(() => makeTerminalInstance({ open: openFn }));
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance({ open: openFn }); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     render(<TerminalSurface />);
     expect(openFn).toHaveBeenCalledTimes(1);
@@ -293,8 +294,8 @@ describe("TerminalSurface — normal render", () => {
   });
 
   it("reports terminal focus owner when the host receives focus", () => {
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     const onFocusOwnerChange = vi.fn();
     render(<TerminalSurface onFocusOwnerChange={onFocusOwnerChange} />);
@@ -306,8 +307,8 @@ describe("TerminalSurface — normal render", () => {
   });
 
   it("reports editor focus owner when the host loses focus", () => {
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
 
     const onFocusOwnerChange = vi.fn();
     render(<TerminalSurface onFocusOwnerChange={onFocusOwnerChange} />);
@@ -323,17 +324,17 @@ describe("TerminalSurface — init failure fallback", () => {
   beforeEach(() => {
     MockedTerminal.mockReset();
     MockedFitAddon.mockReset();
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
   });
 
   afterEach(() => {
     // Restore default passing implementations so other test files are unaffected.
-    MockedTerminal.mockImplementation(() => makeTerminalInstance());
-    MockedFitAddon.mockImplementation(() => makeFitAddonInstance());
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance(); });
+    MockedFitAddon.mockImplementation(function () { return makeFitAddonInstance(); });
   });
 
   it("shows fallback message when Terminal constructor throws", () => {
-    MockedTerminal.mockImplementation(() => {
+    MockedTerminal.mockImplementation(function () {
       throw new Error("WebGL context unavailable");
     });
 
@@ -344,12 +345,11 @@ describe("TerminalSurface — init failure fallback", () => {
   });
 
   it("shows fallback message when terminal.open() throws", () => {
-    MockedTerminal.mockImplementation(() =>
-      makeTerminalInstance({
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance({
         open: vi.fn().mockImplementation(() => {
           throw new Error("DOM attach failed");
         }),
-      })
+      }); }
     );
 
     render(<TerminalSurface />);
@@ -359,12 +359,11 @@ describe("TerminalSurface — init failure fallback", () => {
   });
 
   it("shows fallback message when loadAddon throws", () => {
-    MockedTerminal.mockImplementation(() =>
-      makeTerminalInstance({
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance({
         loadAddon: vi.fn().mockImplementation(() => {
           throw new Error("Addon registration failed");
         }),
-      })
+      }); }
     );
 
     render(<TerminalSurface />);
@@ -374,7 +373,7 @@ describe("TerminalSurface — init failure fallback", () => {
   });
 
   it("does not call onMount when init fails", () => {
-    MockedTerminal.mockImplementation(() => {
+    MockedTerminal.mockImplementation(function () {
       throw new Error("constructor failure");
     });
 
@@ -385,7 +384,7 @@ describe("TerminalSurface — init failure fallback", () => {
   });
 
   it("renders an accessible alert role on the fallback element", () => {
-    MockedTerminal.mockImplementation(() => {
+    MockedTerminal.mockImplementation(function () {
       throw new Error("renderer unavailable");
     });
 
@@ -398,7 +397,7 @@ describe("TerminalSurface — init failure fallback", () => {
 
   it("does not propagate the init error to the React tree", () => {
     // If the component did not catch the error, this would throw before the assertion.
-    MockedTerminal.mockImplementation(() => {
+    MockedTerminal.mockImplementation(function () {
       throw new Error("renderer unavailable");
     });
 
@@ -408,13 +407,12 @@ describe("TerminalSurface — init failure fallback", () => {
 
   it("disposes partially-constructed terminal when open() throws", () => {
     const partialDispose = vi.fn();
-    MockedTerminal.mockImplementation(() =>
-      makeTerminalInstance({
+    MockedTerminal.mockImplementation(function () { return makeTerminalInstance({
         open: vi.fn().mockImplementation(() => {
           throw new Error("open failed");
         }),
         dispose: partialDispose,
-      })
+      }); }
     );
 
     render(<TerminalSurface />);
