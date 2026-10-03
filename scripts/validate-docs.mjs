@@ -22,6 +22,8 @@ const docs = [
   "docs/ROADMAP.md",
   "docs/VERSIONING.md",
   "docs/RELEASE.md",
+  "docs/RELEASE_SETUP.md",
+  "docs/releases/v0.2.0-alpha.1.md",
   "docs/UPDATES.md",
   "docs/RELEASE_METADATA_REPORT.md",
   "docs/RELEASE_READINESS.md",

@@ -101,11 +101,13 @@ then native `app.restart()`. There is no generic frontend restart permission.
 
 ## Public contracts
 
-Use a dedicated **already public** distribution repository, e.g. a maintainer's
-chosen `OWNER/REPOSITORY`, with GitHub Releases plus GitHub Pages from `gh-pages`.
-The source repository may remain private. The chosen example is a setup
-placeholder, not a provisioned service. Configure Pages first, including an
-existing `gh-pages` branch and `.nojekyll`. No publisher changes visibility.
+Use an **already public** repository with GitHub Releases and metadata on
+`gh-pages`. The current choice is the existing sung2708/goide source repository;
+this is also the workflow default. A dedicated public distribution repository is
+optional when source must stay private. No publisher changes visibility.
+Configure Pages with GitHub Actions as its source for the same-repository setup;
+the Release workflow explicitly deploys the metadata branch after publication.
+Follow [Release setup](RELEASE_SETUP.md) for the current operational procedure.
 
 `GORO_RELEASE_BASE_URL` must be an actual public HTTPS Pages root followed by
 `channels/`, ending in `/`. Paths published in the Pages branch:
@@ -191,7 +193,7 @@ Required public source-repository variables:
 
 - `GORO_UPDATER_PUBLIC_KEY`: complete base64 Tauri public key file content.
 - `GORO_RELEASE_BASE_URL`: configured public Pages URL ending `/channels/`.
-- `GORO_RELEASE_REPOSITORY`: the separate public `OWNER/REPOSITORY`.
+- `GORO_RELEASE_REPOSITORY`: public `OWNER/REPOSITORY`; defaults to the current repository.
 
 Optional `GORO_SIGNING_PUBLIC_KEY` defaults to GORO_UPDATER_PUBLIC_KEY. During an
 explicit key migration it verifies the current signing identity while the
@@ -203,18 +205,22 @@ Required protected CI secrets:
 - `TAURI_SIGNING_PRIVATE_KEY`: complete encrypted Tauri private key file content.
 - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: its password (empty only for an explicitly
   approved unencrypted key; encrypted production keys are recommended).
-- `GORO_RELEASE_TOKEN`: fine-grained token or GitHub App token scoped to contents
-  write on the public distribution repo only. It is used solely by the CI
-  publisher; never exposed to application, website, artifacts or metadata.
+- `GORO_RELEASE_TOKEN`: needed only for a different public distribution repository.
+  Use a fine-grained token or GitHub App token with contents write on that repo.
+  The same-repository setup uses the job-scoped GITHUB_TOKEN. Neither token enters
+  application, website, artifacts or metadata.
 
 Create protected `release-signing` and `release-distribution` environments.
 Restrict deployment refs/reviewers. Grant the signing secret only to the signing
 environment, publisher credential only to distribution. Public variables can
-be repository variables. The source `GITHUB_TOKEN` has contents read only.
+be repository variables. GITHUB_TOKEN is read-only in planning/build jobs; only
+the publisher has contents write. The metadata deployment job has pages write
+and id-token write, with contents read.
 Repository admins must review workflow changes before allowing secret access.
 Release workflow action references are pinned to audited commit SHAs. The
-unprivileged planning job checks release commits are reachable from develop/main;
-manual candidate dispatch accepts only those branches. These checks supplement
+unprivileged planning job checks release commits are reachable from main;
+manual candidate dispatch accepts only main and cannot rebuild an existing tag
+from a different commit. These checks supplement
 protected environment reviewers/ref restrictions: an untrusted modified workflow
 must never be approved for signing or publication. Ordinary PR CI has no release
 secrets. Update pinned actions deliberately after review.

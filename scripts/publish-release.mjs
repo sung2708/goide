@@ -19,7 +19,6 @@ const body = value => ({ method: "POST", headers: { "Content-Type": "application
 try {
   for (const flag of ["--assets-dir", "--metadata-dir", "--notes"]) if (!args.includes(flag)) throw new Error(`Missing ${flag}`);
   if (!repository || !/^[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+$/.test(repository) || !token) throw new Error("Public repository and CI publisher credential must be configured");
-  if (repository.toLowerCase() === process.env.GITHUB_REPOSITORY?.toLowerCase()) throw new Error("The distribution repository must be separate from the source repository");
   const base = publicBase(process.env.GORO_RELEASE_BASE_URL);
   if (!base.pathname.endsWith("/channels/")) throw new Error("Distribution base must end in /channels/ for the Pages contract");
   const repo = await request("");
