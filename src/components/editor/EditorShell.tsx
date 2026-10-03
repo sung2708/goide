@@ -1,3 +1,4 @@
+import { useExecutionPreparation } from "../../features/goProject/useExecutionPreparation";
 import { ownsDebuggerWorkspace } from "../../features/debugger/workspace";
 import { useInspectionGate } from "../../features/debugger/useInspectionGate";
 import DebuggerInspector from "../../features/debugger/DebuggerInspector";
@@ -352,6 +353,7 @@ function EditorShell() {
   const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
+  const executionPreparationRef = useRef<ReturnType<typeof useExecutionPreparation>["prepare"] | null>(null);
   const ownedDebuggerSessionRef = useRef<string | null>(null);
   const debuggerStateRef = useRef(debuggerState); debuggerStateRef.current = debuggerState;
   const debuggerInspectionGate = useInspectionGate(debuggerState?.stopToken);
@@ -913,7 +915,7 @@ function EditorShell() {
     const requestId = deepTraceRequestIdRef.current;
 
     try {
-      const response = await activateScopedDeepTrace({
+      const response = await executionPreparationRef.current!(() => activateScopedDeepTrace({
         workspaceRoot: requestWorkspacePath,
         relativePath: requestFilePath,
         line,
@@ -924,8 +926,9 @@ function EditorShell() {
         counterpartLine: staticCounterpart?.line ?? null,
         counterpartColumn: staticCounterpart?.column ?? null,
         counterpartConfidence: staticCounterpart?.confidence ?? null,
-      });
+      }), ["go", "delve"]);
       if (
+        !editorMountedRef.current ||
         requestId !== deepTraceRequestIdRef.current ||
         workspacePathRef.current !== requestWorkspacePath ||
         activeFilePathRef.current !== requestFilePath
@@ -958,6 +961,7 @@ function EditorShell() {
       console.error("Failed to activate Deep Trace:", error);
     }
 
+    if (!editorMountedRef.current || workspacePathRef.current !== requestWorkspacePath || activeFilePathRef.current !== requestFilePath || requestId !== deepTraceRequestIdRef.current) return;
     markRuntimeDegraded();
     setMode("quick-insight");
     setDeepTraceScope(null);
@@ -1244,6 +1248,20 @@ function EditorShell() {
     setBusy: setExplorerOperationBusy, onError: setFileError,
   });
 
+  const executionDocumentTransaction = useGitDocumentTransaction({
+    root: workspacePathRef, lock: documentTransitionRef, mutation: branchMutationRef,
+    preserve: preserveAllDocuments,
+    isPreserved: () => !documents.dirty && !isSavingRef.current && !hasConflictDrafts(workspacePathRef.current),
+    setBusy: setExplorerOperationBusy,
+    canChangeFiles: () => runStatus !== "running" && debugUiState !== "running" && debugUiState !== "paused" && debugUiState !== "stopping",
+  });
+  const executionPreparation = useExecutionPreparation({
+    root: workspacePath,
+    paths: { go: settings.values["go.executablePath"], gopls: settings.values["go.goplsPath"], dlv: settings.values["debug.delvePath"] },
+    transaction: executionDocumentTransaction, cancelSave: savePreparation.cancel,
+  });
+  executionPreparationRef.current = executionPreparation.prepare;
+
   const handleRunFile = useCallback(async (modeToRun: RunMode = "standard") => {
     if (documentTransitionRef.current || runStopInFlightRef.current || debugUiState === "starting") {
       return;
@@ -1258,54 +1276,22 @@ function EditorShell() {
     activeRunTargetFilePathRef.current = activeFilePath;
     clearPendingRunOutputBuffer();
 
-    const contentToRun = latestEditorContentRef.current ?? activeFileContent;
-    if (isDirty && typeof contentToRun === "string") {
-      const didSave = await persistActiveFileContent(contentToRun);
-      if (!didSave) {
-        if (activeRunIdRef.current !== runId) {
-          return;
-        }
-        setRunStatus("error");
+    try {
+      const resp = await executionPreparation.prepare(async () => {
+        setRunOutput([]);
+        setRunStatus("running");
+        setProblemRun({ root: workspacePath, id: runId });
         setRunMode(modeToRun);
-        raceRunCaptureRef.current = {
-          isRaceRun,
-          sawWarning: false,
-          matchedLines: new Set<number>(),
-        };
-        setRaceSignals([]);
         setIsBottomPanelOpen(true);
         setBottomPanelTab("logs");
-        setRunOutput([
-          {
-            runId,
-            line: "Failed to save latest changes before run. Resolve save errors and retry.",
-            stream: "stderr",
-          },
-        ]);
-        return;
-      }
-    }
-
-    setRunOutput([]);
-    setRunStatus("running");
-    setProblemRun({ root: workspacePath, id: runId });
-    setRunMode(modeToRun);
-    setIsBottomPanelOpen(true);
-    setBottomPanelTab("logs");
-    raceRunCaptureRef.current = {
-      isRaceRun,
-      sawWarning: false,
-      matchedLines: new Set<number>(),
-    };
-    setRaceSignals([]);
-
-    try {
-      const resp =
-        modeToRun === "race"
-          ? await runWorkspaceFileWithRace(workspacePath, activeFilePath, runId)
-          : await runWorkspaceFile(workspacePath, activeFilePath, runId);
+        raceRunCaptureRef.current = { isRaceRun, sawWarning: false, matchedLines: new Set<number>() };
+        setRaceSignals([]);
+        return modeToRun === "race"
+          ? runWorkspaceFileWithRace(workspacePath, activeFilePath, runId)
+          : runWorkspaceFile(workspacePath, activeFilePath, runId);
+      }, ["go"]);
       if (!resp.ok) {
-        if (activeRunIdRef.current !== runId) {
+        if (!editorMountedRef.current || workspacePathRef.current !== workspacePath || activeRunIdRef.current !== runId) {
           return;
         }
         setRunStatus("error");
@@ -1316,24 +1302,18 @@ function EditorShell() {
         }]);
       }
     } catch (err) {
-      if (activeRunIdRef.current !== runId) {
+      if (!editorMountedRef.current || workspacePathRef.current !== workspacePath || activeRunIdRef.current !== runId) {
         return;
       }
       setRunStatus("error");
+      setIsBottomPanelOpen(true); setBottomPanelTab("logs");
       setRunOutput([{
         runId,
         line: `Execution error: ${err instanceof Error ? err.message : String(err)}`,
         stream: "stderr"
       }]);
     }
-  }, [
-    workspacePath,
-    activeFilePath,
-    activeFileContent,
-    isDirty,
-    persistActiveFileContent,
-    debugUiState,
-  ]);
+  }, [workspacePath, activeFilePath, executionPreparation.prepare, debugUiState]);
 
   const handleRunFileStandard = useCallback(() => {
     void handleRunFile("standard");
@@ -1349,11 +1329,12 @@ function EditorShell() {
 
     let response: Awaited<ReturnType<typeof startDebugSession>>;
     try {
-      response = await startDebugSession({
+      response = await executionPreparation.prepare(() => startDebugSession({
         workspaceRoot: workspacePath,
         relativePath: activeFilePath,
-      });
+      }), ["go", "delve"]);
     } catch (error) {
+      if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) return;
       setDebugUiState("failed");
       setDebugFailure({
         code: "debug_session_start_failed",
@@ -1364,6 +1345,10 @@ function EditorShell() {
       return;
     }
 
+    if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) {
+      if (response.data?.debuggerState?.sessionId) void deactivateDeepTrace({ sessionId: response.data.debuggerState.sessionId });
+      return;
+    }
     if (!response.ok) {
       setDebugUiState("failed");
       setDebugFailure({
@@ -1375,10 +1360,6 @@ function EditorShell() {
       return;
     }
 
-    if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) {
-      if (response.data?.debuggerState?.sessionId) void deactivateDeepTrace({ sessionId: response.data.debuggerState.sessionId });
-      return;
-    }
     if (response.data?.debuggerState) {
       ownedDebuggerSessionRef.current = response.data.debuggerState.sessionId ?? null;
       debuggerStateRef.current = response.data.debuggerState;
@@ -1394,7 +1375,7 @@ function EditorShell() {
       setRunOutput([]);
       activeRunIdRef.current = "debug-" + Date.now();
     }
-  }, [workspacePath, activeFilePath, runStatus, runMode]);
+  }, [workspacePath, activeFilePath, runStatus, runMode, executionPreparation.prepare]);
 
   const handleStopDebug = useCallback(async () => {
     if (debugStopInFlightRef.current) {
@@ -2115,6 +2096,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
+        {executionPreparation.phase !== "idle" && <span role="status" className="px-2 text-xs">{executionPreparation.phase === "preparing" ? "Saving project and checking tools..." : "Starting execution..."}{executionPreparation.phase === "preparing" && <button type="button" onClick={executionPreparation.cancel}>Cancel execution preparation</button>}</span>}
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
