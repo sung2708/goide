@@ -1,3 +1,4 @@
+import { RunOwnership } from "./runOwnership";
 import type { SemanticEntryAction } from "../../features/semantics/types";
 import { useExecutionPreparation } from "../../features/goProject/useExecutionPreparation";
 import { ownsDebuggerWorkspace } from "../../features/debugger/workspace";
@@ -499,6 +500,8 @@ function EditorShell() {
   const runtimeSignalPendingRequestCountRef = useRef(0);
   const debugStopInFlightRef = useRef(false);
   const runStopInFlightRef = useRef(false);
+  const runOwnershipRef = useRef<RunOwnership | null>(null);
+  if (!runOwnershipRef.current) runOwnershipRef.current = new RunOwnership(stopCurrentRun);
   const autoSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const branchMutationRef = useRef(false);
   const editorMountedRef = useRef(true);
@@ -570,6 +573,7 @@ function EditorShell() {
     editorMountedRef.current = true;
     return () => {
       editorMountedRef.current = false;
+      void runOwnershipRef.current?.stop().catch(() => { /* native retains failed cleanup for shutdown retry */ });
       if (saveStatusTimerRef.current !== null) {
         clearTimeout(saveStatusTimerRef.current);
       }
@@ -1269,9 +1273,7 @@ function EditorShell() {
     }
     if (!workspacePath || !activeFilePath) return;
     const isRaceRun = modeToRun === "race";
-    const runId =
-      globalThis.crypto?.randomUUID?.() ??
-      `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const runId = globalThis.crypto.randomUUID();
     activeRunIdRef.current = runId;
     activeRunModeRef.current = modeToRun;
     activeRunTargetFilePathRef.current = activeFilePath;
@@ -1287,9 +1289,13 @@ function EditorShell() {
         setBottomPanelTab("logs");
         raceRunCaptureRef.current = { isRaceRun, sawWarning: false, matchedLines: new Set<number>() };
         setRaceSignals([]);
-        return modeToRun === "race"
+        return runOwnershipRef.current!.start({ workspaceRoot: workspacePath, runId }, () => modeToRun === "race"
           ? runWorkspaceFileWithRace(workspacePath, activeFilePath, runId)
-          : runWorkspaceFile(workspacePath, activeFilePath, runId);
+          : runWorkspaceFile(workspacePath, activeFilePath, runId), message => {
+            if (editorMountedRef.current && activeRunIdRef.current === runId) {
+              setRunStatus("running"); setRunOutput([{ runId, line: message, stream: "stderr" }]);
+            }
+          });
       }, ["go"]);
       if (!resp.ok) {
         if (!editorMountedRef.current || workspacePathRef.current !== workspacePath || activeRunIdRef.current !== runId) {
@@ -1592,8 +1598,7 @@ function EditorShell() {
     runStopInFlightRef.current = true;
     const stoppedId = activeRunIdRef.current;
     try {
-      const response = await stopCurrentRun();
-      if (!response.ok) throw new Error(response.error?.message ?? "Unable to stop the active run.");
+      await runOwnershipRef.current!.stop();
       if (activeRunIdRef.current === stoppedId) {
         activeRunIdRef.current = null;
         clearPendingRunOutputBuffer();
@@ -1601,6 +1606,13 @@ function EditorShell() {
       }
     } finally { runStopInFlightRef.current = false; }
   }, [clearPendingRunOutputBuffer]);
+
+  useEffect(() => {
+    if (runStatus === "done" || runStatus === "error") {
+      if (runOwnershipRef.current?.cleanupPending()) setRunStatus("running");
+      else runOwnershipRef.current?.retire(activeRunIdRef.current);
+    }
+  }, [runStatus]);
 
   const handleEditorChange = useCallback((value: string) => {
     if (branchMutationRef.current || documents.active?.readOnly || value === latestEditorContentRef.current) return;
@@ -1739,6 +1751,14 @@ function EditorShell() {
           ? await documentDecision.ask("Save all editor and conflict-result changes before changing workspace?") : "save";
         if (choice === "cancel") return;
         if (choice === "save" && !(await preserveAllDocuments())) return;
+        await runOwnershipRef.current!.stop();
+        if (ownedDebuggerSessionRef.current) {
+          const stopped = await deactivateDeepTrace({ sessionId: ownedDebuggerSessionRef.current });
+          if (!stopped.ok) throw new Error(stopped.error?.message ?? "Unable to confirm debugger cleanup before changing workspace.");
+          ownedDebuggerSessionRef.current = null;
+          setDebuggerState(null); setDebugUiState("idle");
+        }
+        activeRunIdRef.current = null; clearPendingRunOutputBuffer(); setRunStatus("idle");
         if (choice === "discard") {
           if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; }
           discardConflictDrafts(workspacePathRef.current);
@@ -1767,6 +1787,7 @@ function EditorShell() {
         setFileError(null);
       }
     } catch (error) {
+      setFileError(error instanceof Error ? error.message : "Unable to change workspace safely.");
       console.error("Failed to open workspace dialog:", error);
     } finally {
       branchMutationRef.current = false; setExplorerOperationBusy(false);
@@ -2108,7 +2129,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
-        {executionPreparation.phase !== "idle" && <span role="status" className="px-2 text-xs">{executionPreparation.phase === "preparing" ? "Saving project and checking tools..." : "Starting execution..."}{executionPreparation.phase === "preparing" && <button type="button" onClick={executionPreparation.cancel}>Cancel execution preparation</button>}</span>}
+        {executionPreparation.phase !== "idle" && <span role="status" className="px-2 text-xs">{executionPreparation.phase === "preparing" ? "Saving project and checking tools..." : "Starting execution..."}{executionPreparation.phase === "preparing" && <button type="button" onClick={executionPreparation.cancel}>Cancel execution preparation</button>}{executionPreparation.phase === "starting" && runOwnershipRef.current?.current() && <button type="button" onClick={() => void executeCommand("go.stop")}>{runOwnershipRef.current.cleanupPending() ? "Retry Stop" : "Stop Run startup"}</button>}</span>}
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />

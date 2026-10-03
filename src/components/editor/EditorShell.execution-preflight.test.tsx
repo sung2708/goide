@@ -5,7 +5,7 @@ import EditorShell from "./EditorShell";
 import { settingsStore } from "../../features/settings/SettingsStore";
 import { discardConflictDrafts, retainConflictDraft } from "../../features/git/conflictDrafts";
 import type { GitConflictContent } from "../../lib/ipc/git";
-const { open, read, write, run, debug, tools, mutation, testRun } = vi.hoisted(() => ({ open: vi.fn(), read: vi.fn(), write: vi.fn(), run: vi.fn(), debug: vi.fn(), tools: vi.fn(), mutation: vi.fn(), testRun: vi.fn() }));
+const { open, read, write, run, debug, tools, mutation, testRun, stop } = vi.hoisted(() => ({ open: vi.fn(), read: vi.fn(), write: vi.fn(), run: vi.fn(), debug: vi.fn(), tools: vi.fn(), mutation: vi.fn(), testRun: vi.fn(), stop: vi.fn() }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open }));
 vi.mock("../../lib/ipc/git", async () => ({ ...await vi.importActual("../../lib/ipc/git"), mutateGit: mutation }));
 vi.mock("../panels/BottomPanel", () => ({ default: () => null }));
@@ -13,7 +13,7 @@ vi.mock("../../lib/ipc/client", async () => ({
   ...await vi.importActual("../../lib/ipc/client"),
   subscribeGoTestOutput: async () => () => {}, readWorkspaceFile: read, writeWorkspaceFile: write,
   configureToolchainPaths: async (paths: import("../../lib/ipc/types").ToolPaths) => ({ ok: true, data: paths }), getToolchainStatus: tools,
-  runWorkspaceFile: run, startDebugSession: debug, runGoTests: testRun,
+  runWorkspaceFile: run, startDebugSession: debug, runGoTests: testRun, stopCurrentRun: stop,
 }));
 vi.mock("../../features/concurrency/useLensSignals", () => ({ useLensSignals: () => ({ detectedConstructs: [], counterpartMappings: [], isAnalyzing: false, analysisError: null }) }));
 vi.mock("../sidebar/Explorer", () => ({ default: ({ workspacePath, onOpenFile }: { workspacePath: string | null; onOpenFile: (path: string) => void }) => workspacePath ? <><button onClick={() => onOpenFile("main.go")}>Open Main</button><button onClick={() => onOpenFile("worker.go")}>Open Worker</button><button onClick={() => onOpenFile("worker_test.go")}>Open Test</button></> : null }));
@@ -23,7 +23,7 @@ beforeEach(() => {
   vi.clearAllMocks(); localStorage.clear(); settingsStore.reset(); settingsStore.update("files.autoSave", "off"); discardConflictDrafts("C:/workspace");
   open.mockResolvedValue("C:/workspace"); read.mockImplementation(async (_root, path) => ({ ok: true, data: `package main\n// ${path}\n` })); write.mockReset().mockResolvedValue({ ok: true });
   tools.mockReset().mockResolvedValue(ready); run.mockReset().mockResolvedValue({ ok: true }); debug.mockReset().mockResolvedValue({ ok: true, data: { mode: "deep-trace", scopeKey: "runtime_session" } });
-  mutation.mockReset().mockResolvedValue({ ok: true });
+  mutation.mockReset().mockResolvedValue({ ok: true }); stop.mockReset().mockResolvedValue({ ok: true });
   testRun.mockReset().mockResolvedValue({ ok: true, data: { success: true, packages: [{ importPath: "example.com/fixture", relativeDirectory: "." }], stdout: "", stderr: "", exitCode: 0 } });
 });
 afterEach(() => { cleanup(); discardConflictDrafts("C:/workspace"); });
@@ -85,4 +85,17 @@ it("routes semantic Run Test to package testing and rejects an obsolete source a
   await user.click(screen.getByRole("button", { name: "Run Semantic Test" }));
   await waitFor(() => expect(testRun).toHaveBeenCalledWith(expect.objectContaining({ workspaceRoot: "C:/workspace", relativeDirectory: ".", target: "package", testName: "TestSelected" })));
   expect(debug).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
+}, 20000);
+
+it("retains document locks after a lost Run reply until scoped Stop succeeds", async () => {
+  const user = await setup(); run.mockRejectedValue(new Error("Startup reply lost"));
+  stop.mockResolvedValueOnce({ ok: false, error: { message: "owned job retained" } }).mockResolvedValue({ ok: true });
+  await user.click(screen.getByRole("button", { name: /run active go file$/i }));
+  await waitFor(() => expect(stop).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole("button", { name: "Edit Source" })).toBeDisabled(); expect(screen.getByRole("button", { name: "Close main.go" })).toBeDisabled();
+  const id = run.mock.calls[0][2]; expect(stop).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", runId: id });
+  await user.click(screen.getByRole("button", { name: "Retry Stop" }));
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit Source" })).toBeEnabled());
+  expect(stop).toHaveBeenCalledTimes(2);
+  expect(screen.getByTestId("execution-buffer")).toHaveTextContent("package main");
 }, 20000);
