@@ -4,6 +4,8 @@ mod control_context_tests;
 mod debug_sampler;
 #[cfg(test)]
 mod debug_sampler_tests;
+#[cfg(test)]
+mod debug_test_tests;
 use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
@@ -631,6 +633,7 @@ async fn start_debug_session_internal(
     scope_line: usize,
     scope_column: usize,
     scope_symbol: Option<String>,
+    test_name: Option<String>,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
     if let Err(error) = delve::ownership::retry_cleanup().await {
         return ApiResponse::err("debug_cleanup_pending", &error);
@@ -692,21 +695,25 @@ async fn start_debug_session_internal(
         Err(error) => return ApiResponse::err("debug_target_invalid", &error),
     };
 
-    // Resolve the active file to its Go package and validate that the package
-    // is runnable (has a `package main` declaration). Test files bypass this
-    // check and use the legacy file-based launch path.
     let is_test_file = request.relative_path.ends_with("_test.go");
+    if test_name.is_some() && !is_test_file {
+        return ApiResponse::err(
+            "debug_target_invalid",
+            "A selected test requires a _test.go file.",
+        );
+    }
     let launch_mode = if is_test_file {
-        // Test files use the legacy file-based launch so that the test runner
-        // can discover individual test functions correctly.
-        let target_file = workspace_root.join(&request.relative_path);
-        if !target_file.exists() {
-            return ApiResponse::err(
-                "deep_trace_file_not_found",
-                &format!("Target file not found: {}", target_file.display()),
-            );
+        let root = workspace_root.clone();
+        let path = request.relative_path.clone();
+        match tauri::async_runtime::spawn_blocking(move || {
+            crate::integration::go_tests::debug_target(&root, &path, test_name.as_deref())
+        })
+        .await
+        {
+            Ok(Ok(target)) => target,
+            Ok(Err(error)) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
+            Err(error) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
         }
-        LaunchMode::Test
     } else {
         // For non-test files, resolve to a Go package pattern so that Delve
         // receives the correct package context (e.g. `./cmd/app`) instead of
@@ -1019,6 +1026,7 @@ pub async fn activate_scoped_deep_trace(
         request.line,
         request.column,
         request.symbol,
+        None,
     )
     .await
 }
@@ -1037,6 +1045,7 @@ pub async fn start_debug_session(
         1,
         1,
         Some("runtime_session".to_string()),
+        request.test_name,
     )
     .await
 }
@@ -1057,6 +1066,9 @@ pub(crate) async fn start_debug_session_internal_for_test(
     let relative_path = request.relative_path.clone();
 
     // Target resolution (same as production path).
+    if let Err(error) = crate::integration::go_tests::test_filter(request.test_name.as_deref()) {
+        return ApiResponse::err("debug_target_invalid", &error.to_string());
+    }
     let is_test_file = relative_path.ends_with("_test.go");
     let launch_mode_result: Result<LaunchMode, String> = if is_test_file {
         let target_file = workspace_root_path.join(&relative_path);
@@ -4038,6 +4050,7 @@ mod tests {
         let response = start_debug_session_internal_for_test(
             &workspace,
             StartDebugSessionRequestDto {
+                test_name: None,
                 workspace_root: workspace.to_string_lossy().to_string(),
                 relative_path: "main.go".to_string(),
             },

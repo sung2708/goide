@@ -309,3 +309,13 @@ Run/Debug Save All preflight, semantic actions/Debug Test/live streaming, comple
 PASS: 92 frontend tests across execution preparation, EditorShell Run/Debug/Race/Terminal/inline actions and release document gates. Focused checks cover failed writes in an inactive tab, saving all dirty tabs plus a retained conflict result, actual missing Delve errors, preparation cancellation and disabled document edits/close while probes are pending. Hook checks reject changed tool preferences, failed preservation/configuration and unnecessary language/debugger dependencies for Go Run. TypeScript and production build pass (257 modules).
 
 These focused checks do not establish Debug Test, semantic actions, live test streaming, complete Git or platform/process acceptance. No release/tag is authorized.
+
+## Semantic entry actions and Debug Test regression (2026-10-03)
+
+PASS: 13 native debug checks with installed fixtures enabled, including Debug Test in a nested module. The selected test stops at line 5, exposes its actual TestSelected frame and helper-derived local value 42, completes its marker and never executes TestOther. Missing and build-excluded tests are rejected without launching another debugger. Existing session/stop ownership, natural exit and retained cleanup checks remain passing. PASS: one adapter launch check validates package program, build/runtime directories, exact test filter and Go environment. PASS: all three Go test runner checks, including real package/workspace success, failure and cancellation. Native all-target Clippy passes.
+
+PASS: 86 frontend regression tests across semantic extraction/client/widget behavior and EditorShell Debug/inline/Race/Terminal/preparation. An earlier 63-test run additionally covers CodeEditor; these sets overlap. Actual installed Tree-sitter Go WASM validates entry signatures and import forms. Widgets reject old source/root/file and pending execution. Semantic Run Test uses the existing package runner and Debug Test forwards the exact selected name after Save All.
+
+PASS: the exact staged source, isolated from unrelated UI changes, passes 57 CodeEditor/widget/preparation tests plus TypeScript and production build (258 modules).
+
+Native startup/build cancellation, live streaming, complete Git and the platform/process acceptance matrix remain unfinished or NOT RUN. No release/tag is authorized.

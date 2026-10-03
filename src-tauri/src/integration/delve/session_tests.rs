@@ -279,3 +279,41 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
     cleanup.unwrap();
     result.unwrap();
 }
+
+#[tokio::test]
+async fn test_package_launch_uses_build_directory_and_exact_filter() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let (read, mut write) = stream.into_split();
+        let mut read = BufReader::new(read);
+        let request = read_dap_message(&mut read).await.unwrap();
+        let args = &request["arguments"];
+        assert_eq!(args["mode"], "test");
+        assert_eq!(args["program"], ".");
+        assert_eq!(args["cwd"], "/scoped/module/checks");
+        assert_eq!(args["dlvCwd"], "/scoped/module/checks");
+        assert_eq!(
+            args["args"],
+            json!(["-test.run", "^TestSelected$", "-test.count=1"])
+        );
+        assert_eq!(args["env"]["GOWORK"], "off");
+        assert_eq!(args["env"]["GOFLAGS"], "");
+        respond(&mut write, &request, json!({})).await;
+    });
+    let mut client = DapClient::connect(addr).await.unwrap();
+    client
+        .launch(
+            LaunchMode::TestPackage {
+                cwd: "/scoped/module/checks".into(),
+                filter: Some("^TestSelected$".into()),
+                work: None,
+            },
+            Path::new("/unused"),
+            Path::new("/unused"),
+        )
+        .await
+        .unwrap();
+    server.await.unwrap();
+}

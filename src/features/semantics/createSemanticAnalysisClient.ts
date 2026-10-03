@@ -34,6 +34,7 @@ export function createSemanticAnalysisClient(
 ): SemanticAnalysisClient {
   const worker = createWorker();
   const versionsByFile: VersionByFile = new Map();
+  const sourcesByFile = new Map<string, string>();
   const listeners = new Set<(result: SemanticAnalysisResult) => void>();
 
   worker.onmessage = (event) => {
@@ -47,7 +48,7 @@ export function createSemanticAnalysisClient(
     }
 
     for (const listener of listeners) {
-      listener(event.data.result);
+      listener({ ...event.data.result, sourceText: sourcesByFile.get(event.data.result.filePath) });
     }
   };
 
@@ -55,6 +56,7 @@ export function createSemanticAnalysisClient(
     syncDocument(document) {
       const nextVersion = (versionsByFile.get(document.filePath) ?? 0) + 1;
       versionsByFile.set(document.filePath, nextVersion);
+      sourcesByFile.set(document.filePath, document.text);
       worker.postMessage({
         type: "sync",
         document: {
@@ -85,6 +87,8 @@ export function createSemanticAnalysisClient(
     },
     dispose() {
       listeners.clear();
+      sourcesByFile.clear();
+      versionsByFile.clear();
       worker.terminate();
     },
   };

@@ -1,3 +1,4 @@
+import { extractEntryActions } from "./extractEntryActions";
 import type {
   SemanticAnalysisResult,
   SemanticFold,
@@ -7,6 +8,7 @@ import type {
 
 export type SemanticSyntaxNode = {
   type: string;
+  hasError?: boolean;
   startIndex: number;
   endIndex: number;
   namedChildren: Array<SemanticSyntaxNode | null>;
@@ -15,7 +17,7 @@ export type SemanticSyntaxNode = {
 
 type ExtractedSemanticData = Pick<
   SemanticAnalysisResult,
-  "symbols" | "folds" | "selectionRanges"
+  "symbols" | "folds" | "selectionRanges" | "entryActions"
 >;
 
 function nodeText(node: SemanticSyntaxNode | null, source: string): string | null {
@@ -165,6 +167,7 @@ export function extractGoSemanticData(
   selectionRanges.sort((a, b) => (a.to - a.from) - (b.to - b.from));
 
   return {
+    entryActions: extractEntryActions(root, source),
     symbols,
     folds: dedupeFolds(folds),
     selectionRanges,

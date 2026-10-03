@@ -146,13 +146,13 @@ fn patterns(root: &Path, directory: &Path, target: &Target) -> Result<Plan> {
         work: selected_work,
     })
 }
-fn test_filter(name: Option<&str>) -> Result<Option<String>> {
+pub(crate) fn test_filter(name: Option<&str>) -> Result<Option<String>> {
     let Some(name) = name else {
         return Ok(None);
     };
-    if !name.starts_with("Test")
-        || name.len() > 256
-        || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    if name.len() > 256
+        || !regex::Regex::new(r"^Test(?:[\p{Lu}\p{Lt}\p{Lm}\p{Lo}\p{Nd}_][\p{L}\p{Nd}_]*)?$")?
+            .is_match(name)
     {
         return Err(anyhow!(
             "Run Test requires an exact top-level Go test identifier."
@@ -160,6 +160,96 @@ fn test_filter(name: Option<&str>) -> Result<Option<String>> {
     }
     Ok(Some(format!("^{name}$")))
 }
+/// Resolve the saved package using Go's module/workspace and build constraints.
+/// Individual Debug Test discovery is explicit execution preparation, not a background scan.
+pub(crate) fn debug_target(
+    root: &Path,
+    relative_path: &str,
+    name: Option<&str>,
+) -> Result<super::delve::LaunchMode> {
+    let root = normalize_platform_pathbuf(root.canonicalize()?);
+    if !relative_path.ends_with("_test.go") {
+        return Err(anyhow!("Debug Test requires a saved _test.go file."));
+    }
+    let file = scoped(&root, &root.join(relative_path))?;
+    if !file.is_file() {
+        return Err(anyhow!("Debug Test target is not a file."));
+    }
+    let directory = file
+        .parent()
+        .context("Test file has no package directory")?;
+    let filter = test_filter(name)?;
+    let _scope = language_requests::begin_with_timeout(&root, None, Duration::from_secs(120))?;
+    let plan = patterns(&root, directory, &Target::Package)?;
+    let work = plan.work.as_ref().map_or_else(
+        || std::ffi::OsString::from("off"),
+        |path| path.as_os_str().to_owned(),
+    );
+    let listed = owned_tool_output::output(
+        command::std_command("go")
+            .current_dir(directory)
+            .env("GOFLAGS", "")
+            .env("GOWORK", &work)
+            .args(["list", "-json", "."]),
+        None,
+    )?;
+    if !listed.status.success() {
+        return Err(anyhow!(
+            "Debug Test package discovery failed: {}",
+            String::from_utf8_lossy(&listed.stderr)
+                .chars()
+                .take(4096)
+                .collect::<String>()
+        ));
+    }
+    let package: Value = serde_json::from_slice(&listed.stdout)?;
+    let saved_name = file
+        .file_name()
+        .context("No test filename")?
+        .to_string_lossy();
+    if !["TestGoFiles", "XTestGoFiles"].iter().any(|key| {
+        package[*key].as_array().is_some_and(|files| {
+            files
+                .iter()
+                .any(|item| item.as_str() == Some(saved_name.as_ref()))
+        })
+    }) {
+        return Err(anyhow!(
+            "Selected test file is excluded from Go's current package/build constraints."
+        ));
+    }
+    if let (Some(name), Some(filter)) = (name, filter.as_deref()) {
+        let output = owned_tool_output::output(
+            command::std_command("go")
+                .current_dir(directory)
+                .env("GOFLAGS", "")
+                .env("GOWORK", &work)
+                .args(["test", "-list", filter, "."]),
+            None,
+        )?;
+        if !output.status.success() {
+            return Err(anyhow!(
+                "Debug Test discovery failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+                    .chars()
+                    .take(4096)
+                    .collect::<String>()
+            ));
+        }
+        if !String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .any(|line| line == name)
+        {
+            return Err(anyhow!("Go discovered no saved test named {name}; check its signature and build constraints."));
+        }
+    }
+    Ok(super::delve::LaunchMode::TestPackage {
+        cwd: directory.to_string_lossy().into_owned(),
+        filter,
+        work: plan.work.map(|path| path.to_string_lossy().into_owned()),
+    })
+}
+
 pub fn run(request: Request) -> Result<Output> {
     let root = normalize_platform_pathbuf(Path::new(&request.workspace_root).canonicalize()?);
     let directory = go_project::directory(&root, &request.relative_directory)?;
@@ -391,7 +481,7 @@ mod tests {
             test_filter(Some("TestActual_2")).unwrap().unwrap(),
             "^TestActual_2$"
         );
-        for invalid in ["Test.*", "TestA/sub", "-args", "", "TestX\0"] {
+        for invalid in ["Test.*", "TestA/sub", "-args", "", "TestX\0", "Testlower"] {
             assert!(test_filter(Some(invalid)).is_err());
         }
     }

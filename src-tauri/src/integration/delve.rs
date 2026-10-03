@@ -35,7 +35,14 @@ pub enum LaunchMode {
     #[cfg_attr(not(test), allow(dead_code))]
     Debug,
     /// Debug a test file.
+    #[cfg_attr(not(test), allow(dead_code))]
     Test,
+    /// Build the complete test package from its actual Go context, selecting an exact test.
+    TestPackage {
+        cwd: String,
+        filter: Option<String>,
+        work: Option<String>,
+    },
     /// Debug a Go package given by a package pattern such as `./cmd/app`.
     /// The `cwd` field is the absolute path to the workspace root so that the
     /// relative pattern is resolved correctly.
@@ -198,6 +205,23 @@ impl DapClient {
         workspace_root: &Path,
         target_file: &Path,
     ) -> Result<()> {
+        if let LaunchMode::TestPackage { cwd, filter, work } = &mode {
+            let args = filter.as_ref().map_or_else(Vec::new, |filter| {
+                vec![
+                    "-test.run".to_owned(),
+                    filter.clone(),
+                    "-test.count=1".to_owned(),
+                ]
+            });
+            let response = self.request("launch", json!({
+                "mode": "test", "program": ".",
+                "cwd": normalize_platform_path_for_dap(cwd), "dlvCwd": normalize_platform_path_for_dap(cwd),
+                "env": { "GOFLAGS": "", "GOWORK": work.as_deref().unwrap_or("off") },
+                "args": args, "stopOnEntry": false
+            })).await?;
+            ensure_success("launch", &response)?;
+            return Ok(());
+        }
         // Package mode is self-contained: use the package pattern and cwd from the
         // variant directly, ignoring the legacy workspace_root / target_file params.
         if let LaunchMode::Package { package, cwd } = &mode {
@@ -208,6 +232,7 @@ impl DapClient {
                         "mode": "debug",
                         "program": package,
                         "cwd": normalize_platform_path_for_dap(cwd),
+                        "dlvCwd": normalize_platform_path_for_dap(cwd),
                         "stopOnEntry": false
                     }),
                 )
@@ -236,7 +261,7 @@ impl DapClient {
             LaunchMode::Debug => "debug",
             LaunchMode::Test => "test",
             // Package is handled above; this arm is unreachable.
-            LaunchMode::Package { .. } => unreachable!(),
+            LaunchMode::Package { .. } | LaunchMode::TestPackage { .. } => unreachable!(),
         };
         let target_package_dir = canonical_target
             .parent()
