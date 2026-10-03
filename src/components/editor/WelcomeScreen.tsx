@@ -13,53 +13,148 @@ type WelcomeScreenProps = {
 };
 
 export default function WelcomeScreen({
-  workspacePath, isOpening, onOpenWorkspace, onQuickOpen, onSearch, onTerminal, error, recentWorkspaces = [], onReopenWorkspace, onForgetWorkspace,
+  workspacePath,
+  isOpening,
+  onOpenWorkspace,
+  onQuickOpen,
+  onSearch,
+  onTerminal,
+  error,
+  recentWorkspaces = [],
+  onReopenWorkspace,
+  onForgetWorkspace,
 }: WelcomeScreenProps) {
+  const folderName = workspacePath ? workspacePath.split(/[\\/]/).pop() : null;
+
   return (
     <div className="welcome-screen">
-      <div className="welcome-content">
-        <p className="welcome-eyebrow"><span className="welcome-dot" /> A WORKSPACE FOR GO</p>
-        <h2 className="welcome-wordmark">
-          <img className="welcome-mascot" src="/brand/mascot.svg" alt="" width="104" height="104" />
-          Goro
-        </h2>
-        <p className="welcome-tagline">Understand Go in motion.</p>
-        <div className="welcome-grid">
-          <section aria-label="Start working">
-            <h3 className="welcome-section-label">01 / START</h3>
-            <button type="button" className="welcome-primary" onClick={onOpenWorkspace} disabled={isOpening}>
-              <span>{isOpening ? "Opening…" : "Open Workspace"}</span><span aria-hidden="true">↗</span>
+      <div className="welcome-card">
+        {/* Minimal Brand Header */}
+        <header className="welcome-header">
+          <div className="welcome-brand-mark">
+            <img src="/brand/icon-small.svg" alt="" width="28" height="28" className="welcome-mascot-sm" />
+            <div>
+              <div className="flex items-center gap-2">
+                <h1 className="welcome-title">Goro</h1>
+                <span className="welcome-badge">Go IDE</span>
+              </div>
+              <p className="welcome-subtitle">Focused Go runtime &amp; concurrency workbench</p>
+            </div>
+          </div>
+        </header>
+
+        {/* Active Workspace Pill if loaded */}
+        {folderName && (
+          <div className="welcome-workspace-pill">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="welcome-status-dot" />
+              <span className="welcome-workspace-label">Workspace active:</span>
+              <span className="welcome-workspace-name truncate" title={workspacePath ?? ""}>
+                {folderName}
+              </span>
+            </div>
+            <button
+              type="button"
+              className="welcome-pill-action"
+              onClick={onOpenWorkspace}
+              disabled={isOpening}
+            >
+              Switch
             </button>
-            <p className="welcome-description">
-              {workspacePath ? "Workspace Active. Select a file from the explorer or find it by name." : "Open a folder. Make yourself at home."}
-            </p>
-            {workspacePath && <p className="welcome-workspace" title={workspacePath}>{workspacePath.split(/[\\/]/).pop()}</p>}
-            {error && <p role="alert" className="text-sm text-(--red)">{error}</p>}
-          </section>
-          <section aria-label="Workspace tools">
-            <h3 className="welcome-section-label">02 / YOUR TOOLS</h3>
-            <button type="button" className="welcome-tool" onClick={onQuickOpen} disabled={!workspacePath}>
-              <span>Find a file</span><kbd>Ctrl P</kbd>
-            </button>
-            <button type="button" className="welcome-tool" onClick={onSearch}>
-              <span>Search workspace</span><kbd>Ctrl Shift F</kbd>
-            </button>
-            <button type="button" className="welcome-tool" onClick={onTerminal} disabled={!workspacePath}>
-              <span>Open terminal</span><span aria-hidden="true">↗</span>
-            </button>
-          </section>
-        </div>
+          </div>
+        )}
+
+        {/* Error notification if any */}
+        {error && (
+          <div role="alert" className="welcome-error-banner">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+            <span>{error}</span>
+          </div>
+        )}
+
+        {/* Unified Precision Actions List */}
+        <nav className="welcome-actions" aria-label="Quick actions">
+          <button
+            type="button"
+            className="welcome-action-item welcome-action-primary"
+            onClick={onOpenWorkspace}
+            disabled={isOpening}
+            aria-label="Open workspace folder"
+          >
+            <span className="welcome-action-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.93a2 2 0 0 1-1.66-.9l-.82-1.2A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/>
+              </svg>
+              <span>{isOpening ? "Opening folder…" : "Open Folder…"}</span>
+            </span>
+            <kbd>Ctrl O</kbd>
+          </button>
+
+          <button
+            type="button"
+            className="welcome-action-item"
+            onClick={onQuickOpen}
+            disabled={!workspacePath}
+            title={workspacePath ? "Search files by name" : "Open a folder first"}
+          >
+            <span className="welcome-action-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/>
+              </svg>
+              <span>Go to File…</span>
+            </span>
+            <kbd>Ctrl P</kbd>
+          </button>
+
+          <button
+            type="button"
+            className="welcome-action-item"
+            onClick={onSearch}
+          >
+            <span className="welcome-action-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>
+              </svg>
+              <span>Find in Files…</span>
+            </span>
+            <kbd>Ctrl Shift F</kbd>
+          </button>
+
+          <button
+            type="button"
+            className="welcome-action-item"
+            onClick={onTerminal}
+            disabled={!workspacePath}
+            title={workspacePath ? "Open terminal" : "Open a folder first"}
+          >
+            <span className="welcome-action-left">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+              </svg>
+              <span>Open Terminal</span>
+            </span>
+            <kbd>Ctrl `</kbd>
+          </button>
+        </nav>
+
         {recentWorkspaces.length > 0 && <section aria-label="Recent workspaces">
           <h3 className="welcome-section-label">RECENT WORKSPACES</h3>
           {recentWorkspaces.map(({ root }) => <div key={root} className="flex items-center gap-2">
-            <button type="button" className="welcome-tool min-w-0 flex-1" disabled={isOpening} onClick={() => onReopenWorkspace?.(root)} title={root}>
+            <button type="button" className="welcome-action-item min-w-0 flex-1" disabled={isOpening} onClick={() => onReopenWorkspace?.(root)} title={root}>
               <span className="truncate">{root}</span>
             </button>
             <button type="button" disabled={isOpening} aria-label={`Remove ${root} from recent workspaces`} onClick={() => onForgetWorkspace?.(root)}>Remove</button>
           </div>)}
         </section>}
-        <div className="welcome-footnote"><span>CODE · RUNTIME · CONCURRENCY</span><span>BUILT FOR GO ↗</span></div>
-        <p className="welcome-brand-credit">Go gopher by Renee French · CC BY 4.0 · adapted for Goro</p>
+        {/* Minimal Footer */}
+        <footer className="welcome-footer">
+          <div className="flex items-center gap-2">
+            <span className="welcome-engine-tag">LOCAL WORKSPACE</span>
+          </div>
+          <span className="welcome-credit">Go gopher by Renee French</span>
+        </footer>
       </div>
     </div>
   );

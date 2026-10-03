@@ -17,7 +17,7 @@ type Props = {
   onOpenBranchPicker?: () => void; onOpenFile?: (path: string) => void; onOpenTerminal?: () => void;
 };
 const names: Record<string, string> = { M: "Modified", A: "Added", D: "Deleted", R: "Renamed", C: "Copied", "?": "Untracked", U: "Conflicted", T: "Type changed" };
-const button = "rounded px-1.5 py-1 text-xs hover:bg-(--bg-hover) focus-visible:outline focus-visible:outline-(--border-active) disabled:opacity-40";
+const button = "rounded-none px-2 py-0.5 text-xs border border-[var(--border-subtle)] bg-[var(--surface0)]/50 text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] hover:border-[var(--border-muted)] focus-visible:outline focus-visible:outline-[var(--focus-ring)] transition-colors duration-100 disabled:opacity-40";
 
 export default function SourceControlPanel(props: Props) {
   const { values: settings } = useSettings();
@@ -31,6 +31,7 @@ export default function SourceControlPanel(props: Props) {
   const [conflictPath, setConflictPath] = useState<string | null>(null);
   const [branchName, setBranchName] = useState("");
   const [creatingBranch, setCreatingBranch] = useState(false);
+  const [showMoreActions, setShowMoreActions] = useState(false);
   const remotes = git.status?.remotes ?? [];
   const remote = remotes.includes(chosenRemote) ? chosenRemote : remotes[0] ?? "";
   const targetBranch = git.status?.upstream?.startsWith(`${remote}/`) ? git.status.upstream.slice(remote.length + 1) : git.status?.branch;
@@ -58,26 +59,233 @@ export default function SourceControlPanel(props: Props) {
       </li>)}</ul>
     </details>;
   return <div className="flex h-full min-h-0 flex-col text-(--text)">
-    <header className="border-b border-(--border-muted) px-3 py-2">
-      <div className="flex items-center justify-between"><h2 className="text-[11px] font-semibold uppercase tracking-wide">Source Control</h2><button className={button} aria-label="Refresh Source Control" disabled={git.loading || git.busy} onClick={() => void git.refresh()}>↻</button></div>
-      <div className="mt-1 flex items-center justify-between gap-1 text-xs"><span className="truncate">{git.status ? git.status.branch ?? `Detached HEAD @ ${git.status.head?.slice(0, 8) ?? "unknown"}` : props.snapshot?.branch ?? "Repository unavailable"}</span>{git.status?.upstream && <span title={git.status.upstream}>↑{git.status.ahead} ↓{git.status.behind}</span>}</div>
-      <div className="mt-2 flex gap-1">{props.branchSnapshot && props.onOpenBranchPicker && <button className={button} disabled={git.busy} onClick={props.onOpenBranchPicker}>Switch branch</button>}{props.onOpenTerminal && <button className={button} onClick={props.onOpenTerminal}>Open terminal</button>}</div>
-      {remotes.length > 0 && <div className="mt-2 flex flex-wrap items-center gap-1"><select aria-label="Git remote" value={remote} disabled={git.busy} onChange={(event) => setChosenRemote(event.target.value)} className="max-w-24 bg-(--mantle) text-xs">{remotes.map((name) => <option key={name}>{name}</option>)}</select>
-        <button className={button} disabled={git.busy || !props.transaction} onClick={() => void git.mutate({ kind: "fetch", remote })}>Fetch</button>
-        <button className={button} disabled={disabled || !targetBranch} onClick={() => { if (targetBranch && window.confirm(`Fast-forward current branch from ${remote}/${targetBranch}? Your buffer will be saved first.`)) void git.mutate({ kind: "pull", remote, branch: targetBranch }); }}>Pull (FF only)</button>
-        <button className={button} disabled={disabled || !targetBranch || !git.status?.head} onClick={() => { if (targetBranch && window.confirm(`Push current HEAD to ${remote}/${targetBranch}${git.status?.upstream ? "" : " and set upstream"}?`)) void git.mutate({ kind: "push", remote, branch: targetBranch, setUpstream: !git.status?.upstream }); }}>Push</button>
-      </div>}
-      <button className={button} disabled={disabled || !git.status?.head} onClick={() => setCreatingBranch(!creatingBranch)}>Create branch</button>
-      {creatingBranch && <form className="mt-2 flex flex-wrap gap-1" onSubmit={async (event) => { event.preventDefault(); if (await git.mutate({ kind: "createBranch", name: branchName, start: null })) { setBranchName(""); setCreatingBranch(false); } }}>
-        <input aria-label="New branch name" value={branchName} disabled={git.busy} onChange={(event) => setBranchName(event.target.value)} className="min-w-0 flex-1 border border-(--border-muted) bg-(--crust) px-2 text-xs" />
-        <button className={button} disabled={disabled || !branchName}>Create from HEAD (stay here)</button>
-      </form>}
+    <header className="border-b border-[var(--border-structural)] bg-[var(--surface-solid)] px-3 py-2 text-xs">
+      {/* Row 1: Title + Action Icons Toolbar */}
+      <div className="flex items-center justify-between gap-1">
+        <h2 className="text-[11px] font-semibold uppercase tracking-wider text-[var(--subtext1)]">Source Control</h2>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            className="flex size-6 items-center justify-center text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-40"
+            aria-label="Refresh Source Control"
+            title="Refresh Source Control"
+            disabled={git.loading || git.busy}
+            onClick={() => void git.refresh()}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={git.loading || git.busy ? "animate-spin" : ""}>
+              <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+              <path d="M3 3v5h5"/>
+              <path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/>
+              <path d="M16 16h5v5"/>
+            </svg>
+          </button>
+
+          {remotes.length > 0 && (
+            <>
+              <button
+                type="button"
+                className="flex size-6 items-center justify-center text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-40"
+                aria-label="Pull (FF only)"
+                title={targetBranch ? `Fast-forward pull from ${remote}/${targetBranch}` : "Pull (FF only)"}
+                disabled={disabled || !targetBranch}
+                onClick={() => {
+                  if (targetBranch && window.confirm(`Fast-forward current branch from ${remote}/${targetBranch}? Your buffer will be saved first.`)) {
+                    void git.mutate({ kind: "pull", remote, branch: targetBranch });
+                  }
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 5v14M19 12l-7 7-7-7"/>
+                </svg>
+              </button>
+
+              <button
+                type="button"
+                className="flex size-6 items-center justify-center text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors disabled:opacity-40"
+                aria-label="Push"
+                title={targetBranch ? `Push to ${remote}/${targetBranch}` : "Push"}
+                disabled={disabled || !targetBranch || !git.status?.head}
+                onClick={() => {
+                  if (targetBranch && window.confirm(`Push current HEAD to ${remote}/${targetBranch}${git.status?.upstream ? "" : " and set upstream"}?`)) {
+                    void git.mutate({ kind: "push", remote, branch: targetBranch, setUpstream: !git.status?.upstream });
+                  }
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 19V5M5 12l7-7 7 7"/>
+                </svg>
+              </button>
+            </>
+          )}
+
+          <button
+            type="button"
+            className={`flex size-6 items-center justify-center transition-colors disabled:opacity-40 ${
+              creatingBranch ? "bg-[var(--surface1)] text-[var(--text)]" : "text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]"
+            }`}
+            aria-label="Create branch"
+            title="Create branch"
+            disabled={disabled || !git.status?.head}
+            onClick={() => setCreatingBranch(!creatingBranch)}
+          >
+            <span className="sr-only">Create branch</span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
+            </svg>
+          </button>
+
+          {props.onOpenTerminal && (
+            <button
+              type="button"
+              className="flex size-6 items-center justify-center text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)] transition-colors"
+              aria-label="Open terminal"
+              title="Open terminal"
+              onClick={props.onOpenTerminal}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/>
+              </svg>
+            </button>
+          )}
+
+          {remotes.length > 0 && (
+            <button
+              type="button"
+              className={`flex size-6 items-center justify-center transition-colors ${
+                showMoreActions ? "bg-[var(--surface1)] text-[var(--text)]" : "text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]"
+              }`}
+              aria-label="More git actions"
+              title="More actions (Remote, Fetch)"
+              onClick={() => setShowMoreActions(!showMoreActions)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/>
+              </svg>
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Row 2: Branch Selector Pill + Upstream Ahead/Behind Status */}
+      <div className="mt-1.5 flex items-center justify-between gap-1.5 min-w-0">
+        <button
+          type="button"
+          onClick={props.onOpenBranchPicker}
+          disabled={git.busy || !props.branchSnapshot}
+          className="flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1 bg-[var(--surface0)]/60 hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)] hover:border-[var(--border-muted)] text-xs text-[var(--text)] transition-colors truncate"
+          title={git.status ? (git.status.branch ?? "Detached HEAD") : "Repository unavailable"}
+          aria-label={git.status ? `Current branch: ${git.status.branch ?? "Detached HEAD"}. Switch branch.` : "Switch branch"}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-[var(--blue)]">
+            <line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 0 1-9 9"/>
+          </svg>
+          <span className="font-mono font-medium truncate">
+            {git.status ? (git.status.branch ?? `HEAD @ ${git.status.head?.slice(0, 7) ?? "unknown"}`) : (props.snapshot?.branch ?? "No repository")}
+          </span>
+          <span className="shrink-0 text-[10px] text-[var(--overlay1)] ml-auto">▾</span>
+        </button>
+
+        {git.status?.upstream && (git.status.ahead > 0 || git.status.behind > 0) && (
+          <span className="shrink-0 flex items-center gap-1 font-mono text-[10px] px-1.5 py-1 bg-[var(--surface0)]/50 border border-[var(--border-subtle)] text-[var(--subtext1)]" title={git.status.upstream}>
+            {git.status.ahead > 0 && <span className="text-[var(--blue)]">↑{git.status.ahead}</span>}
+            {git.status.behind > 0 && <span className="text-[var(--yellow)]">↓{git.status.behind}</span>}
+          </span>
+        )}
+      </div>
+
+      {/* Row 3: Collapsible More Actions (Remote, Fetch) */}
+      {showMoreActions && remotes.length > 0 && (
+        <div className="mt-2 flex items-center gap-1.5 pt-1.5 border-t border-[var(--border-subtle)]">
+          <select
+            aria-label="Git remote"
+            value={remote}
+            disabled={git.busy}
+            onChange={(event) => setChosenRemote(event.target.value)}
+            className="min-w-0 flex-1 bg-[var(--mantle)] border border-[var(--border-subtle)] px-2 py-0.5 text-xs text-[var(--text)] outline-none"
+          >
+            {remotes.map((name) => <option key={name}>{name}</option>)}
+          </select>
+          <button
+            type="button"
+            className={button}
+            disabled={git.busy || !props.transaction}
+            onClick={() => void git.mutate({ kind: "fetch", remote })}
+          >
+            Fetch
+          </button>
+        </div>
+      )}
+
+      {/* Row 4: Collapsible Branch Creation */}
+      {creatingBranch && (
+        <form
+          className="mt-2 flex flex-col gap-1.5 pt-1.5 border-t border-[var(--border-subtle)]"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (await git.mutate({ kind: "createBranch", name: branchName, start: null })) {
+              setBranchName("");
+              setCreatingBranch(false);
+            }
+          }}
+        >
+          <div className="flex items-center gap-1">
+            <input
+              aria-label="New branch name"
+              placeholder="Branch name…"
+              value={branchName}
+              disabled={git.busy}
+              onChange={(event) => setBranchName(event.target.value)}
+              className="min-w-0 flex-1 border border-[var(--border-muted)] bg-[var(--crust)] px-2 py-1 text-xs outline-none focus:border-[var(--border-active)]"
+              autoFocus
+            />
+            <button
+              type="button"
+              onClick={() => setCreatingBranch(false)}
+              className="px-1.5 py-1 text-xs text-[var(--overlay1)] hover:text-[var(--text)]"
+              title="Cancel"
+            >
+              ✕
+            </button>
+          </div>
+          <button
+            type="submit"
+            className={`${button} w-full py-1 text-center font-medium bg-[var(--surface1)]`}
+            disabled={disabled || !branchName.trim()}
+          >
+            Create from HEAD (stay here)
+          </button>
+        </form>
+      )}
     </header>
-    {props.workspacePath && <div className="flex gap-2 border-b border-(--border-muted) px-3 py-1"><button className={button} aria-pressed={view === "changes"} onClick={() => setView("changes")}>Changes</button><button className={button} aria-pressed={view === "graph"} onClick={() => { setHistoryPath(null); setView("graph"); }}>Git Graph</button><button className={button} aria-pressed={view === "stashes"} onClick={() => setView("stashes")}>Stashes</button></div>}
+    {props.workspacePath && (
+      <div className="flex border-b border-[var(--border-structural)] bg-[var(--surface0)]/40 p-1 gap-1">
+        <button
+          className="flex-1 rounded-none px-2 py-1 text-xs font-medium text-[var(--subtext0)] transition-colors hover:text-[var(--text)] aria-pressed:bg-[var(--surface-solid)] aria-pressed:text-[var(--text)] aria-pressed:shadow-sm border border-transparent aria-pressed:border-[var(--border-subtle)]"
+          aria-pressed={view === "changes"}
+          onClick={() => setView("changes")}
+        >
+          Changes
+        </button>
+        <button
+          className="flex-1 rounded-none px-2 py-1 text-xs font-medium text-[var(--subtext0)] transition-colors hover:text-[var(--text)] aria-pressed:bg-[var(--surface-solid)] aria-pressed:text-[var(--text)] aria-pressed:shadow-sm border border-transparent aria-pressed:border-[var(--border-subtle)]"
+          aria-pressed={view === "graph"}
+          onClick={() => { setHistoryPath(null); setView("graph"); }}
+        >
+          Git Graph
+        </button>
+        <button
+          className="flex-1 rounded-none px-2 py-1 text-xs font-medium text-[var(--subtext0)] transition-colors hover:text-[var(--text)] aria-pressed:bg-[var(--surface-solid)] aria-pressed:text-[var(--text)] aria-pressed:shadow-sm border border-transparent aria-pressed:border-[var(--border-subtle)]"
+          aria-pressed={view === "stashes"}
+          onClick={() => setView("stashes")}
+        >
+          Stashes
+        </button>
+      </div>
+    )}
     {view === "graph" && props.workspacePath ? <GitGraph key={`${props.workspacePath}:${historyPath ?? ""}`} root={props.workspacePath} initialFilePath={historyPath} /> : view === "stashes" && props.workspacePath ? <StashPanel root={props.workspacePath} revision={props.revision ?? 0} disabled={disabled} busy={git.busy} error={git.error} output={git.output} mutate={git.mutate} cancel={git.cancel} /> : <>
     {git.status && <div className="border-b border-(--border-subtle) p-2">
       <label className="sr-only" htmlFor="git-commit-message">Commit message</label>
-      <textarea id="git-commit-message" value={message} onChange={(event) => setMessage(event.target.value)} disabled={git.busy} rows={3} placeholder="Message for staged changes" className="w-full resize-y rounded border border-(--border-muted) bg-(--crust) px-2 py-1.5 text-xs outline-none focus:border-(--border-active)" />
+      <textarea id="git-commit-message" value={message} onChange={(event) => setMessage(event.target.value)} disabled={git.busy} rows={3} placeholder="Message for staged changes" className="w-full resize-none rounded-none border border-(--border-muted) bg-(--crust) px-2 py-1.5 text-xs outline-none focus:border-(--border-active)" />
       <button className={`${button} mt-1 w-full border border-(--border-muted)`} disabled={commitDisabled || !staged.length || !message.trim()} onClick={async () => { if (await git.mutate({ kind: "commit", message })) setMessage(""); }}>{git.status?.operation === "merge" ? "Commit merge" : "Commit staged"} ({staged.length})</button>
       {!staged.length && <p className="mt-1 text-[11px] text-(--overlay1)">Stage files explicitly before committing.</p>}
     </div>}

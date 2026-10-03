@@ -27,7 +27,7 @@ function Dialog({
   ariaLabel,
   ariaLabelledBy,
   style,
-  className,
+  className = "fixed inset-0 z-50 m-0 flex h-dvh w-full items-center justify-center bg-black/45 backdrop-blur-[8px] p-4",
   panelClassName,
   closeOnBackdrop = true,
   children,

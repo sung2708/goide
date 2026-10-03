@@ -88,13 +88,13 @@ export default function DebugFailureDialog({
         role="dialog"
         aria-modal="true"
         aria-label={title}
-        className="rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] p-4 shadow-[var(--panel-shadow)]"
+        className="rounded-none border border-[var(--border-muted)] bg-[var(--mantle)] p-4 shadow-[var(--panel-shadow)]"
         onClick={(event) => event.stopPropagation()}
       >
         <h3 className="text-sm font-semibold text-[var(--text)]">{title}</h3>
         <p className="mt-2 text-sm text-[var(--subtext0)]">{message}</p>
         {details && (
-          <pre className="mt-3 overflow-auto rounded-md bg-[var(--crust)] p-3 text-xs text-[var(--subtext1)]">
+          <pre className="mt-3 overflow-auto rounded-none bg-[var(--crust)] p-3 text-xs text-[var(--subtext1)]">
             {details}
           </pre>
         )}
@@ -103,7 +103,7 @@ export default function DebugFailureDialog({
             ref={closeButtonRef}
             type="button"
             onClick={onClose}
-            className="rounded border border-[var(--border-subtle)] px-3 py-1 text-sm text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
+            className="rounded-none border border-[var(--border-subtle)] px-3 py-1 text-sm text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
           >
             Close
           </button>

@@ -61,15 +61,15 @@ function BottomPanel({
   const showHidePanel = activeTab === "logs" && onClose !== undefined;
 
   const tabBase =
-    "rounded-sm px-3 py-1 text-[12px] font-semibold transition-colors duration-100";
-  const tabActive = "bg-[var(--bg-active)] text-[var(--lavender)]";
+    "rounded px-2.5 py-1 text-[11px] font-medium transition-colors duration-100";
+  const tabActive = "bg-[var(--surface1)] text-[var(--text)] font-semibold shadow-xs";
   const tabInactive =
-    "text-[var(--overlay1)] hover:text-[var(--subtext1)] hover:bg-[var(--bg-hover)]";
+    "text-[var(--subtext0)] hover:text-[var(--text)] hover:bg-[var(--bg-hover)]";
   return (
     <section
       id="bottom-panel"
       aria-label="Bottom panel"
-      className="relative z-40 flex h-full min-h-44 flex-col border-t border-(--border-muted) bg-(--crust)"
+      className="relative z-40 flex h-full min-h-44 flex-col bg-(--crust)"
       data-testid="bottom-panel"
     >
       {/* Header: tabs + logs-scoped action buttons */}
