@@ -2,6 +2,8 @@
 
 This document outlines the engineering and product roadmap for Goro leading toward its first production-stable 1.0 release.
 
+Use [Release Readiness](RELEASE_READINESS.md) for the current consolidated release decision. The dated milestones below are historical checkpoints; later entries may supersede their remaining-work lists. Unchecked acceptance items do not imply that their implementation is entirely absent.
+
 > [!NOTE]
 > Historical `v1.x` prototype tags do not indicate product maturity. Goro is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
 
@@ -145,10 +147,10 @@ Implementation order is baseline green, data safety, process ownership, command/
 - [ ] Complete data-safety validation for application shutdown, branch switching, external changes, and Explorer rename/delete. Backend workspace-root and symlink-entry protections are covered; frontend conflict/dirty-buffer workflows remain.
 - [x] Workspace-wide search and replace (`SearchPanel`).
 - [x] **P0** Git branch switching with dirty-state dialog: save before inspecting Git/checkout, resave on confirmation, block failed/in-flight saves and late edits, lock mutation, reload without replaying previous-branch content, and retire missing destination files (branch-safety regression suite). This does not complete every document transition.
-- [ ] **P0** Save All dirty writable documents with per-file/partial failure reporting, removed-file and permission handling; expose through commands. Current editor is single-document, so multi-document ownership comes first.
+- [ ] **P0** Save All dirty writable documents with per-file/partial failure reporting, removed-file and permission handling; expose through commands. Multi-document ownership and Save All are implemented; complete native preservation acceptance remains required.
 - [ ] **P0** Explicit Save/Don't Save/Cancel for tab/window/workspace/quit and Explorer deletion/rename/move where appropriate; preserve edits and block unsafe transitions.
 - [ ] **P0** External modification/deletion/rename reconciliation: clean buffers safely reload, dirty buffers enter conflict. Compare/reload/keep/cancel must never silently overwrite changed disk content.
-- [ ] **P0** Cached fuzzy Quick Open with recent ranking, keyboard/Enter/Escape, ignore rules, cancellation/invalidation and large-workspace responsiveness. Current Ctrl+P picker filters a per-open scan without rescanning per keystroke; fuzzy/recent/cache requirements remain.
+- [ ] **P0** Cached fuzzy Quick Open with recent ranking, keyboard/Enter/Escape, ignore rules, cancellation/invalidation and large-workspace responsiveness. Fuzzy ranking, recent/cache and native ignore-aware indexing are implemented; complete desktop performance acceptance remains.
 - [ ] **P0** Reliable cancellable workspace search with include/exclude/ignore scope; replacement preview/counts and explicit partial failures, tested literal `$`, backslashes, Unicode and regex groups.
 - [ ] **P0** Bounded recent workspaces and safe UI-only session restore; missing/moved/denied paths must not cause startup loops. Recreate processes; never restore live handles or stale diagnostics.
 - [ ] **P1** Coherent Changes/Staged/Untracked source control, guarded binary/large/renamed/deleted diffs, stage/unstage/discard confirmation, explicit staged commits and Git error feedback. Existing branch picker remains the branch baseline.
