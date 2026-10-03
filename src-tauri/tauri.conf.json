@@ -2,10 +2,14 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Goro",
   "mainBinaryName": "Goro",
-  "version": "0.2.0-alpha.1",
+  "version": "0.2.0-alpha.2",
   "identifier": "com.sungp.goide",
   "plugins": {
-    "updater": { "pubkey": "", "requireSignedVersion": true, "allowDowngrades": false }
+    "updater": {
+      "pubkey": "",
+      "requireSignedVersion": true,
+      "allowDowngrades": false
+    }
   },
   "build": {
     "beforeDevCommand": "npm run dev",
