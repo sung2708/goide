@@ -2059,7 +2059,7 @@ function EditorShell() {
     >
       <div className="workspace-titlebar">
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
-        <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+        <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />

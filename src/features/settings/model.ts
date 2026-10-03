@@ -11,12 +11,19 @@ export type Settings = {
   "files.autoSave": "off" | "afterDelay" | "onFocusChange"; "files.autoSaveDelay": number;
   "go.formatOnSave": boolean; "go.organizeImportsOnSave": boolean;
   "terminal.fontSize": number; "appearance.theme": ThemeId;
+  "go.executablePath": string; "go.goplsPath": string; "debug.delvePath": string;
+  "git.defaultView": "changes" | "graph" | "stashes";
 };
 export type SettingKey = keyof Settings;
-type Descriptor = { key: SettingKey; type: "number" | "boolean" | "select"; group: string; label: string; scope: "application"; default: Settings[SettingKey]; validate: (value: unknown) => boolean; min?: number; max?: number; options?: readonly { id: string; label: string }[] };
+type Descriptor = { key: SettingKey; type: "number" | "boolean" | "select" | "string"; group: string; label: string; scope: "application"; default: Settings[SettingKey]; validate: (value: unknown) => boolean; min?: number; max?: number; options?: readonly { id: string; label: string }[] };
 const integer = (min: number, max: number) => (value: unknown) => typeof value === "number" && Number.isInteger(value) && value >= min && value <= max;
 const boolean = (value: unknown) => typeof value === "boolean";
+const executable = (value: unknown) => typeof value === "string" && value.length <= 4096 && !value.includes("\0");
 export const SETTING_DEFINITIONS: readonly Descriptor[] = [
+  { key: "go.executablePath", type: "string", group: "Go", label: "Go executable path (blank: automatic)", scope: "application", default: "", validate: executable },
+  { key: "go.goplsPath", type: "string", group: "Go", label: "gopls executable path (blank: automatic)", scope: "application", default: "", validate: executable },
+  { key: "debug.delvePath", type: "string", group: "Debug", label: "Delve executable path (blank: automatic)", scope: "application", default: "", validate: executable },
+  { key: "git.defaultView", type: "select", group: "Git", label: "Default Source Control view", scope: "application", default: "changes", validate: value => typeof value === "string" && ["changes", "graph", "stashes"].includes(value), options: [{ id: "changes", label: "Changes" }, { id: "graph", label: "Git Graph" }, { id: "stashes", label: "Stashes" }] },
   { key: "editor.fontSize", type: "number", group: "Editor", label: "Editor font size", scope: "application", default: 14, min: 10, max: 32, validate: integer(10, 32) },
   { key: "editor.tabSize", type: "number", group: "Editor", label: "Tab size", scope: "application", default: 4, min: 1, max: 8, validate: integer(1, 8) },
   { key: "editor.wordWrap", type: "boolean", group: "Editor", label: "Word wrap", scope: "application", default: false, validate: boolean },

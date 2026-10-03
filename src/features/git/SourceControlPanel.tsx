@@ -4,6 +4,7 @@ import type { WorkspaceBranchSnapshot, WorkspaceGitSnapshot } from "../../lib/ip
 import GitDiffView from "./GitDiffView";
 import GitGraph from "./GitGraph";
 import StashPanel from "./StashPanel";
+import { useSettings } from "../settings/useSettings";
 import ConflictEditor from "./ConflictEditor";
 import { useSourceControl, type GitTransaction } from "./useSourceControl";
 
@@ -19,9 +20,10 @@ const names: Record<string, string> = { M: "Modified", A: "Added", D: "Deleted",
 const button = "rounded px-1.5 py-1 text-xs hover:bg-(--bg-hover) focus-visible:outline focus-visible:outline-(--border-active) disabled:opacity-40";
 
 export default function SourceControlPanel(props: Props) {
+  const { values: settings } = useSettings();
   const git = useSourceControl(props.workspacePath ?? null, props.revision ?? 0, props.transaction, props.onChanged);
   const [message, setMessage] = useState("");
-  const [view, setView] = useState<"changes" | "graph" | "stashes">("changes");
+  const [view, setView] = useState<"changes" | "graph" | "stashes">(settings["git.defaultView"]);
   const [historyPath, setHistoryPath] = useState<string | null>(null);
   useEffect(() => { if (props.requestedView) { setHistoryPath(null); setView(props.requestedView.view); } }, [props.requestedView]);
   useEffect(() => { setHistoryPath(null); }, [props.workspacePath]);

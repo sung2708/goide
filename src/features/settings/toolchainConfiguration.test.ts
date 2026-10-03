@@ -1,0 +1,20 @@
+import { expect, it, vi } from "vitest";
+import { configureInOrder } from "./toolchainConfiguration";
+const configure = vi.hoisted(() => vi.fn());
+vi.mock("../../lib/ipc/client", () => ({ configureToolchainPaths: configure }));
+it("serializes acknowledgements, skips retired preferences and recovers after rejection", async () => {
+  const paths = { go: "", gopls: "old", dlv: "" };
+  let finish!: (response: unknown) => void;
+  configure.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  configure.mockResolvedValue({ ok: true });
+  const first = configureInOrder(paths, () => true);
+  await vi.waitFor(() => expect(configure).toHaveBeenCalledOnce());
+  const obsolete = configureInOrder({ ...paths, gopls: "obsolete" }, () => false);
+  const current = configureInOrder({ ...paths, gopls: "current" }, () => true);
+  expect(configure).toHaveBeenCalledOnce(); finish({ ok: true });
+  await first; expect(await obsolete).toBeNull(); await current;
+  expect(configure.mock.calls.map(call => call[0].gopls)).toEqual(["old", "current"]);
+  configure.mockRejectedValueOnce(new Error("IPC failed"));
+  await expect(configureInOrder(paths, () => true)).rejects.toThrow("IPC failed");
+  await expect(configureInOrder(paths, () => true)).resolves.toEqual({ ok: true });
+});

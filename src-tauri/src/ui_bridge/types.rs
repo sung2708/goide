@@ -161,6 +161,7 @@ pub struct RuntimeAvailabilityResponseDto {
     pub runtime_availability: String,
 }
 
+pub use crate::integration::toolchain::paths::ToolPaths as ToolPathsDto;
 pub use crate::integration::toolchain::ToolAvailability as ToolAvailabilityDto;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
