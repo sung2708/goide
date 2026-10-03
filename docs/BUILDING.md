@@ -1,6 +1,6 @@
-# Building GoIDE
+# Building Goro
 
-This guide provides instructions for building GoIDE from source in both development and production release modes across all supported platforms.
+This guide provides instructions for building Goro from source in both development and production release modes across all supported platforms.
 
 ---
 
@@ -26,7 +26,7 @@ Windows builds require the **Microsoft Visual C++ (MSVC)** toolchain:
 > [!WARNING]
 > **Windows Linker & Zig Quirks**:
 > On Windows, Cargo can fail if Git's `usr/bin/link.exe` or a Zig compiler override is picked up in `PATH`.
-> To prevent this, GoIDE includes `scripts/tauri-wrapper.mjs` which automatically cleans conflicting Zig environment variables.
+> To prevent this, Goro includes `scripts/tauri-wrapper.mjs` which automatically cleans conflicting Zig environment variables.
 > Alternatively, invoke the build from a Visual Studio Developer Command Prompt or use the helpers from PowerShell:
 > ```powershell
 > .\scripts\cargo_check_msvc.cmd
@@ -74,7 +74,7 @@ sudo apt-get install -y --no-install-recommends \
 
 ## 3. Development Build
 
-To run GoIDE locally in hot-reloading development mode:
+To run Goro locally in hot-reloading development mode:
 
 ```bash
 # 1. Install frontend packages

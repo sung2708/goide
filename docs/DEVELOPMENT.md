@@ -1,6 +1,6 @@
-# GoIDE Development Guidelines
+# Goro Development Guidelines
 
-This document outlines the standard development environment, workflows, and quality gates for contributors and maintainers working on GoIDE.
+This document outlines the standard development environment, workflows, and quality gates for contributors and maintainers working on Goro.
 
 ---
 
@@ -44,7 +44,7 @@ main ──────────┬──────────────
 
 ## 3. Commit Message Standards
 
-GoIDE strictly adheres to [Conventional Commits v1.0.0](https://www.conventionalcommits.org/).
+Goro strictly adheres to [Conventional Commits v1.0.0](https://www.conventionalcommits.org/).
 
 ### Format
 ```

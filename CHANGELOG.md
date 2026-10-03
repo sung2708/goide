@@ -7,11 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 > [!NOTE]
 > Historical tags (`v1.0.0`, `v1.0.1`, `v1.0.2`, `v1.1`) represent early exploratory prototypes.
-> As detailed in [docs/VERSIONING.md](docs/VERSIONING.md), GoIDE is establishing a formal pre-1.0 stabilization track (`0.x.y`) leading toward its first production-stable 1.0 release.
+> As detailed in [docs/VERSIONING.md](docs/VERSIONING.md), Goro is establishing a formal pre-1.0 stabilization track (`0.x.y`) leading toward its first production-stable 1.0 release.
 
 ---
 
 ## [Unreleased]
+
+### Changed
+- Rename the public product to **Goro**, inspired by goroutines, with the brand line **Understand Go in motion.** Repository URLs, npm/Cargo package names, and the application identifier remain `goide`.
+- Replace legacy branding with the runtime gopher, original Goro wordmark, light/dark/monochrome logos, simplified favicons, and native application icons. Update README, product/brand documentation, welcome screen, window title, and release names.
 
 ### Added
 - Kott-inspired graphite workbench styling, an editorial welcome screen, and a title-bar file picker shortcut.
@@ -24,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Preserve dirty buffers before Git status/checkout and on commit/stash/discard confirmation, block failed/in-flight saves and late edits, and reload destination files without replaying previous-branch edits. Retire unavailable destination files, reload after failed Git actions, and require active run/debug sessions to stop before switching. Document-safety and native lifecycle gaps listed above still block a readiness claim.
 - Derive and validate a numeric Windows MSI version separately from application SemVer, allowing Alpha builds to package without dropping prerelease labels from metadata or artifact names.
-- Set `mainBinaryName` explicitly so the packaged Windows application is `GoIDE.exe`; `productName` alone only sets the display name.
+- Set `mainBinaryName` explicitly so the packaged Windows application is `Goro.exe`; `productName` alone only sets the display name.
 - Encode gopls file URIs correctly, distinguish server requests from responses, bound incoming messages, and release language-server processes/readers on session replacement and app exit.
 - Surface completion failures instead of treating a failed CLI fallback as an empty successful result.
 - Release failed gopls sessions so subsequent requests can initialize a fresh server and resynchronize unsaved content.

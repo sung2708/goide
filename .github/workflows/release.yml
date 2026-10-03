@@ -225,7 +225,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.validate-and-plan.outputs.tag }}
-          name: GoIDE ${{ needs.validate-and-plan.outputs.tag }}
+          name: Goro ${{ needs.validate-and-plan.outputs.tag }}
           body_path: release-notes.md
           prerelease: ${{ needs.validate-and-plan.outputs.is_prerelease == 'true' }}
           draft: false

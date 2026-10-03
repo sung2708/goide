@@ -1,6 +1,6 @@
-# GoIDE Release Runbook
+# Goro Release Runbook
 
-This document defines the complete operational procedure for preparing, validating, publishing, and verifying releases of GoIDE.
+This document defines the complete operational procedure for preparing, validating, publishing, and verifying releases of Goro.
 
 The workflow initializes MSVC on Windows, runs Rust tests as well as frontend tests, explicitly builds each matrix target, and uses Bash for artifact packaging on every runner. The Intel macOS job uses `macos-15-intel`, replacing the retired `macos-13` image ([GitHub runner retirement notice](https://github.com/actions/runner-images/issues/13046)). These configuration checks and local Windows builds do not establish that hosted Linux/macOS builds, installation, signing, or publication have succeeded.
 
@@ -87,7 +87,7 @@ git commit -m "chore(release): prepare v<NEW_VERSION>"
 git push origin main
 
 # Create annotated Git tag
-git tag -a v<NEW_VERSION> -m "GoIDE v<NEW_VERSION>"
+git tag -a v<NEW_VERSION> -m "Goro v<NEW_VERSION>"
 git push origin v<NEW_VERSION>
 ```
 
@@ -101,12 +101,12 @@ Once the workflow completes:
 1. Verify the GitHub Release at `https://github.com/sung2708/goide/releases/tag/v<NEW_VERSION>`.
 2. Ensure the release is correctly marked as **Prerelease** (for `-alpha`, `-beta`, `-rc`) or **Latest**.
 3. Verify that all expected platform bundles follow the canonical naming convention:
-   - Windows Setup: `goide-v<VER>-windows-x86_64-setup.exe`
-   - Windows MSI: `goide-v<VER>-windows-x86_64.msi`
-   - macOS Apple Silicon: `goide-v<VER>-macos-aarch64.dmg`
-   - macOS Intel: `goide-v<VER>-macos-x86_64.dmg`
-   - Linux AppImage: `goide-v<VER>-linux-x86_64.AppImage`
-   - Linux Debian: `goide-v<VER>-linux-x86_64.deb`
+   - Windows Setup: `goro-v<VER>-windows-x86_64-setup.exe`
+   - Windows MSI: `goro-v<VER>-windows-x86_64.msi`
+   - macOS Apple Silicon: `goro-v<VER>-macos-aarch64.dmg`
+   - macOS Intel: `goro-v<VER>-macos-x86_64.dmg`
+   - Linux AppImage: `goro-v<VER>-linux-x86_64.AppImage`
+   - Linux Debian: `goro-v<VER>-linux-x86_64.deb`
    - Checksums: `SHA256SUMS.txt`
 4. Confirm that `SHA256SUMS.txt` matches the final published filenames and verify hashes.
 
@@ -118,21 +118,21 @@ All distributable artifacts MUST use deterministic, human-readable filenames. Ge
 
 ### Canonical Pattern
 ```
-goide-v{VERSION}-{PLATFORM}-{ARCH}.{EXT}
+goro-v{VERSION}-{PLATFORM}-{ARCH}.{EXT}
 ```
 Or for installer formats requiring package disambiguation:
 ```
-goide-v{VERSION}-{PLATFORM}-{ARCH}-{PACKAGE}.{EXT}
+goro-v{VERSION}-{PLATFORM}-{ARCH}-{PACKAGE}.{EXT}
 ```
 
 ### Normalization Rules
 - **Platform**: `windows`, `macos`, `linux`
 - **Architecture**: `x86_64`, `aarch64`
-- **Prerelease preservation**: Tags such as `alpha.1`, `beta.2`, `rc.1` are preserved exactly in the filename (e.g. `goide-v0.1.0-beta.2-windows-x86_64-setup.exe`).
+- **Prerelease preservation**: Tags such as `alpha.1`, `beta.2`, `rc.1` are preserved exactly in the filename (e.g. `goro-v0.1.0-beta.2-windows-x86_64-setup.exe`).
 
 ### Windows Executable Naming vs. Distribution Artifact
-- **Distribution Artifact**: `goide-v{VERSION}-windows-x86_64-setup.exe`
-- **Installed Executable**: `GoIDE.exe`
+- **Distribution Artifact**: `goro-v{VERSION}-windows-x86_64-setup.exe`
+- **Installed Executable**: `Goro.exe`
 - Tauri `mainBinaryName` sets the executable filename; `productName` sets the display name and does not rename Cargo's output by itself.
 - The version, platform, and architecture identifiers apply exclusively to distribution artifacts, NOT the application executable installed on the user's system.
 
@@ -177,3 +177,13 @@ If a critical flaw or packaging corruption is discovered immediately after tag p
    - Resolve the issue on `main`.
    - Bump to a new patch or prerelease version (`0.x.y+1` or `0.x.y-alpha.N+1`).
    - Push the new tag to trigger a clean release pipeline.
+
+## Product branding in release assets
+
+The repository remains `goide`; public packages and the installed application use **Goro**. The packaging script selects bundle filenames matching the configured product name and requested version, so leftover GoIDE installers or older Goro bundles cannot be republished under the new name. Windows packages install `Goro.exe`.
+
+Verify artifact selection with:
+
+```sh
+node --test scripts/package-artifacts.node-test.mjs
+```

@@ -1,19 +1,19 @@
-# GoIDE Troubleshooting Guide
+# Goro Troubleshooting Guide
 
-This guide provides diagnosis and resolution steps for common issues encountered when building, running, or developing GoIDE.
+This guide provides diagnosis and resolution steps for common issues encountered when building, running, or developing Goro.
 
 ---
 
 ## 1. Toolchain & PATH Issues
 
-GoIDE runs preflight checks on startup. Missing external tools are surfaced in the status bar.
+Goro runs preflight checks on startup. Missing external tools are surfaced in the status bar.
 
 ### Issue: `go` executable not found
 - **Symptom**: Status bar indicates Go is missing; running Go files fails.
 - **Resolution**:
   - Ensure Go 1.21+ is installed from [golang.org](https://go.dev/dl/).
   - Ensure the Go binary directory (`C:\Program Files\Go\bin` on Windows, `/usr/local/go/bin` on Linux/macOS) is in your system `PATH`.
-  - Restart GoIDE or your terminal after updating `PATH`.
+  - Restart Goro or your terminal after updating `PATH`.
 
 ### Issue: `gopls` language server not found
 - **Symptom**: Autocompletion, hover hints, and LSP diagnostics do not appear.
@@ -41,7 +41,7 @@ GoIDE runs preflight checks on startup. Missing external tools are surfaced in t
 - **Symptom**: `cargo build` or `npm run tauri build` fails with linker errors like `unrecognized option '/DEBUG'` or errors from Git's `usr/bin/link.exe`.
 - **Cause**: Git for Windows includes a Unix `link` utility in its `usr/bin` folder, or an active Zig installation overrides `CC`/`CXX`.
 - **Resolution**:
-  - Use GoIDE's built-in wrapper: `scripts/cargo_check_msvc.cmd` or `scripts/tauri_build_msvc.cmd`.
+  - Use Goro's built-in wrapper: `scripts/cargo_check_msvc.cmd` or `scripts/tauri_build_msvc.cmd`.
   - Alternatively, launch from a Visual Studio Developer Command Prompt:
     ```powershell
     & "C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\Tools\VsDevCmd.bat" -arch=x64
@@ -81,7 +81,7 @@ GoIDE runs preflight checks on startup. Missing external tools are surfaced in t
 
 ## 5. Filesystem Sync Fallback
 
-### Issue: File changes made outside GoIDE do not update Explorer
+### Issue: File changes made outside Goro do not update Explorer
 - **Symptom**: External file edits are delayed or missing in the file tree.
 - **Behavior**: The desktop app registers a native watcher and falls back to 900 ms polling if native setup fails or the native watcher reports an error. Polling compares entry type, file size, and modification time. Startup/subscription failures appear in the workbench; backend scan errors are logged without treating inaccessible files as deleted.
 - **Limits**: `.git`, `node_modules`, `target`, and `dist` are excluded from sync scans. Links are not traversed. Workspaces exceeding 100,000 scanned entries or 256 directory levels report a startup error. Browser preview has no native watcher. A polling edit preserving both size and modification time can be missed; Explorer sync does not reload active document contents.

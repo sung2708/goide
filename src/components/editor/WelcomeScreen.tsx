@@ -17,9 +17,9 @@ export default function WelcomeScreen({
         <p className="welcome-eyebrow"><span className="welcome-dot" /> A WORKSPACE FOR GO</p>
         <h2 className="welcome-wordmark">
           <img className="welcome-mascot" src="/brand/mascot.svg" alt="" width="104" height="104" />
-          GoIDE
+          Goro
         </h2>
-        <p className="welcome-tagline">Write with clarity.<br /><span>See what runs.</span></p>
+        <p className="welcome-tagline">Understand Go in motion.</p>
         <div className="welcome-grid">
           <section aria-label="Start working">
             <h3 className="welcome-section-label">01 / START</h3>
@@ -46,7 +46,7 @@ export default function WelcomeScreen({
           </section>
         </div>
         <div className="welcome-footnote"><span>CODE · RUNTIME · CONCURRENCY</span><span>BUILT FOR GO ↗</span></div>
-        <p className="welcome-brand-credit">Go gopher by Renee French · CC BY 4.0 · adapted for GoIDE</p>
+        <p className="welcome-brand-credit">Go gopher by Renee French · CC BY 4.0 · adapted for Goro</p>
       </div>
     </div>
   );

@@ -1,6 +1,6 @@
-# GoIDE Documentation Directory
+# Goro Documentation Directory
 
-Welcome to the GoIDE engineering and product documentation. This directory provides comprehensive guides for users, contributors, and maintainers.
+Welcome to the Goro engineering and product documentation. This directory provides comprehensive guides for users, contributors, and maintainers.
 
 ---
 
@@ -36,3 +36,7 @@ We maintain documentation integrity:
 - Documentation reflects the **actual implementation** in code. Non-existent functionality is never claimed as implemented.
 - We clearly distinguish between **Implemented**, **Experimental**, and **Planned** capabilities.
 - Ephemeral AI agent scratchpads, raw prompt histories, and intermediate planning documents are strictly excluded from git tracking.
+
+## Brand identity
+
+The product is **Goro**; repository paths and GitHub URLs remain **goide**. See [Brand & Artwork](BRAND.md) for logos, app icons, color tokens, licensing, and icon export.
