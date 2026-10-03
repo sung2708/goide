@@ -491,3 +491,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered on Windows: Run and Delve allocate owned jobs before spawning suspended children. Registration and captured startup cancellation checks precede resumption of the pinned initial thread. Async failure or cancellation retains the original UUID, process handle and job in a retry pool until both root and descendants are confirmed retired.
 - Delivered: Stop/shutdown/debugger retry includes abandoned async owners; a cancelled cleanup future returns authority to that pool. SDK tools fail closed while async cleanup is unconfirmed. Existing Unix behavior is unchanged.
 - Remaining: atomic PTY registration, Unix process-group identity/platform acceptance, recent workspaces/session restore, remaining P0 reliability and complete Git/addendum requirements. Native window/installer/manual performance acceptance is NOT RUN; no release/tag is authorized.
+
+
+## Atomic Windows PTY startup checkpoint (2026-10-03)
+
+- Delivered: the scoped Windows terminal Job exists before shell creation and is assigned atomically through CreateProcess job attributes. There is no spawn-then-assign project execution interval. The local portable-pty patch preserves upstream license/provenance and other platforms' behavior.
+- Delivered: terminal teardown confirms both the original root and an empty scoped Job. Failures and abandoned creation retain process/job/UUID authority for retry; new terminal creation, SDK preflight and shutdown participate in retained cleanup. Reader/store ownership remains in the existing lifecycle path.
+- Remaining: Unix process-group identity/platform acceptance, recent workspaces/session restore, remaining P0 reliability and complete Git/addendum requirements. Native window/installer/manual performance acceptance is NOT RUN; no release/tag is authorized.

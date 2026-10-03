@@ -468,6 +468,12 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
             return ApiResponse::err("shutdown_failed", &error.to_string());
         }
     }
+    match tauri::async_runtime::spawn_blocking(crate::integration::shell::retry_owned_cleanup).await
+    {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return ApiResponse::err("shutdown_failed", &error),
+        Err(error) => return ApiResponse::err("shutdown_failed", &error.to_string()),
+    }
     if let Err(error) = app.state::<FsWatchService>().stop_all() {
         return ApiResponse::err("shutdown_failed", &error.to_string());
     }

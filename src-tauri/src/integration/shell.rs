@@ -14,6 +14,7 @@ mod exit;
 mod lifecycle;
 mod owned_child;
 pub use lifecycle::dispose_shell_session_inner;
+pub use owned_child::{is_pending as owned_cleanup_pending, retry_cleanup as retry_owned_cleanup};
 
 /// Maximum number of bytes retained in a session's scrollback buffer.
 /// 256 KiB is more than enough to fill a typical terminal viewport many times.
@@ -257,8 +258,7 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             spawn_windows_shell_with_fallback(preferred_shell, |shell| {
                 let mut command = CommandBuilder::new(shell);
                 command.cwd(&cwd);
-                pair.slave
-                    .spawn_command(command)
+                owned_child::spawn(pair.slave.as_ref(), command)
                     .with_context(|| format!("failed to spawn shell `{shell}`"))
             })?;
         let shell_health = if selected_shell == preferred_shell {
@@ -273,14 +273,10 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     let (child, shell_health, selected_shell) = {
         let mut command = shell_command();
         command.cwd(&cwd);
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .context("failed to spawn shell")?;
+        let child =
+            owned_child::spawn(pair.slave.as_ref(), command).context("failed to spawn shell")?;
         (child, ShellHealthDto::Launch, "bash".to_string())
     };
-
-    let child = owned_child::own(child)?;
 
     let writer = pair
         .master

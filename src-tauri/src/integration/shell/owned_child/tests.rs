@@ -19,7 +19,6 @@ fn terminal_owner_stops_descendants_after_root_exit_without_touching_other_proce
         let start = root.join("start");
         let pid_file = root.join("pid");
         std::fs::write(&script, r#"param([string]$StartPath, [string]$PidPath)
-while (-not (Test-Path -LiteralPath $StartPath)) { Start-Sleep -Milliseconds 10 }
 $TerminalDescendant = Start-Process ping.exe -ArgumentList @('-n','90','127.0.0.1') -WindowStyle Hidden -PassThru
 Set-Content -LiteralPath $PidPath -Value $TerminalDescendant.Id
 "#).unwrap();
@@ -59,7 +58,7 @@ Set-Content -LiteralPath $PidPath -Value $TerminalDescendant.Id
         command.arg(&script);
         command.arg(&start);
         command.arg(&pid_file);
-        let mut child = own(pair.slave.spawn_command(command).unwrap()).unwrap();
+        let mut child = spawn(pair.slave.as_ref(), command).unwrap();
         drop(pair.slave);
         std::fs::write(&start, b"start").unwrap();
         let deadline = Instant::now() + Duration::from_secs(15);
@@ -106,4 +105,49 @@ Set-Content -LiteralPath $PidPath -Value $TerminalDescendant.Id
         }
         std::fs::remove_dir(root).unwrap();
     }
+}
+
+#[test]
+fn invalid_atomic_job_prevents_the_terminal_first_instruction() {
+    let root = std::env::temp_dir().join(format!("goide-pty-atomic-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let script = root.join("first.ps1");
+    let marker = root.join("marker");
+    std::fs::write(
+        &script,
+        "param([string]$Marker)\nSet-Content -LiteralPath $Marker -Value 'ran'\n",
+    )
+    .unwrap();
+    let invalid = root.join("not-a-job");
+    let handle: OwnedHandle = std::fs::File::create(&invalid).unwrap().into();
+    let pair = portable_pty::native_pty_system()
+        .openpty(portable_pty::PtySize {
+            rows: 24,
+            cols: 80,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .unwrap();
+    let mut command = portable_pty::CommandBuilder::new("powershell.exe");
+    for argument in [
+        "-NoProfile",
+        "-NonInteractive",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+    ] {
+        command.arg(argument);
+    }
+    command.arg(&script);
+    command.arg(&marker);
+    assert!(pair
+        .slave
+        .spawn_command_in_job(command, std::sync::Arc::new(handle))
+        .is_err());
+    drop(pair);
+    assert!(!marker.exists());
+    for file in [script, invalid] {
+        std::fs::remove_file(file).unwrap();
+    }
+    std::fs::remove_dir(root).unwrap();
 }
