@@ -30,7 +30,6 @@ impl Drop for Resources {
 #[derive(Debug)]
 pub struct OwnedChild {
     resources: Option<Resources>,
-    pub stdin: Option<tokio::process::ChildStdin>,
     pub stdout: Option<tokio::process::ChildStdout>,
     pub stderr: Option<tokio::process::ChildStderr>,
 }
@@ -57,7 +56,6 @@ pub async fn retry_cleanup() -> Result<(), String> {
         };
         let mut owner = OwnedChild {
             resources: Some(resources),
-            stdin: None,
             stdout: None,
             stderr: None,
         };
@@ -80,7 +78,6 @@ impl OwnedChild {
             .id()
             .ok_or("Owned child identity was already reaped")?;
         Ok(Self {
-            stdin: child.stdin.take(),
             stdout: child.stdout.take(),
             stderr: child.stderr.take(),
             resources: Some(Resources {
