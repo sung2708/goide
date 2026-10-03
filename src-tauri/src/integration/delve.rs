@@ -15,6 +15,7 @@ use tokio::time::timeout;
 const DAP_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const DAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 mod execution;
+pub mod ownership;
 #[cfg(test)]
 mod session_tests;
 use execution::Execution;
@@ -62,7 +63,7 @@ fn normalize_platform_path_for_dap(path: &str) -> String {
 
 #[derive(Debug)]
 pub struct DapProcess {
-    pub child: OwnedChild,
+    pub owner: ownership::Owner,
     pub listen_addr: SocketAddr,
 }
 
@@ -663,6 +664,10 @@ pub(crate) async fn spawn_dlv_dap_with(
         )
     })?;
 
+    ownership::retry_cleanup()
+        .await
+        .map_err(|error| anyhow!(error))?;
+
     let mut dap_command = tokio_command(command);
     #[cfg(unix)]
     dap_command.process_group(0);
@@ -684,19 +689,21 @@ pub(crate) async fn spawn_dlv_dap_with(
     // allocate an unbounded queue or block draining either pipe.
     let (tx, mut rx) = mpsc::channel::<SocketAddr>(1);
 
+    let mut readers = Vec::new();
     if let Some(reader) = stdout {
         let tx_stdout = tx.clone();
-        tokio::spawn(async move {
+        readers.push(tokio::spawn(async move {
             forward_lines(BufReader::new(reader), tx_stdout).await;
-        });
+        }));
     }
     if let Some(reader) = stderr {
         let tx_stderr = tx.clone();
-        tokio::spawn(async move {
+        readers.push(tokio::spawn(async move {
             forward_lines(BufReader::new(reader), tx_stderr).await;
-        });
+        }));
     }
     drop(tx);
+    let owner = ownership::Owner::new(child, readers);
 
     let listen_addr = timeout(DAP_READY_TIMEOUT, async move {
         if let Some(addr) = rx.recv().await {
@@ -705,16 +712,27 @@ pub(crate) async fn spawn_dlv_dap_with(
         Err(anyhow!("`dlv dap` exited before reporting listen address"))
     })
     .await
-    .context("timed out waiting for `dlv dap` listen address")??;
+    .context("timed out waiting for `dlv dap` listen address")
+    .and_then(|result| result);
+    let listen_addr = match listen_addr {
+        Ok(addr) => addr,
+        Err(error) => {
+            let cleanup = owner.stop().await;
+            return Err(match cleanup {
+                Ok(()) => error,
+                Err(cleanup) => anyhow!("{error:#}; debugger cleanup pending: {cleanup}"),
+            });
+        }
+    };
 
     if !is_local_loopback(listen_addr) {
-        child.stop().await.map_err(|error| anyhow!(error))?;
+        owner.stop().await.map_err(|error| anyhow!(error))?;
         return Err(anyhow!(
             "refusing non-local delve endpoint: {listen_addr}; expected 127.0.0.1"
         ));
     }
 
-    Ok(DapProcess { child, listen_addr })
+    Ok(DapProcess { owner, listen_addr })
 }
 
 async fn forward_lines<R>(reader: BufReader<R>, tx: mpsc::Sender<SocketAddr>)
@@ -1151,13 +1169,13 @@ mod tests {
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))
             .expect("make script executable");
 
-        let mut process =
+        let process =
             spawn_dlv_dap_with(script_path.to_str().expect("script path"), &[], &script_dir)
                 .await
                 .expect("spawn fake dlv process");
 
         assert_eq!(process.listen_addr.to_string(), "127.0.0.1:40123");
-        let _ = process.child.kill().await;
+        process.owner.stop().await.expect("stop fake DAP owner");
     }
 
     async fn read_raw_dap_message(stream: &mut tokio::net::TcpStream) -> Result<Value> {

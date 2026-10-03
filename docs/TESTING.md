@@ -274,3 +274,12 @@ PASS: 15 native Delve checks, explicitly including the installed Go/Delve fixtur
 PASS: 22 tests across EditorShell.debug and DebugFailureDialog, including waiting for observed pause state, start/stop guards and stop-error recovery. Native all-target Clippy passes without warnings.
 
 These checks do not establish complete debugger inspection, failed-stop retention or Linux/macOS acceptance; the release gate remains closed.
+
+
+## Debugger teardown retention regression (2026-10-03)
+
+Windows ownership tests cover injected Stop failure retaining the process and reader, leaving an unrelated owned process alive, abandoned startup ownership, the transfer-before-pooling interval, and cancelling cleanup while a reader is blocked. Retry must abort/join that reader and clear pending ownership only after teardown completes.
+
+PASS: 19 EditorShell.debug tests include visible cleanup-pending state even before opening a UI debug session, unavailable Pause/Step and F5, an enabled Stop retry and actual retry IPC. TypeScript and the production build pass (251 modules). The installed Delve breakpoint fixture was rerun successfully with the new owner. PASS: the complete native suite passes 218 tests with 17 installed-tool fixtures ignored; all three debugger retention regressions pass. The installed Delve fixture was also run explicitly earlier with the new owner. Native all-target Clippy passes without warnings.
+
+Linux/macOS execution and Windows spawn-to-job assignment gap acceptance remain NOT RUN; this checkpoint does not authorize a release/tag.

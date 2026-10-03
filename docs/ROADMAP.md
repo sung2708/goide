@@ -409,3 +409,11 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: configurationDone follows breakpoint registration when supported; cold launch has a bounded 60-second budget, other requests a 5-second budget, with framing-safe shutdown interruption and transport poisoning after incomplete/mismatched responses.
 - Validated: installed Go/Delve actually stops on the requested breakpoint; frontend control tests retain observed-state behavior.
 - Remaining: failed debugger teardown retention, debugger variables/stack/goroutines, remaining Git/addendum workflows and full platform acceptance. No release/tag is authorized.
+
+
+## Retained debugger teardown checkpoint (2026-10-03)
+
+- Delivered: debugger ownership keeps the process/job, stdout/stderr readers and sampler join handle together through failed or cancelled teardown. Abandoned startup owners enter the same cleanup retry pool.
+- Delivered: teardown transfers mark ownership before retiring the active slot; pending owners block new debug/run/module/test operations and tool-path changes until cleanup succeeds. Retry includes app shutdown, uses owner UUID identity and visits retained owners fairly. Previous debug sessions stop before replacements launch.
+- Delivered: typed cleanup-pending state suppresses obsolete frames, disables Pause/Step and keeps Stop retry available. Startup cleanup errors include the recovery reason.
+- Remaining: debugger variables/stack/goroutines, full platform/spawn-ownership acceptance and all unfinished Git/addendum workflows. No release/tag is authorized.
