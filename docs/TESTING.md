@@ -235,3 +235,13 @@ The preceding full frontend rerun had six failures in diagnostics and terminal t
 PASS: 35 affected checks across workspace Git state, legacy IPC, branch switching and release-gate branch/document safety. Coverage includes rejected/partial refreshes with original error details, stale roots and superseded reloads, retry after failure, timer removal on disposal, native-only browser results and preserved native mutation arguments. Branch-switch verification checks the actual reloaded branch rather than requiring duplicate startup requests.
 
 The preceding full frontend baseline passed 88 files and 639 tests. That baseline predates the subsequent module-command and Git-refresh changes; it does not certify the complete addendum or release gate. Complete desktop/platform acceptance remains NOT RUN.
+
+## Explicit module command regression (2026-10-03)
+
+PASS: six native project/module checks including a real installed-Go fixture for tidy/download and stale/outside workspace rejection; two native cleanup checks verify invalid identities never acknowledge cleanup and owned CLI termination clears the registration guard. The Go resource guard rejects module operations while Run/Debug owns resources. Cargo Clippy passes.
+
+PASS: module hook/panel/IPC/document integration checks cover Save All failure, retained merge-result preservation failure, cancellation during preparation/execution, duplicate starts, stale roots, actual failed output and retained locks until native cleanup confirmation after IPC transport failure. TypeScript/production-build and full frontend results are tracked separately; these focused checks do not certify release acceptance. The shell integration tests allow time for the real lazy UI under concurrent native compilation.
+
+NOT RUN: complete desktop/platform acceptance, external concurrent manifest replacement/hard-link races and the remaining addendum/Git feature matrix. These checkpoints do not authorize release tags.
+
+Full frontend regression PASS: 94 files and 666 tests. TypeScript, production build (248 modules), version synchronization and documentation links also pass. This verifies the current regression suite, not the unrun desktop/platform release matrix.

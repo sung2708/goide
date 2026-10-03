@@ -381,3 +381,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: independent repository/branch/history refresh errors, retained successful native data, rejection of obsolete workspace/reload results, one non-overlapping poll and explicit timer cleanup.
 - Delivered: legacy browser Git reads, branch changes, staging/unstaging and commits return native-required errors; no invented commit/history data or successful mutations.
 - Remaining: complete graph filters/compare/blame/hunk workflows, remaining Git/addendum features and platform acceptance. No release/tag is authorized.
+
+## Explicit module actions checkpoint (2026-10-03)
+
+- Delivered: native go mod tidy/download with fixed arguments, canonical scoped manifests, selected-workspace revalidation, explicit GOFLAGS handling and bounded owned output.
+- Delivered: Save All/conflict-draft preservation, Run/Debug exclusion, cancellation, stale-root protection and confirmed cleanup before releasing document mutation ownership, including failed IPC transport.
+- Remaining: structured Go test execution, debugger inspection, session restore, remaining Git features and the complete platform/process ownership acceptance matrix. No release/tag is authorized.

@@ -1974,6 +1974,14 @@ function EditorShell() {
     canChangeFiles: () => runStatus !== "running" && debugUiState !== "starting" && debugUiState !== "running" && debugUiState !== "paused" && debugUiState !== "stopping",
   });
 
+  const moduleDocumentTransaction = useGitDocumentTransaction({
+    root: workspacePathRef, lock: documentTransitionRef, mutation: branchMutationRef,
+    preserve: preserveAllDocuments,
+    isPreserved: () => !isSavingRef.current && !documents.dirty && !hasConflictDrafts(workspacePathRef.current),
+    setBusy: setGitOperationBusy,
+    canChangeFiles: () => runStatus !== "running" && !isDebugSessionBusy,
+  });
+
   const editorTitle = useMemo(() => {
     if (!activeFilePath) {
       return "Editor";
@@ -2064,7 +2072,7 @@ function EditorShell() {
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
-        <GoProjectDialog open={isGoProjectOpen} onClose={() => setIsGoProjectOpen(false)} root={workspacePath} activePath={activeFilePath} />
+        <GoProjectDialog open={isGoProjectOpen} onClose={() => setIsGoProjectOpen(false)} root={workspacePath} activePath={activeFilePath} transaction={moduleDocumentTransaction} cancelPreparation={savePreparation.cancel} onChanged={root => { if (workspacePathRef.current === root) { setExplorerRevision(current => current + 1); void reloadGitState(root); } }} />
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {

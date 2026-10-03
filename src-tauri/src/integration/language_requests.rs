@@ -101,7 +101,11 @@ impl Drop for Scope {
 pub fn begin(root: &Path, id: Option<&str>) -> Result<Scope> {
     begin_with_timeout(root, id, Duration::from_secs(45))
 }
-fn begin_with_timeout(root: &Path, id: Option<&str>, timeout: Duration) -> Result<Scope> {
+pub(crate) fn begin_with_timeout(
+    root: &Path,
+    id: Option<&str>,
+    timeout: Duration,
+) -> Result<Scope> {
     check()?;
     let id = match id {
         Some(id) => {
