@@ -16,6 +16,7 @@ async fn an_actual_program_exit_retires_the_debugger_and_its_stop_token() {
     )
     .unwrap();
     let started = start_debug_session(StartDebugSessionRequestDto {
+        request_id: uuid::Uuid::new_v4().to_string(),
         test_name: None,
         workspace_root: root.to_string_lossy().into(),
         relative_path: "module/cmd/app/main.go".into(),

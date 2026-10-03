@@ -1,3 +1,4 @@
+import { DebuggerStartup } from "../../features/debugger/startup";
 import { RunOwnership } from "./runOwnership";
 import type { SemanticEntryAction } from "../../features/semantics/types";
 import { useExecutionPreparation } from "../../features/goProject/useExecutionPreparation";
@@ -38,6 +39,7 @@ import { useHoverHint } from "../../hooks/useHoverHint";
 import {
   activateScopedDeepTrace,
   deactivateDeepTrace,
+  cancelDebuggerStartup,
   getRuntimeAvailability,
   getRuntimeSignals,
   readWorkspaceFile,
@@ -357,6 +359,8 @@ function EditorShell() {
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
   const executionPreparationRef = useRef<ReturnType<typeof useExecutionPreparation>["prepare"] | null>(null);
   const ownedDebuggerSessionRef = useRef<string | null>(null);
+  const debuggerStartupRef = useRef<DebuggerStartup | null>(null);
+  if (!debuggerStartupRef.current) debuggerStartupRef.current = new DebuggerStartup(cancelDebuggerStartup);
   const debuggerStateRef = useRef(debuggerState); debuggerStateRef.current = debuggerState;
   const debuggerInspectionGate = useInspectionGate(debuggerState?.stopToken);
   const debuggerStopTokenRef = useRef<string | null>(null);
@@ -564,6 +568,7 @@ function EditorShell() {
 
   useEffect(() => {
     return () => {
+      void debuggerStartupRef.current?.cancel().catch(() => { /* native retains teardown for retry */ });
       if (ownedDebuggerSessionRef.current) void deactivateDeepTrace({ sessionId: ownedDebuggerSessionRef.current });
     };
   }, []);
@@ -918,9 +923,11 @@ function EditorShell() {
     const requestFilePath = activeFilePath;
     deepTraceRequestIdRef.current += 1;
     const requestId = deepTraceRequestIdRef.current;
+    const startupId = crypto.randomUUID();
 
     try {
-      const response = await executionPreparationRef.current!(() => activateScopedDeepTrace({
+      const response = await executionPreparationRef.current!(() => debuggerStartupRef.current!.start({ workspaceRoot: requestWorkspacePath, requestId: startupId }, () => activateScopedDeepTrace({
+        requestId: startupId,
         workspaceRoot: requestWorkspacePath,
         relativePath: requestFilePath,
         line,
@@ -931,7 +938,7 @@ function EditorShell() {
         counterpartLine: staticCounterpart?.line ?? null,
         counterpartColumn: staticCounterpart?.column ?? null,
         counterpartConfidence: staticCounterpart?.confidence ?? null,
-      }), ["go", "delve"]);
+      }), message => { if (editorMountedRef.current && workspacePathRef.current === requestWorkspacePath) setFileError(message); }), ["go", "delve"]);
       if (
         !editorMountedRef.current ||
         requestId !== deepTraceRequestIdRef.current ||
@@ -942,7 +949,9 @@ function EditorShell() {
         return;
       }
 
+      if (response.error?.code === "debug_startup_cancelled") { setFileError(null); return; }
       if (response.ok && response.data?.mode === "deep-trace") {
+        debuggerStartupRef.current!.adopt(startupId);
         if (response.data.debuggerState) {
           ownedDebuggerSessionRef.current = response.data.debuggerState.sessionId ?? null;
           debuggerStateRef.current = response.data.debuggerState;
@@ -1298,6 +1307,10 @@ function EditorShell() {
           });
       }, ["go"]);
       if (!resp.ok) {
+        if (resp.error?.code === "run_start_cancelled") {
+          if (editorMountedRef.current && workspacePathRef.current === workspacePath && activeRunIdRef.current === runId) setRunStatus("done");
+          return;
+        }
         if (!editorMountedRef.current || workspacePathRef.current !== workspacePath || activeRunIdRef.current !== runId) {
           return;
         }
@@ -1334,13 +1347,15 @@ function EditorShell() {
     setDebugUiState("starting");
     setDebugFailure(null);
 
+    const startupId = crypto.randomUUID();
     let response: Awaited<ReturnType<typeof startDebugSession>>;
     try {
-      response = await executionPreparation.prepare(() => startDebugSession({
+      response = await executionPreparation.prepare(() => debuggerStartupRef.current!.start({ workspaceRoot: workspacePath, requestId: startupId }, () => startDebugSession({
+        requestId: startupId,
         workspaceRoot: workspacePath,
         relativePath: activeFilePath,
         ...(testName ? { testName } : {}),
-      }), ["go", "delve"]);
+      }), message => { if (editorMountedRef.current && workspacePathRef.current === workspacePath) setFileError(message); }), ["go", "delve"]);
     } catch (error) {
       if (!editorMountedRef.current || workspacePathRef.current !== workspacePath) return;
       setDebugUiState("failed");
@@ -1358,6 +1373,7 @@ function EditorShell() {
       return;
     }
     if (!response.ok) {
+      if (response.error?.code === "debug_startup_cancelled") { setFileError(null); setDebugUiState("idle"); return; }
       setDebugUiState("failed");
       setDebugFailure({
         code: response.error?.code ?? "debug_session_start_failed",
@@ -1368,6 +1384,7 @@ function EditorShell() {
       return;
     }
 
+    debuggerStartupRef.current!.adopt(startupId);
     if (response.data?.debuggerState) {
       ownedDebuggerSessionRef.current = response.data.debuggerState.sessionId ?? null;
       debuggerStateRef.current = response.data.debuggerState;
@@ -1602,7 +1619,7 @@ function EditorShell() {
       if (activeRunIdRef.current === stoppedId) {
         activeRunIdRef.current = null;
         clearPendingRunOutputBuffer();
-        setRunStatus((current) => current === "running" ? "done" : current);
+        setRunStatus("done");
       }
     } finally { runStopInFlightRef.current = false; }
   }, [clearPendingRunOutputBuffer]);
@@ -2129,7 +2146,7 @@ function EditorShell() {
       className="ide-shell relative flex h-full w-full flex-col bg-[var(--base)] text-[var(--text)]"
     >
       <div className="workspace-titlebar">
-        {executionPreparation.phase !== "idle" && <span role="status" className="px-2 text-xs">{executionPreparation.phase === "preparing" ? "Saving project and checking tools..." : "Starting execution..."}{executionPreparation.phase === "preparing" && <button type="button" onClick={executionPreparation.cancel}>Cancel execution preparation</button>}{executionPreparation.phase === "starting" && runOwnershipRef.current?.current() && <button type="button" onClick={() => void executeCommand("go.stop")}>{runOwnershipRef.current.cleanupPending() ? "Retry Stop" : "Stop Run startup"}</button>}</span>}
+        {executionPreparation.phase !== "idle" && <span role="status" className="px-2 text-xs">{executionPreparation.phase === "preparing" ? "Saving project and checking tools..." : "Starting execution..."}{executionPreparation.phase === "preparing" && <button type="button" onClick={executionPreparation.cancel}>Cancel execution preparation</button>}{executionPreparation.phase === "starting" && runOwnershipRef.current?.current() && <button type="button" onClick={() => void executeCommand("go.stop")}>{runOwnershipRef.current.cleanupPending() ? "Retry Stop" : "Stop Run startup"}</button>}{executionPreparation.phase === "starting" && debuggerStartupRef.current?.current() && <button type="button" onClick={() => void debuggerStartupRef.current!.cancel().catch(error => setFileError(error instanceof Error ? error.message : String(error)))}>{debuggerStartupRef.current.cleanupPending() ? "Retry Debug startup cleanup" : "Cancel Debug startup"}</button>}</span>}
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />

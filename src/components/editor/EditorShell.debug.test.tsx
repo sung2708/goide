@@ -10,6 +10,7 @@ const readWorkspaceFileMock = vi.fn();
 const getRuntimeAvailabilityMock = vi.fn();
 const getDebuggerStateMock = vi.fn();
 const deactivateDeepTraceMock = vi.fn();
+const cancelDebuggerStartupMock = vi.fn();
 const debuggerToggleBreakpointMock = vi.fn();
 
 let mockDebuggerState: DebuggerState = {
@@ -79,6 +80,7 @@ vi.mock("../../lib/ipc/client", async () => {
     debuggerToggleBreakpoint: (...args: unknown[]) =>
       debuggerToggleBreakpointMock(...args),
     deactivateDeepTrace: (...args: unknown[]) => deactivateDeepTraceMock(...args),
+    cancelDebuggerStartup: (...args: unknown[]) => cancelDebuggerStartupMock(...args),
     startDebugSession: vi.fn().mockResolvedValue({
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
@@ -200,6 +202,7 @@ describe("EditorShell debug controller", () => {
       ok: true,
       data: mockDebuggerState,
     }));
+    cancelDebuggerStartupMock.mockReset().mockResolvedValue({ ok: true });
     deactivateDeepTraceMock.mockResolvedValue({
       ok: true,
       data: null,
@@ -224,6 +227,20 @@ describe("EditorShell debug controller", () => {
       ok: true,
       data: { mode: "deep-trace", scopeKey: "runtime_session" },
     });
+  });
+
+  it("cancels a hung startup reply by its captured UUID before releasing document locks", async () => {
+    const user = userEvent.setup(); render(<EditorShell />); await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
+    vi.mocked(startDebugSession).mockImplementationOnce(() => new Promise(() => {}));
+    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await screen.findByRole("button", { name: "Cancel Debug startup" });
+    expect(screen.getByRole("button", { name: "Close main.go" })).toBeDisabled();
+    const calls = vi.mocked(startDebugSession).mock.calls; const request = calls[calls.length - 1][0];
+    await user.click(screen.getByRole("button", { name: "Cancel Debug startup" }));
+    expect(cancelDebuggerStartupMock).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", requestId: request.requestId });
+    await waitFor(() => expect(screen.getByRole("button", { name: "Close main.go" })).toBeEnabled());
+    expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /debug active go file/i })).toBeEnabled();
   });
 
   it("shows a dedicated debug failure modal when debug start fails", async () => {
@@ -365,7 +382,8 @@ describe("EditorShell debug controller", () => {
     await waitFor(() => expect(debuggerPause).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", sessionId: "actual-owner", stopToken: null }));
     expect(screen.queryByRole("button", { name: /step over/i })).toBeNull();
     setMockDebuggerState({ paused: true });
-    expect(await screen.findByRole("button", { name: /step over/i })).toBeInTheDocument();
+    // Await the next native-state poll, rather than racing the default one-second query budget.
+    expect(await screen.findByRole("button", { name: /step over/i }, { timeout: 3000 })).toBeInTheDocument();
   });
 
   it("renders step controls when the debug session is paused", async () => {

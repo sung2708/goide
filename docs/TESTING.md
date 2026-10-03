@@ -345,3 +345,17 @@ PASS: five language cancellation/deadline checks, including binding the same sta
 PASS: the exact staged frontend, isolated from separate branding edits, passes 39 tests covering startup ownership/IPC, Run/Race/terminal wiring, lost startup reply cleanup retry, document locks, scoped workspace-transition failure and preserved buffers. TypeScript and production build pass (260 modules). A further 21 exact-staged debugger controller tests pass, covering session ownership, Stop failures and retained cleanup. Earlier working-checkout tests overlap with these sets.
 
 Debug/Deep Trace startup cancellation, complete Git/addendum work, Windows suspended-spawn acceptance and Linux/macOS/native window acceptance remain unfinished or NOT RUN; no release/tag is authorized.
+
+## Debug startup cancellation regression (2026-10-03)
+
+PASS: 15 native debugger checks with installed Go/Delve fixtures enabled, covering actual main/Test launch, breakpoint/control/inspection ownership, natural exit, retained debugger teardown and the new startup UUID authority. An acknowledged startup remains alive; cancelling another UUID preserves it; wrong-root cancellation rejects; matching cleanup retires the actual session and pending ownership. Queued cancellation completes before registration and prevents a late launch. Native all-target Clippy passes after extracting startup authority into its own module.
+
+PASS: seven language cancellation/deadline checks and 12 native Run/process/Windows job checks. These cover acknowledged token disarming, bounded root-bound replay protection, scoped cancellation/deadlines, actual Run startup acknowledgement, foreign actor preservation, descendant teardown and owned SDK worker cleanup.
+
+PASS: the exact staged frontend is verified separately from branding changes. The combined runs cover 67 distinct tests across debugger startup/IPC, Run ownership, debugger controller, execution preparation, Race Run and terminal wiring; repeated runs overlap. Confirmed native cancellation releases a permanently hung startup caller; failed cleanup retains document locks until retry; late replies do not adopt another actor. Workspace-transition failures retain the root and buffers. TypeScript and production build pass (261 modules).
+
+Bugs found/fixed: Windows extended-path prefixes caused cancellation identity mismatches; browser preview fabricated a successful debug startup; lost/hung replies could retain document locks after confirmed native cleanup; abandoned SDK startup needed the same cancellation token as its blocking tools. Source/counterpart fields now survive scoped Deep Trace planning.
+
+Earlier loaded-machine runs hit default five/ten-second UI test budgets, and one native Go discovery command reached its existing tool deadline; final native reruns pass without changing production deadlines. Final debugger/terminal integration runs use a command-line 20-second test budget. The two multi-dialog Race flows use the same 15-second budget as the existing full Race workflow; the observed-Pause query waits for a native polling cycle. Assertions are retained. Fresh fixture deletion retries transient Windows PermissionDenied for at most three seconds, after process ownership has retired. Performance acceptance is NOT RUN.
+
+The full latest repository suite, complete Git/addendum requirements, Windows suspended-spawn acceptance, Linux/macOS and native window/installer acceptance remain unfinished or NOT RUN. No release/tag is authorized.

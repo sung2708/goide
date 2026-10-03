@@ -5,6 +5,7 @@ export class RunOwnership {
   private owner: RunContext | null = null;
   private retry: (() => void) | null = null;
   private stopping: Promise<void> | null = null;
+  private cancellationReply: (() => void) | null = null;
   constructor(private stopNative: (context: RunContext) => Promise<ApiResponse<void>>) {}
   current() { return this.owner; }
   cleanupPending() { return this.retry !== null; }
@@ -15,8 +16,17 @@ export class RunOwnership {
     if (this.owner) throw new Error("Stop the current run before starting another request.");
     this.owner = context;
     let response: ApiResponse<void> | undefined;
-    let transportError: unknown;
-    try { response = await launch(); } catch (error) { transportError = error; }
+    let transportError: unknown; let transportFailed = false;
+    let confirmedCancel!: () => void;
+    const cancelled = new Promise<{ cancelled: true }>(resolve => { confirmedCancel = () => resolve({ cancelled: true }); });
+    this.cancellationReply = confirmedCancel;
+    try {
+      const outcome = await Promise.race([Promise.resolve().then(launch).then(response => ({ response })), cancelled]);
+      if ("cancelled" in outcome) return { ok: false, error: { code: "run_start_cancelled", message: "Run startup cancelled." } };
+      response = outcome.response;
+    } catch (error) { transportError = error; transportFailed = true; }
+    finally { if (this.cancellationReply === confirmedCancel) this.cancellationReply = null; }
+    if (this.owner !== context) { if (transportFailed) throw transportError; return response!; }
     if (response?.ok) return response;
     if (response && response.error?.code !== "run_cleanup_pending") {
       if (this.owner === context) this.owner = null;
@@ -30,7 +40,7 @@ export class RunOwnership {
     try { await this.stop(); }
     catch (error) { pending(`Run cleanup pending: ${error instanceof Error ? error.message : String(error)}. Retry Stop.`); }
     await confirmed;
-    if (transportError) throw transportError;
+    if (transportFailed) throw transportError;
     return response!;
   }
   stop(): Promise<void> {
@@ -42,7 +52,7 @@ export class RunOwnership {
       if (!response.ok) throw new Error(response.error?.message ?? "Unable to confirm owned run cleanup.");
       if (this.owner === context) {
         this.owner = null;
-        const resolve = this.retry; this.retry = null; resolve?.();
+        const resolve = this.retry; this.retry = null; resolve?.(); this.cancellationReply?.();
       }
     };
     this.stopping = stop().finally(() => { this.stopping = null; });

@@ -4,6 +4,7 @@ mod control_context_tests;
 mod debug_sampler;
 #[cfg(test)]
 mod debug_sampler_tests;
+mod debug_startup;
 #[cfg(test)]
 mod debug_test_tests;
 use crate::core::analysis::causal::{
@@ -75,6 +76,7 @@ struct RuntimeSignalStore {
 }
 
 struct DapSessionHandle {
+    startup_request_id: uuid::Uuid,
     owner: delve::ownership::Owner,
     workspace_root: PathBuf,
     inspection_tx: mpsc::Sender<super::debugger_commands::PendingInspection>,
@@ -136,6 +138,7 @@ async fn take_dap_session_for_cleanup() -> Option<DapSessionHandle> {
 
 async fn stop_dap_session(session: DapSessionHandle) -> Result<(), String> {
     let DapSessionHandle {
+        startup_request_id: _,
         mut owner,
         workspace_root: _,
         inspection_tx: _,
@@ -649,29 +652,13 @@ pub async fn get_active_file_completions(
 }
 
 async fn start_debug_session_internal(
-    workspace_root: String,
-    relative_path: String,
-    scope_line: usize,
-    scope_column: usize,
-    scope_symbol: Option<String>,
+    request: ActivateDeepTraceRequestDto,
     test_name: Option<String>,
+    startup: &crate::integration::language_requests::StartupRequest,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
     if let Err(error) = delve::ownership::retry_cleanup().await {
         return ApiResponse::err("debug_cleanup_pending", &error);
     }
-    let request = ActivateDeepTraceRequestDto {
-        workspace_root,
-        relative_path,
-        line: scope_line,
-        column: scope_column,
-        construct_kind: DeepTraceConstructKindDto::Channel,
-        symbol: scope_symbol,
-        counterpart_relative_path: None,
-        counterpart_line: None,
-        counterpart_column: None,
-        counterpart_confidence: None,
-    };
-
     if let Err(message) = validate_go_analysis_path(&request.relative_path) {
         return ApiResponse::err("deep_trace_invalid_input", &message);
     }
@@ -687,6 +674,23 @@ async fn start_debug_session_internal(
         return ApiResponse::err("deep_trace_invalid_input", &message);
     }
 
+    if let Some(path) = request.counterpart_relative_path.as_deref() {
+        if let Err(error) = validate_workspace_scoped_go_path(&request.workspace_root, path) {
+            return ApiResponse::err("deep_trace_invalid_input", &error);
+        }
+        if let (Some(line), Some(column)) = (request.counterpart_line, request.counterpart_column) {
+            if let Err(error) = validate_completion_cursor(line, column) {
+                return ApiResponse::err("deep_trace_invalid_input", &error);
+            }
+        } else {
+            return ApiResponse::err(
+                "deep_trace_invalid_input",
+                "Counterpart position is incomplete.",
+            );
+        }
+    } else if request.counterpart_line.is_some() || request.counterpart_column.is_some() {
+        return ApiResponse::err("deep_trace_invalid_input", "Counterpart file is required.");
+    }
     let symbol = request
         .symbol
         .as_deref()
@@ -700,8 +704,6 @@ async fn start_debug_session_internal(
         DeepTraceConstructKindDto::WaitGroup => "wait-group",
     };
 
-    // Story 4.1 scope activation only: validate request and return a scoped session marker.
-    // Runtime sampling and signal streaming are implemented in later stories.
     let scope_key = format!(
         "{}:{}:{}:{}:{}",
         request.relative_path,
@@ -718,8 +720,10 @@ async fn start_debug_session_internal(
 
     let root = workspace_root.clone();
     let path = request.relative_path.clone();
+    let bind = startup.binder();
     let launch_mode = match tauri::async_runtime::spawn_blocking(move || {
-        crate::integration::go_tests::debug_target(&root, &path, test_name.as_deref())
+        let _context = bind();
+        crate::integration::go_tests::execution_target(&root, &path, test_name.as_deref())
     })
     .await
     {
@@ -729,13 +733,6 @@ async fn start_debug_session_internal(
     };
 
     let target_file = workspace_root.join(&request.relative_path);
-
-    let previous_session = take_dap_session_for_cleanup().await;
-    if let Some(previous) = previous_session {
-        if let Err(error) = stop_dap_session(previous).await {
-            return ApiResponse::err("debug_stop_failed", &error);
-        }
-    }
 
     let dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
         Ok(process) => process,
@@ -845,10 +842,22 @@ async fn start_debug_session_internal(
         _ => None,
     };
     let debugger_workspace_root = workspace_root.clone();
+    let startup_abandoned = startup.cancellation_token();
+    // Publish the sampler and owner without an await between spawn and registration.
+    let session_handle = get_dap_session_handle();
+    let mut session_slot = session_handle.lock().await;
     let sampler_task = tokio::spawn(async move {
         let mut client = client;
         loop {
             tokio::select! {
+                _ = async {
+                    while !startup_abandoned.load(std::sync::atomic::Ordering::Acquire) {
+                        tokio::time::sleep(Duration::from_millis(20)).await;
+                    }
+                } => {
+                    debug_sampler::retire(&mut client, &session_handle_for_sampler, &signals_handle, session_identity).await;
+                    break;
+                }
                 _ = &mut stop_rx => {
                     let _ = client.disconnect().await;
                     break;
@@ -988,10 +997,10 @@ async fn start_debug_session_internal(
         }
     });
 
-    let session_handle = get_dap_session_handle();
     {
-        let mut guard = session_handle.lock().await;
-        *guard = Some(DapSessionHandle {
+        *session_slot = Some(DapSessionHandle {
+            startup_request_id: uuid::Uuid::parse_str(&request.request_id)
+                .expect("validated startup UUID"),
             owner: dap_process.owner,
             workspace_root: workspace_root.clone(),
             inspection_tx,
@@ -1000,6 +1009,7 @@ async fn start_debug_session_internal(
             sampler_task,
         });
     }
+    drop(session_slot);
 
     ApiResponse::ok(ActivateDeepTraceResponseDto {
         mode: "deep-trace".to_string(),
@@ -1009,38 +1019,37 @@ async fn start_debug_session_internal(
 }
 
 #[tauri::command]
+pub async fn cancel_debugger_startup(
+    request: super::types::LanguageCancelRequestDto,
+) -> ApiResponse<()> {
+    debug_startup::cancel(request).await
+}
+
+#[tauri::command]
 pub async fn activate_scoped_deep_trace(
     request: ActivateDeepTraceRequestDto,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
-    let _registration = match crate::integration::lifecycle::gate().operation().await {
-        Ok(guard) => guard,
-        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
-    };
-    start_debug_session_internal(
-        request.workspace_root,
-        request.relative_path,
-        request.line,
-        request.column,
-        request.symbol,
-        None,
-    )
-    .await
+    debug_startup::start(request, None).await
 }
 
 #[tauri::command]
 pub async fn start_debug_session(
     request: StartDebugSessionRequestDto,
 ) -> ApiResponse<ActivateDeepTraceResponseDto> {
-    let _registration = match crate::integration::lifecycle::gate().operation().await {
-        Ok(guard) => guard,
-        Err(error) => return ApiResponse::err("shutdown_in_progress", &error),
-    };
-    start_debug_session_internal(
-        request.workspace_root,
-        request.relative_path,
-        1,
-        1,
-        Some("runtime_session".to_string()),
+    debug_startup::start(
+        ActivateDeepTraceRequestDto {
+            request_id: request.request_id,
+            workspace_root: request.workspace_root,
+            relative_path: request.relative_path,
+            line: 1,
+            column: 1,
+            construct_kind: DeepTraceConstructKindDto::Channel,
+            symbol: Some("runtime_session".into()),
+            counterpart_relative_path: None,
+            counterpart_line: None,
+            counterpart_column: None,
+            counterpart_confidence: None,
+        },
         request.test_name,
     )
     .await
@@ -4054,6 +4063,7 @@ mod tests {
         let response = start_debug_session_internal_for_test(
             &workspace,
             StartDebugSessionRequestDto {
+                request_id: uuid::Uuid::new_v4().to_string(),
                 test_name: None,
                 workspace_root: workspace.to_string_lossy().to_string(),
                 relative_path: "main.go".to_string(),
@@ -4157,3 +4167,7 @@ mod tests {
         assert!(failed_snapshot.failure.is_some());
     }
 }
+
+#[cfg(test)]
+#[path = "commands/debug_startup_tests.rs"]
+mod debug_startup_tests;

@@ -75,7 +75,7 @@ it("reports missing Delve and keeps Debug unstarted", async () => {
 it("uses Save All and an exact test selector for semantic Debug Test", async () => {
   const user = await setup(); await user.click(screen.getByRole("button", { name: "Open Test" })); await user.click(screen.getByRole("button", { name: "Edit Source" }));
   await user.click(screen.getByRole("button", { name: "Debug Semantic Test" }));
-  await waitFor(() => expect(debug).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", relativePath: "worker_test.go", testName: "TestSelected" }));
+  await waitFor(() => expect(debug).toHaveBeenCalledWith({ requestId: expect.any(String), workspaceRoot: "C:/workspace", relativePath: "worker_test.go", testName: "TestSelected" }));
   expect(write).toHaveBeenCalledWith("C:/workspace", "worker_test.go", expect.stringContaining("retained source"), expect.any(String));
   expect(testRun).not.toHaveBeenCalled(); expect(run).not.toHaveBeenCalled();
 }, 20000);
