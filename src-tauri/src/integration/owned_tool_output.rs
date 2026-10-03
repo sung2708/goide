@@ -108,20 +108,28 @@ pub(crate) fn output_with_observer(
     timeout: Duration,
     observer: Observer,
 ) -> io::Result<Output> {
-    bounded_output_observed(command, None, timeout, Some(observer))
+    bounded_output_observed(command, None, timeout, Some(observer), None)
 }
 fn bounded_output(
     command: &mut Command,
     input: Option<&str>,
     timeout: Duration,
 ) -> io::Result<Output> {
-    bounded_output_observed(command, input, timeout, None)
+    bounded_output_observed(command, input, timeout, None, None)
+}
+pub(crate) fn output_with_control(
+    command: &mut Command,
+    timeout: Duration,
+    control: impl Fn() -> io::Result<()>,
+) -> io::Result<Output> {
+    bounded_output_observed(command, None, timeout, None, Some(&control))
 }
 fn bounded_output_observed(
     command: &mut Command,
     input: Option<&str>,
     timeout: Duration,
     observer: Option<Observer>,
+    control: Option<&dyn Fn() -> io::Result<()>>,
 ) -> io::Result<Output> {
     if input.is_some_and(|input| input.len() > 4 * 1024 * 1024) {
         return Err(io::Error::other(
@@ -145,7 +153,12 @@ fn bounded_output_observed(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    let mut child = OwnedSyncChild::spawn(command)?;
+    let mut child = OwnedSyncChild::spawn_checked(command, || {
+        if let Some(control) = control {
+            control()?;
+        }
+        Ok(())
+    })?;
     let stdout = child
         .stdout
         .take()
@@ -175,6 +188,11 @@ fn bounded_output_observed(
     };
     let deadline = super::language_requests::deadline(Instant::now() + timeout);
     let status = loop {
+        if let Some(control) = control {
+            if let Err(error) = control() {
+                break Err(error);
+            }
+        }
         if let Err(error) = super::language_requests::check() {
             break Err(io::Error::new(io::ErrorKind::Interrupted, error));
         }
@@ -215,6 +233,41 @@ fn bounded_output_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(windows)]
+    #[test]
+    fn control_cancellation_before_resume_prevents_the_first_instruction() {
+        use super::super::command::std_command;
+        let root =
+            std::env::temp_dir().join(format!("goide-controlled-exec-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let marker = root.join("executed");
+        let checks = AtomicUsize::new(0);
+        let error = output_with_control(
+            std_command("cmd.exe")
+                .args(["/D", "/C", "echo executed > executed"])
+                .current_dir(&root),
+            Duration::from_secs(10),
+            || {
+                if checks.fetch_add(1, Ordering::AcqRel) == 0 {
+                    Ok(())
+                } else {
+                    Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Requested cancellation before exec",
+                    ))
+                }
+            },
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(checks.load(Ordering::Acquire), 2);
+        wait_for_shutdown().unwrap();
+        assert!(
+            !marker.exists(),
+            "Cancelled suspended command executed project code"
+        );
+        std::fs::remove_dir(root).unwrap();
+    }
     #[test]
     fn output_is_drained_but_never_reported_complete_after_truncation() {
         assert_eq!(capture(&b"small"[..]).unwrap(), b"small");

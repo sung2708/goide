@@ -208,7 +208,7 @@ describe("EditorShell panels", () => {
 
     const quickOpenInput = await screen.findByLabelText(/quick open file/i);
     expect(quickOpenInput).toBeInTheDocument();
-    await screen.findByRole("button", { name: "pkg/helper.go", exact: true });
+    await screen.findByRole("button", { name: "pkg/helper.go" });
 
     fireEvent.keyDown(quickOpenInput, { key: "ArrowDown" });
     fireEvent.keyDown(quickOpenInput, { key: "Enter" });
