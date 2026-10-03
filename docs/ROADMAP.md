@@ -500,10 +500,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Remaining: Unix process-group identity/platform acceptance, recent workspaces/session restore, remaining P0 reliability and complete Git/addendum requirements. Native window/installer/manual performance acceptance is NOT RUN; no release/tag is authorized.
 
 
-## Unix leader authority work in progress (2026-10-03)
+## Unix leader authority checkpoint (2026-10-03)
 
-- Isolated implementation under verification: a waitable original leader pins process-group signal authority; raw mutable child/reaping access is replaced by owned I/O and explicit waits. Status is consumed only after scoped group/root signalling or the confirmed-exited EPERM fallback; cleanup still requires kernel group absence. Repeated teardown never signals a saved number after reaping. Lost wait authority fails closed.
-- Async failure/cancellation retains original child/group/UUID authority for cleanup retry and SDK preflight. Linux/macOS regression CI must pass before integration. Unix interactive-PTY/session containment and native manual/platform acceptance remain separate unfinished P0 work.
+- Delivered with frontend and Windows/Linux/macOS CI passing at f3483dd: a waitable original leader pins process-group signal authority; raw mutable child/reaping access is replaced by owned I/O and explicit waits. Status is consumed only after scoped group/root signalling or the confirmed-exited EPERM fallback; cleanup still requires kernel group absence. Repeated teardown never signals a saved number after reaping. Lost wait authority fails closed.
+- Async failure/cancellation retains original child/group/UUID authority for cleanup retry and SDK preflight. Unix interactive-PTY/session containment and native manual/platform acceptance remain separate unfinished P0 work.
 - Full Git/addendum completion and release gates remain unfinished; no release/tag is authorized.
 
 
@@ -511,3 +511,8 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 
 - Implemented under branch verification: bounded recent workspaces, disk-backed tab/active-view restoration, explicit removal/retry, no failed-root automatic loop, and Close Workspace through the existing preservation/owned-process transition. Runtime handles/diagnostics and unsaved text are excluded from persisted metadata.
 - Validation: 46 relevant frontend checks pass, including cancelled/stale restoration and explicit dirty-workspace close. Hosted regression CI and native manual acceptance remain required. Unix interactive PTY/session containment and full Git/addendum completion remain unfinished; no release/tag is authorized.
+
+## Git command ownership checkpoint (2026-10-03)
+
+- Implemented under branch verification: Git shares SDK tools' bounded output/process owner, atomically suspended Windows registration and pinned Unix leader authority. Existing mutation cancellation is checked before launch/resume and throughout execution. Descendants retaining pipes after a fast root exit retire through the same owner; cleanup failure retains authority and blocks unsafe retry.
+- Validation: 31 real Git/SDK/output checks and all-target MSVC Clippy pass locally. Hosted platform CI is required before integration. Cancellation after external root deletion/retargeting, Unix interactive PTY containment and complete Git/addendum acceptance remain unfinished; no release/tag is authorized.

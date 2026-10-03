@@ -796,6 +796,43 @@ fn cancellation_reaps_owned_git_hook_without_touching_another_repository() {
 }
 
 #[test]
+fn fast_exiting_git_alias_retires_inherited_pipe_descendants_and_preserves_foreign_owner() {
+    use crate::integration::{command::std_command, owned_sync_process::OwnedSyncChild};
+    use std::{
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+    let repo = Repo::new();
+    #[cfg(windows)]
+    let mut foreign_command = std_command("ping.exe");
+    #[cfg(windows)]
+    foreign_command.args(["-n", "90", "127.0.0.1"]);
+    #[cfg(unix)]
+    let mut foreign_command = std_command("sleep");
+    #[cfg(unix)]
+    foreign_command.arg("60");
+    let mut foreign =
+        OwnedSyncChild::spawn(foreign_command.stdout(Stdio::null()).stderr(Stdio::null())).unwrap();
+    let started = Instant::now();
+    // This configured alias intentionally launches a shell inside the isolated
+    // fixture. Its background child inherits Git's output pipe; normal root
+    // exit must retire that child before bounded output collection completes.
+    let output = runner::run(
+        &repo.0,
+        &[
+            "-c",
+            "alias.owned-child=!sleep 60 & printf ready",
+            "owned-child",
+        ],
+    )
+    .unwrap();
+    assert_eq!(output, b"ready");
+    assert!(started.elapsed() < Duration::from_secs(5));
+    assert!(foreign.try_wait().unwrap().is_none());
+    foreign.stop().unwrap();
+}
+
+#[test]
 fn remotes_publish_fetch_and_fast_forward_without_force_or_automatic_staging() {
     let remote = Repo::bare();
     let repo = Repo::new();

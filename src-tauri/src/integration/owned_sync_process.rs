@@ -111,6 +111,12 @@ impl OwnedSyncChild {
         }
     }
     pub fn spawn(command: &mut Command) -> std::io::Result<Self> {
+        Self::spawn_checked(command, || Ok(()))
+    }
+    pub fn spawn_checked(
+        command: &mut Command,
+        before_exec: impl Fn() -> std::io::Result<()>,
+    ) -> std::io::Result<Self> {
         if crate::integration::process_job::async_cleanup_pending()
             || crate::integration::shell::owned_cleanup_pending()
         {
@@ -119,11 +125,16 @@ impl OwnedSyncChild {
             ));
         }
         retry_pending_cleanup()?;
+        before_exec()?;
         crate::integration::language_requests::check()
             .map_err(crate::integration::language_requests::into_io_error)?;
         #[cfg(windows)]
         {
-            Self::spawn_windows(command, crate::integration::process_job::Job::assign)
+            Self::spawn_windows_checked(
+                command,
+                crate::integration::process_job::Job::assign,
+                before_exec,
+            )
         }
         #[cfg(not(windows))]
         {
@@ -138,13 +149,24 @@ impl OwnedSyncChild {
             }))
         }
     }
-    #[cfg(windows)]
+    #[cfg(all(test, windows))]
     fn spawn_windows(
         command: &mut Command,
         register: impl FnOnce(
             &crate::integration::process_job::Job,
             std::os::windows::io::RawHandle,
         ) -> Result<(), String>,
+    ) -> std::io::Result<Self> {
+        Self::spawn_windows_checked(command, register, || Ok(()))
+    }
+    #[cfg(windows)]
+    fn spawn_windows_checked(
+        command: &mut Command,
+        register: impl FnOnce(
+            &crate::integration::process_job::Job,
+            std::os::windows::io::RawHandle,
+        ) -> Result<(), String>,
+        before_exec: impl Fn() -> std::io::Result<()>,
     ) -> std::io::Result<Self> {
         use std::os::windows::{io::AsRawHandle, process::CommandExt};
         use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
@@ -160,6 +182,7 @@ impl OwnedSyncChild {
         });
         let process = owned.process.as_ref().expect("owned suspended process");
         register(&process.tree, process.child.as_raw_handle()).map_err(std::io::Error::other)?;
+        before_exec()?;
         crate::integration::language_requests::check()
             .map_err(crate::integration::language_requests::into_io_error)?;
         process
