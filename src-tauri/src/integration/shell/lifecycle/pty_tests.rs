@@ -27,7 +27,7 @@ async fn real_terminal_disposal_closes_the_console_and_joins_its_reader() {
         for arg in args {
             command.arg(arg);
         }
-        let child = owned_child::own(pair.slave.spawn_command(command).unwrap()).unwrap();
+        let child = owned_child::spawn(pair.slave.as_ref(), command).unwrap();
         drop(pair.slave);
         let writer = pair.master.take_writer().unwrap();
         let mut reader = pair.master.try_clone_reader().unwrap();
