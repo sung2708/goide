@@ -2061,8 +2061,8 @@ function EditorShell() {
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
     { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
-    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
-    { id: "debug.stop", title: "Stop Debugging", shortcut: "Shift+F5", disabled: !isDebugSessionRunning ? "No active debug session." : undefined, run: handleStopDebug },
+    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: debuggerState?.cleanupPending ? "Retry Stop to finish debugger cleanup." : !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
+    { id: "debug.stop", title: "Stop Debugging", shortcut: "Shift+F5", disabled: !isDebugSessionRunning && !debuggerState?.cleanupPending ? "No active debug session." : undefined, run: handleStopDebug },
     { id: "debug.breakpoint", title: "Toggle Breakpoint", shortcut: "F9", disabled: !activeFilePath || !selectedLine ? "Place the cursor on a source line." : undefined, run: () => selectedLine ? handleToggleBreakpoint(selectedLine) : undefined },
     { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepOver },
     { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepInto },
@@ -2218,7 +2218,9 @@ function EditorShell() {
               <div className="space-y-1">
                 <h3 className="text-xs font-bold uppercase text-[var(--overlay1)]">Runtime Session</h3>
                 <p className="text-[11px] text-[var(--subtext0)]">
-                  {debugUiState === "stopping"
+                  {debuggerState?.cleanupPending
+                    ? "Cleanup pending; retry Stop"
+                    : debugUiState === "stopping"
                     ? "Stopping"
                     : isDebugSessionRunning
                     ? isDebugPaused
@@ -2233,6 +2235,15 @@ function EditorShell() {
                   </p>
                 )}
               </div>
+
+              {debuggerState?.cleanupPending && (
+                <button type="button" aria-label="Retry debugger cleanup"
+                  disabled={debugUiState === "stopping"}
+                  className="border border-[var(--red)] px-3 py-2 text-[11px] text-[var(--red)]"
+                  onClick={() => void executeCommand("debug.stop")}>
+                  Retry Stop
+                </button>
+              )}
 
               {!isDebugSessionBusy && (
                 <button
@@ -2250,12 +2261,13 @@ function EditorShell() {
                 </button>
               )}
 
-              {isDebugSessionRunning && (
+              {isDebugSessionRunning && !debuggerState?.cleanupPending && (
                 <div className="space-y-2">
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
                       aria-label={isDebugPaused ? "Continue debugging" : "Pause debugging"}
+                      disabled={debuggerState?.cleanupPending === true}
                       className="rounded-md border border-[rgba(140,170,238,0.3)] px-3 py-2 text-[11px] font-semibold text-[var(--blue)] hover:bg-[rgba(140,170,238,0.12)]"
                       onClick={() => void executeCommand("debug.startOrContinue")}
                     >

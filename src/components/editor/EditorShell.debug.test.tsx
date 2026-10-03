@@ -446,6 +446,25 @@ describe("EditorShell debug controller", () => {
     });
   });
 
+  it("recovers retained native cleanup before starting a new UI session", async () => {
+    const user = userEvent.setup();
+    setMockDebuggerState({ sessionActive: true, paused: false, cleanupPending: true });
+    render(<EditorShell />);
+    await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(await screen.findByRole("button", { name: /^debug$/i }));
+    await screen.findByText("Cleanup pending; retry Stop");
+    expect(screen.queryByRole("button", { name: /pause debugging/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /step over/i })).toBeNull();
+    fireEvent.keyDown(window, { key: "F5" });
+    expect(debuggerPause).not.toHaveBeenCalled();
+    expect(startDebugSession).not.toHaveBeenCalled();
+    const stop = screen.getByRole("button", { name: /retry debugger cleanup/i });
+    expect(stop).toBeEnabled();
+    await user.click(stop);
+    await waitFor(() => expect(deactivateDeepTraceMock).toHaveBeenCalledTimes(1));
+  });
+
   // ---- New tests for Task 7: contextual debug sidebar tab ----
 
   it("does not show the Debug activity item when no workspace or file is open", async () => {
