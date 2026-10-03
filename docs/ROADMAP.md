@@ -445,3 +445,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: Run Test selects an exact package test; Debug Test preserves all documents/conflict drafts and checks configured Go/Delve before startup. Native Go package discovery respects module/go.work scope and current build constraints; missing/excluded selected tests fail visibly. Delve builds the complete test package from its actual build directory and runs the anchored selected test without caching a passing result.
 - Validated: a real nested-module test uses a helper in another file, stops at its breakpoint, exposes actual frames/locals and completes only the selected test. Native ownership retires after actual termination.
 - Remaining: live test streaming, main Run/Debug package-context refinement, cancellable native build/startup preparation, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.
+
+## Main package execution context checkpoint (2026-10-03)
+
+- Delivered: native Run and Debug main resolve the selected saved file through Go's actual module/go.work context and active package file list. Library packages, files excluded by build constraints and targets outside the workspace are rejected before launch; an invalid replacement does not stop an existing owned Run.
+- Delivered: package build and runtime use the actual selected package directory, including nested modules under a workspace without a root go.mod. Run and Delve receive the same scoped Go environment; the production debugger no longer scans source lines for package main. Legacy lexical target fixtures remain test-only.
+- Remaining: live test streaming, cancellable native build/startup preparation, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.

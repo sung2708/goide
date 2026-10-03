@@ -128,6 +128,7 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
                 LaunchMode::Package {
                     package: ".".into(),
                     cwd: root.to_string_lossy().into(),
+                    work: None,
                 },
                 &root,
                 &main,

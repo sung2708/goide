@@ -319,3 +319,11 @@ PASS: 86 frontend regression tests across semantic extraction/client/widget beha
 PASS: the exact staged source, isolated from unrelated UI changes, passes 57 CodeEditor/widget/preparation tests plus TypeScript and production build (258 modules).
 
 Native startup/build cancellation, live streaming, complete Git and the platform/process acceptance matrix remain unfinished or NOT RUN. No release/tag is authorized.
+
+## Main package context regression (2026-10-03)
+
+PASS: installed Go runs an isolated nested module through the production command builder, includes a second helper file, emits 42 and exits successfully. Owned cleanup finishes before fixture removal. The same discovery rejects an excluded main file and a library whose comment contains package main.
+
+PASS: 13 native debug checks with installed fixtures enabled; natural exit now runs a nested module main through the UI bridge, while selected Debug Test, session/stop identity and retained teardown continue passing. PASS: 26 Delve checks, including real breakpoint/inspection and test launch configuration. These filters overlap; they are not 39 unique tests. Native all-target Clippy passes.
+
+No frontend API changed in this slice. Native build/start cancellation, complete Git and Linux/macOS plus Windows spawn-assignment acceptance remain unfinished or NOT RUN; no release/tag is authorized.

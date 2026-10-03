@@ -4,17 +4,21 @@ use super::*;
 #[ignore = "requires installed Go and Delve; starts only an isolated fixture"]
 async fn an_actual_program_exit_retires_the_debugger_and_its_stop_token() {
     let root = std::env::temp_dir().join(format!("goide-debug-exit-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir_all(&root).unwrap();
+    std::fs::create_dir_all(root.join("module/cmd/app")).unwrap();
     std::fs::write(
-        root.join("go.mod"),
+        root.join("module/go.mod"),
         "module example.com/debugexit\n\ngo 1.22\n",
     )
     .unwrap();
-    std::fs::write(root.join("main.go"), "package main\nfunc main() {}\n").unwrap();
+    std::fs::write(
+        root.join("module/cmd/app/main.go"),
+        "package main\nfunc main() {}\n",
+    )
+    .unwrap();
     let started = start_debug_session(StartDebugSessionRequestDto {
         test_name: None,
         workspace_root: root.to_string_lossy().into(),
-        relative_path: "main.go".into(),
+        relative_path: "module/cmd/app/main.go".into(),
     })
     .await;
     assert!(

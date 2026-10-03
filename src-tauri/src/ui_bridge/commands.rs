@@ -10,7 +10,7 @@ use crate::core::analysis::causal::{
     enrich_runtime_signals_with_correlation, StaticCounterpartHint,
 };
 use crate::integration::command::std_command;
-use crate::integration::delve::{self, DapClient, LaunchMode, RuntimeSignal, RuntimeSignalScope};
+use crate::integration::delve::{self, DapClient, RuntimeSignal, RuntimeSignalScope};
 use crate::integration::fs;
 use crate::integration::fs_watch::{FsWatchMode, FsWatchService};
 use crate::integration::gopls;
@@ -38,6 +38,7 @@ use crate::ui_bridge::types::{
     WorkspaceGitSnapshotDto, WorkspaceSearchFileDto,
 };
 use std::collections::{HashMap, HashSet};
+#[cfg(test)]
 use std::fs as std_fs;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -695,43 +696,18 @@ async fn start_debug_session_internal(
         Err(error) => return ApiResponse::err("debug_target_invalid", &error),
     };
 
-    let is_test_file = request.relative_path.ends_with("_test.go");
-    if test_name.is_some() && !is_test_file {
-        return ApiResponse::err(
-            "debug_target_invalid",
-            "A selected test requires a _test.go file.",
-        );
-    }
-    let launch_mode = if is_test_file {
-        let root = workspace_root.clone();
-        let path = request.relative_path.clone();
-        match tauri::async_runtime::spawn_blocking(move || {
-            crate::integration::go_tests::debug_target(&root, &path, test_name.as_deref())
-        })
-        .await
-        {
-            Ok(Ok(target)) => target,
-            Ok(Err(error)) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
-            Err(error) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
-        }
-    } else {
-        // For non-test files, resolve to a Go package pattern so that Delve
-        // receives the correct package context (e.g. `./cmd/app`) instead of
-        // a raw file path.
-        let target = match resolve_debug_target(&workspace_root, &request.relative_path) {
-            Ok(target) => target,
-            Err(message) => {
-                return ApiResponse::err("debug_target_invalid", &message);
-            }
-        };
-        LaunchMode::Package {
-            package: target.package_pattern,
-            cwd: workspace_root.to_string_lossy().to_string(),
-        }
+    let root = workspace_root.clone();
+    let path = request.relative_path.clone();
+    let launch_mode = match tauri::async_runtime::spawn_blocking(move || {
+        crate::integration::go_tests::debug_target(&root, &path, test_name.as_deref())
+    })
+    .await
+    {
+        Ok(Ok(target)) => target,
+        Ok(Err(error)) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
+        Err(error) => return ApiResponse::err("debug_target_invalid", &error.to_string()),
     };
 
-    // For the test-file path we still need a concrete target_file for the
-    // legacy launch; for package launches target_file is unused.
     let target_file = workspace_root.join(&request.relative_path);
 
     let previous_session = take_dap_session_for_cleanup().await;
@@ -1065,7 +1041,7 @@ pub(crate) async fn start_debug_session_internal_for_test(
     let workspace_root_path = workspace_root.to_path_buf();
     let relative_path = request.relative_path.clone();
 
-    // Target resolution (same as production path).
+    // Spawn-only failure mapping: actual production package discovery is covered by installed-tool fixtures.
     if let Err(error) = crate::integration::go_tests::test_filter(request.test_name.as_deref()) {
         return ApiResponse::err("debug_target_invalid", &error.to_string());
     }
@@ -1084,6 +1060,7 @@ pub(crate) async fn start_debug_session_internal_for_test(
             Ok(target) => Ok(LaunchMode::Package {
                 package: target.package_pattern,
                 cwd: workspace_root_path.to_string_lossy().to_string(),
+                work: None,
             }),
             Err(message) => Err(message),
         }
@@ -2815,6 +2792,7 @@ fn validate_completion_cursor(line: usize, column: usize) -> Result<(), String> 
 /// Returns an error if the directory has no Go files, or all Go files declare a
 /// non-`main` package — i.e. the package is a library and cannot be run or
 /// debugged directly.
+#[cfg(test)]
 fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
     let entries = std_fs::read_dir(package_dir)
         .map_err(|error| format!("cannot read package directory: {error}"))?;
@@ -2864,6 +2842,7 @@ fn validate_runnable_go_package(package_dir: &Path) -> Result<(), String> {
 /// Resolved debug target, holding the package directory and the Go package
 /// pattern suitable for use with `dlv dap` launch arguments (e.g. `./cmd/app`).
 #[derive(Debug)]
+#[cfg(test)]
 pub struct DebugTarget {
     #[cfg_attr(not(test), allow(dead_code))]
     pub package_dir: PathBuf,
@@ -2876,6 +2855,7 @@ pub struct DebugTarget {
 /// - the file does not exist
 /// - the resolved directory escapes the workspace root
 /// - the package is not runnable (no `package main`)
+#[cfg(test)]
 pub fn resolve_debug_target(
     workspace_root: &Path,
     active_relative_path: &str,
