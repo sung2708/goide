@@ -8,9 +8,9 @@ Explorer, tabs, saves, external-file review, gopls transformations, diagnostics,
 
 ## Quick Open
 
-Ctrl/Cmd+P opens the shared Quick Pick. Basenames are prominent and directories secondary; exact/prefix, boundary/camel and fuzzy matches rank before secondary path matches. Matching characters use original UTF-16 offsets. Bounded recent files are local per workspace and invalidated against a complete refreshed index. Filesystem revisions invalidate the cached index. Budgets are 20,000 files, 2,000 directories, depth 64, five seconds and 4 MiB of path text; incomplete indexing is visible.
+Ctrl/Cmd+P opens the shared Quick Pick. Basenames are prominent and directories secondary; exact/prefix, boundary/camel and fuzzy matches rank before secondary path matches. Matching characters use original UTF-16 offsets. Bounded recent files are local per workspace and invalidated against a complete refreshed index. Filesystem revisions invalidate the cached index. A single cancellable native call indexes filenames without reading source contents. Quick Open and Search share an ignore-aware walker: nested .gitignore/.ignore rules, negation, generated-tree exclusions and no-follow-link traversal. Canonical path checks reject files escaping the workspace. Budgets are 20,000 files, 40,000 visited entries, depth 64, five seconds and 4 MiB of path text; incomplete indexing and unreadable paths are visible. Closing the picker, replacing the index or switching workspace cancels native work by request identity and rejects late results.
 
-Worker ranking prepares the index once, keeps one in-flight query and the newest pending query, and rejects obsolete results. Workers retire with index replacement; a five-second failure/deadline exposes a bounded 2,000-file fallback. Results are capped at 200. Gitignore-aware native indexing and native UI latency/memory acceptance remain unfinished.
+Worker ranking prepares the index once, keeps one in-flight query and the newest pending query, and rejects obsolete results. Workers retire with index replacement; a five-second failure/deadline exposes a bounded 2,000-file fallback. Results are capped at 200. Native UI latency/memory acceptance remains unfinished.
 
 ## Find in File
 
@@ -78,7 +78,7 @@ Automated native search/replacement fixtures cover space/Unicode paths, UTF-16, 
 
 ## macOS Validation
 
-Local native execution is unavailable. The previous develop CI run's macOS Cargo test failed without a retrievable failing-test log; this remains unresolved until the hosted matrix is examined. Do not infer success from the passing Windows/Linux jobs.
+Local native execution is unavailable. The preceding navigation checkpoint a73233a passes hosted macOS verification in CI run 37127665455, along with Windows/Linux/frontend. The native-index revision requires its own hosted verification.
 
 ## Linux Validation
 
@@ -86,7 +86,7 @@ Local native execution is unavailable; hosted CI must validate this source revis
 
 ## Remaining P0
 
-Gitignore-aware native Quick Open indexing; complete central action migration; complete-match keyboard iteration and native navigation/focus acceptance; full workspace overlay/stale-result and partial-failure acceptance; replacement per-file outcomes/recovery UX; complete end-to-end large-workspace/desktop acceptance; hosted platform matrix including the unresolved macOS failure. P0 is not complete.
+Complete central action migration; complete-match keyboard iteration and native navigation/focus acceptance; full workspace overlay/stale-result and partial-failure acceptance; replacement per-file outcomes/recovery UX; complete end-to-end large-workspace/desktop acceptance; hosted platform matrix for the current revision. P0 is not complete.
 
 ## Remaining P1
 

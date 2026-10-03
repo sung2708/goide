@@ -4,6 +4,7 @@ import type {
   LanguageFormatRequest, LanguageEditPlan,
   LanguageRenameRequest,
   WorkspaceFileInfo,
+  WorkspaceFileIndexReport,
   WorkspaceReplacementRequest,
   WorkspaceReplacementPlan,
   WorkspaceSearchOptions,
@@ -636,4 +637,9 @@ export async function listWorkspaceCodeActions(request: LanguageCodeActionQuery)
 export async function previewWorkspaceCodeAction(request: LanguageCodeActionPreview): Promise<ApiResponse<LanguageEditPlan>> {
   if (!hasTauriInternals()) return { ok: false, error: { code: "language_unavailable", message: "Code Actions require the desktop app and gopls." } };
   return invoke<ApiResponse<LanguageEditPlan>>("preview_workspace_code_action", { request });
+}
+
+export async function indexWorkspaceFiles(workspaceRoot: string, requestId: string): Promise<ApiResponse<WorkspaceFileIndexReport>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "index_native_required", message: "File indexing requires the desktop app." } };
+  return invoke("index_workspace_files", { workspaceRoot, requestId });
 }

@@ -20,6 +20,7 @@ pub fn run() {
             ui_bridge::git_commands::git_stash_preview,
             ui_bridge::git_commands::git_cancel,
             ui_bridge::search_commands::search_workspace_text_v2,
+            ui_bridge::search_commands::index_workspace_files,
             ui_bridge::search_commands::cancel_workspace_search,
             ui_bridge::search_commands::preview_workspace_replacement,
             ui_bridge::git_commands::git_conflict_content,

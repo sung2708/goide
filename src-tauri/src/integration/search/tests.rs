@@ -217,3 +217,74 @@ fn ranges_use_utf16_and_basename_filters_include_nested_unicode_paths() {
         1
     );
 }
+
+#[test]
+fn file_index_respects_nested_ignore_rules_negation_and_generated_trees() {
+    let workspace = Workspace::new();
+    workspace.write(".gitignore", b"*.log\n!keep.log\n");
+    workspace.write("hidden.log", b"");
+    workspace.write("keep.log", b"");
+    workspace.write("pkg/.gitignore", b"private.go\n");
+    workspace.write("pkg/private.go", b"");
+    workspace.write("pkg/name Ω.go", b"\0"); // Names are indexed even for binary contents.
+    workspace.write("node_modules/package/index.js", b"");
+    workspace.write("target/debug/cache", b"");
+    workspace.write(".config/settings.json", b"");
+    let report = index_files(
+        workspace.0.to_str().unwrap(),
+        &uuid::Uuid::new_v4().to_string(),
+    )
+    .unwrap();
+    assert!(report.notice.is_none());
+    assert_eq!(
+        report.files,
+        vec![
+            ".config/settings.json",
+            ".gitignore",
+            "keep.log",
+            "pkg/.gitignore",
+            "pkg/name Ω.go"
+        ]
+    );
+}
+
+#[test]
+fn file_index_honors_pre_execution_cancellation_and_releases_identity() {
+    let workspace = Workspace::new();
+    workspace.write("main.go", b"package main");
+    let id = uuid::Uuid::new_v4().to_string();
+    cancel(&id).unwrap();
+    assert!(index_files(workspace.0.to_str().unwrap(), &id)
+        .unwrap_err()
+        .contains("cancelled"));
+    assert_eq!(
+        index_files(workspace.0.to_str().unwrap(), &id)
+            .unwrap()
+            .files,
+        vec!["main.go"]
+    );
+    assert_eq!(
+        index_files(workspace.0.to_str().unwrap(), &id)
+            .unwrap()
+            .files,
+        vec!["main.go"]
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn file_index_never_follows_external_file_or_directory_links() {
+    use std::os::unix::fs::symlink;
+    let workspace = Workspace::new();
+    let external = Workspace::new();
+    external.write("secret.go", b"private");
+    symlink(external.0.join("secret.go"), workspace.0.join("file.go")).unwrap();
+    symlink(&external.0, workspace.0.join("folder")).unwrap();
+    assert!(index_files(
+        workspace.0.to_str().unwrap(),
+        &uuid::Uuid::new_v4().to_string()
+    )
+    .unwrap()
+    .files
+    .is_empty());
+}
