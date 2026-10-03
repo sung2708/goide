@@ -70,3 +70,4 @@ _uv-cache/
 _bmad/
 _bmad-output/
 skills-lock.json
+tools/update-verifier/target/

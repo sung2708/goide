@@ -75,6 +75,7 @@ function findFilesRecursive(dir, matchFn) {
 }
 
 function findBundleDirs(explicitBundleDir) {
+  if (explicitBundleDir) return existsSync(explicitBundleDir) ? [resolve(explicitBundleDir)] : [];
   const candidates = [];
   if (explicitBundleDir && existsSync(explicitBundleDir)) {
     candidates.push(explicitBundleDir);
@@ -165,6 +166,9 @@ function main() {
         });
       }
     } else if (platform === "macos") {
+      for (const archive of findFilesRecursive(bDir, name => name === `${productName}.app.tar.gz`)) {
+        matchedArtifacts.push({ source: archive, targetName: `goro-${tag}-macos-${arch}-updater.tar.gz` });
+      }
       // 3. DMG: goro-v{VERSION}-macos-{ARCH}.dmg
       const dmgFiles = findFilesRecursive(bDir, (name) => isCurrentProduct(name) && name.endsWith(".dmg"));
       for (const dmg of dmgFiles) {
@@ -215,6 +219,7 @@ function main() {
   for (const [targetName, { source }] of uniqueArtifacts.entries()) {
     const destination = join(options.outputDir, targetName);
     copyFileSync(source, destination);
+    if (existsSync(`${source}.sig`)) copyFileSync(`${source}.sig`, `${destination}.sig`);
 
     const hash = computeSha256(destination);
     const checksumLine = `${hash}  ${targetName}`;

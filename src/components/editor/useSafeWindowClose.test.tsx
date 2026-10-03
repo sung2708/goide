@@ -6,7 +6,9 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => undefined }));
 vi.mock("@tauri-apps/api/window", () => ({ getCurrentWindow: () => ({ destroy: mocks.destroy, onCloseRequested: async (callback: typeof mocks.close) => { mocks.close = callback; return mocks.stop; } }) }));
 const save = vi.fn(), error = vi.fn(), cancelAutosave = vi.fn();
-function Host({ busy = false }: { busy?: boolean }) { return useSafeWindowClose({ dirty: () => true, busy: () => busy, save, onError: error, cancelAutosave }); }
+let installRequest: (() => void) | undefined;
+const install = vi.fn();
+function Host({ busy = false, updates = false }: { busy?: boolean; updates?: boolean }) { return useSafeWindowClose({ dirty: () => true, busy: () => busy, save, onError: error, cancelAutosave, ...(updates ? { registerInstall: (handler: () => void) => { installRequest = handler; return () => { installRequest = undefined; }; }, install } : {}) }); }
 async function requestClose() {
   await waitFor(() => expect(mocks.close).not.toBeNull());
   const preventDefault = vi.fn();
@@ -18,6 +20,7 @@ describe("native safe close", () => {
     vi.stubGlobal("__TAURI_INTERNALS__", {}); mocks.close = null;
     mocks.invoke.mockReset().mockResolvedValue({ ok: true }); mocks.destroy.mockReset().mockResolvedValue(undefined);
     save.mockReset().mockResolvedValue(true); error.mockReset(); cancelAutosave.mockReset(); mocks.stop.mockReset();
+    install.mockReset().mockResolvedValue(undefined); installRequest = undefined;
   });
   afterEach(() => vi.unstubAllGlobals());
   it("cancels without saving, stopping processes or destroying the window", async () => {
@@ -42,5 +45,32 @@ describe("native safe close", () => {
     view.rerender(<Host />); mocks.invoke.mockResolvedValue({ ok: false, error: { message: "cleanup failed" } });
     fireEvent.click(screen.getByRole("button", { name: "Save and close" }));
     await waitFor(() => expect(error).toHaveBeenCalledWith("cleanup failed")); expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+  it("preserves drafts and acknowledges owned cleanup before invoking the installer", async () => {
+    render(<Host updates />); await waitFor(() => expect(installRequest).toBeDefined());
+    act(() => installRequest?.());
+    expect(install).not.toHaveBeenCalled();
+    save.mockResolvedValueOnce(false);
+    fireEvent.click(screen.getByRole("button", { name: "Save and install" }));
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(1)); expect(mocks.invoke).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "Save and install" }));
+    await waitFor(() => expect(install).toHaveBeenCalledTimes(1));
+    expect(save.mock.invocationCallOrder[1]).toBeLessThan(mocks.invoke.mock.invocationCallOrder[0]);
+    expect(mocks.invoke.mock.invocationCallOrder[0]).toBeLessThan(install.mock.invocationCallOrder[0]);
+    expect(mocks.destroy).not.toHaveBeenCalled();
+  });
+  it("blocks installer after failed cleanup and keeps failed installation in recovery", async () => {
+    render(<Host updates />); await waitFor(() => expect(installRequest).toBeDefined()); act(() => installRequest?.());
+    mocks.invoke.mockResolvedValueOnce({ ok: false, error: { message: "cleanup failed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Discard editor edits and install" }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("cleanup failed")); expect(install).not.toHaveBeenCalled();
+    install.mockRejectedValueOnce(new Error("installation failed"));
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Retry cleanup and install" }));
+    await waitFor(() => expect(error).toHaveBeenCalledWith("installation failed"));
+    expect(screen.getByRole("alert")).toHaveTextContent("installation failed");
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Close Goro" })); await waitFor(() => expect(mocks.destroy).toHaveBeenCalledTimes(1));
+    expect(install).toHaveBeenCalledTimes(1);
   });
 });
