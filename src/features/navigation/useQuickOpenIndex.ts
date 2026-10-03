@@ -27,13 +27,14 @@ export function useQuickOpenIndex(root: string | null, revision: number, open: b
       setIndex(cache.current); setLoading(false); setError(null); return;
     }
     setLoading(true); setError(null);
-    void indexWorkspace(root, () => epoch.current !== request).then(value => {
+    const controller = new AbortController();
+    void indexWorkspace(root, controller.signal).then(value => {
       if (epoch.current !== request) return;
       cache.current = { ...value, root, revision }; setIndex({ ...value, root });
     }).catch((failure: unknown) => {
       if (epoch.current === request) { setIndex({ files: [], notice: null }); setError(failure instanceof Error ? failure.message : "File indexing failed."); }
     }).finally(() => { if (epoch.current === request) setLoading(false); });
-    return () => { if (epoch.current === request) ++epoch.current; };
+    return () => { if (epoch.current === request) ++epoch.current; controller.abort(); };
   }, [root, revision, open]);
   useEffect(() => {
     if (!root || index.root !== root || index.notice) return;

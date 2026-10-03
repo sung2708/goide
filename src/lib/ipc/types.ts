@@ -488,3 +488,9 @@ export type DebuggerInspectionOutput =
   | { kind: "variables"; stopToken: string; items: DebuggerVariable[]; nextStart: number | null; limited: boolean };
 
 export type RunContext = { workspaceRoot: string; runId: string };
+
+/** Bounded ignore-aware native filename index; a notice means incomplete results. */
+export interface WorkspaceFileIndexReport {
+  files: string[];
+  notice: string | null;
+}

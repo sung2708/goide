@@ -634,7 +634,8 @@ pub use crate::integration::replacement::{
     ReplacementPlan as ReplacementPlanDto, ReplacementRequest as ReplacementRequestDto,
 };
 pub use crate::integration::search::{
-    SearchOptions as SearchOptionsDto, SearchReport as SearchReportDto,
+    FileIndexReport as FileIndexReportDto, SearchOptions as SearchOptionsDto,
+    SearchReport as SearchReportDto,
 };
 pub use crate::integration::signature_help::SignatureHelp as SignatureHelpDto;
 

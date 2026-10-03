@@ -431,6 +431,13 @@ PASS: commit 8346793 has successful frontend and native Windows/Linux/macOS jobs
 - PASS: 188 MSVC native integration checks; 20 toolchain-dependent fixtures were explicitly ignored. The latest three native replacement checks additionally pass, including selected-range preservation after a result budget. These overlap the broader native suite.
 - PASS: all-target MSVC Clippy and frontend production build/typecheck for the reviewed source; the final range-navigation/editor/workbench regression suite passes 94 checks, and the nested-picker focus check passes separately. These also overlap the earlier suites.
 - MEASURED: synthetic 20,000-file ranking initially took 651–1,032 ms per query on this loaded machine. Reusable prepared index data reduced the recorded warm query timings to 149–294 ms. This measures the ranking function, not user-visible picker latency, memory, indexing or editor performance.
-- NOT RUN / BLOCKED BY ENVIRONMENT: complete native desktop walkthrough, keyboard focus under all OS webviews, large-workspace memory/rendering/typing acceptance, native macOS/Linux execution here. New hosted CI must validate the published source. The previous develop macOS Cargo-test failure remains unresolved; passing earlier platform checks do not close this gate.
+- NOT RUN / BLOCKED BY ENVIRONMENT: complete native desktop walkthrough, keyboard focus under all OS webviews, large-workspace memory/rendering/typing acceptance, native macOS/Linux execution here. Checkpoint a73233a subsequently passes all four hosted jobs in [CI run 37127665455](https://github.com/sung2708/goide/actions/runs/37127665455); this clears the earlier macOS failure for that checkpoint. Each later source revision still needs hosted verification.
 
 See [Navigation and Search](NAVIGATION_SEARCH.md) for deterministic contracts, budgets, capture syntax and remaining P0/P1/P2 requirements. No release/version/tag is authorized.
+
+## Native Quick Open index (2026-10-03)
+
+- PASS: 12 frontend checks cover index caching/invalidation, per-request native cancellation, closed pickers, stale workspace replies and ranking; 28 workbench/IPC checks include Ctrl+P through selected-file opening and preservation of native notices.
+- PASS locally on Windows: seven search/index fixtures cover nested ignore rules without a Git repository, negation, generated-tree exclusions, Unicode filenames, precancellation/identity release and existing native search contracts. The Unix-only external-symlink fixture is reserved for hosted Linux/macOS execution.
+- PASS: frontend typecheck/production build, all-target MSVC Clippy, Cargo formatting and Markdown link validation.
+- Native large-workspace index latency/memory and desktop keyboard walkthrough remain NOT RUN. This change does not establish complete navigation/addendum acceptance or authorize a release/tag.
