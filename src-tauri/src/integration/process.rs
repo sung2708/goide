@@ -58,6 +58,13 @@ pub struct RunOutputPayload {
 /// Validates that the relative_path is non-empty and stays within the workspace root.
 /// Returns the absolute path to the file.
 pub fn resolve_run_path(workspace_root: &str, relative_path: &str) -> Result<std::path::PathBuf> {
+    if workspace_root.len() > 8192
+        || relative_path.len() > 4096
+        || workspace_root.contains('\0')
+        || relative_path.contains('\0')
+    {
+        return Err(anyhow!("Run context exceeds its path input budget."));
+    }
     if relative_path.trim().is_empty() {
         return Err(anyhow!("relative path is required"));
     }
@@ -104,6 +111,28 @@ fn build_go_run_args(workspace_root: &Path, target: &Path, mode: RunMode) -> Vec
     args
 }
 
+fn build_go_run_command(
+    directory: &Path,
+    work: Option<&str>,
+    args: &[String],
+) -> tokio::process::Command {
+    let mut command = tokio_command("go");
+    #[cfg(unix)]
+    command.process_group(0);
+    command
+        .args(args)
+        .current_dir(directory)
+        .env("GOFLAGS", "")
+        .env("GOWORK", work.unwrap_or("off"))
+        .env("TERM", "xterm-256color")
+        .env("CLICOLOR_FORCE", "1")
+        .env("FORCE_COLOR", "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true);
+    command
+}
+
 #[cfg(not(windows))]
 pub async fn kill_process_group(child: &mut Child) -> Result<()> {
     if let Some(pid) = child.id() {
@@ -144,6 +173,16 @@ pub async fn run_go_file<R: tauri::Runtime>(
     crate::integration::delve::ownership::retry_cleanup()
         .await
         .map_err(|error| anyhow!(error))?;
+    // Resolve Go's actual package context before replacing an existing owned run.
+    let plan_root = Path::new(&workspace_root).to_path_buf();
+    let plan_path = relative_path.clone();
+    let plan = tokio::task::spawn_blocking(move || {
+        crate::integration::go_tests::debug_target(&plan_root, &plan_path, None)
+    })
+    .await??;
+    let crate::integration::delve::LaunchMode::Package { cwd, work, .. } = plan else {
+        return Err(anyhow!("Use Run Test for a _test.go target."));
+    };
     // Kill any previously running process
     {
         let mut guard = process_handle.lock().await;
@@ -154,22 +193,10 @@ pub async fn run_go_file<R: tauri::Runtime>(
     }
 
     // Spawn go run <package> (optionally with -race)
-    let workspace_root_path = Path::new(&workspace_root)
-        .canonicalize()
-        .with_context(|| format!("workspace root does not exist: {workspace_root}"))?;
-    let args = build_go_run_args(&workspace_root_path, &target, mode);
-    let mut command = tokio_command("go");
-    #[cfg(unix)]
-    command.process_group(0);
-    let child = command
-        .args(&args)
-        .current_dir(&workspace_root)
-        .env("TERM", "xterm-256color")
-        .env("CLICOLOR_FORCE", "1")
-        .env("FORCE_COLOR", "1")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
+    let package_root = Path::new(&cwd);
+    let normalized_target = crate::integration::gopls::normalize_platform_pathbuf(target);
+    let args = build_go_run_args(package_root, &normalized_target, mode);
+    let child = build_go_run_command(package_root, work.as_deref(), &args)
         .spawn()
         .with_context(|| "failed to spawn `go run` — is `go` in PATH?")?;
     let mut child = OwnedChild::new(child)
@@ -298,6 +325,104 @@ mod tests {
     use super::{build_go_run_args, to_package_run_target, RunMode};
     use std::path::Path;
     use std::process::Stdio;
+    #[tokio::test]
+    #[ignore = "requires installed Go; runs an isolated nested module through the production command builder"]
+    async fn actual_run_uses_nested_package_context_and_rejects_excluded_or_library_targets() {
+        use tokio::io::AsyncReadExt;
+        let root = std::env::temp_dir().join(format!("goide-run-package-{}", uuid::Uuid::new_v4()));
+        let directory = root.join("module/cmd/app");
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            root.join("module/go.mod"),
+            "module example.com/runpackage\n\ngo 1.22\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("main.go"),
+            "package main\nimport \"fmt\"\nfunc main() { fmt.Println(helper()) }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("helper.go"),
+            "package main\nfunc helper() int { return 42 }\n",
+        )
+        .unwrap();
+        std::fs::write(
+            directory.join("excluded.go"),
+            "//go:build goide_never_selected\n\npackage main\n",
+        )
+        .unwrap();
+        let plan_root = root.clone();
+        let plan = tokio::task::spawn_blocking(move || {
+            crate::integration::go_tests::debug_target(&plan_root, "module/cmd/app/main.go", None)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let crate::integration::delve::LaunchMode::Package { cwd, work, .. } = plan else {
+            panic!("No runnable package context");
+        };
+        let target = crate::integration::gopls::normalize_platform_pathbuf(
+            directory.join("main.go").canonicalize().unwrap(),
+        );
+        let args = build_go_run_args(Path::new(&cwd), &target, RunMode::Standard);
+        let child = super::build_go_run_command(Path::new(&cwd), work.as_deref(), &args)
+            .spawn()
+            .unwrap();
+        let mut child = crate::integration::process_job::OwnedChild::new(child)
+            .await
+            .unwrap();
+        let mut output = String::new();
+        let read = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            child.stdout.take().unwrap().read_to_string(&mut output),
+        )
+        .await;
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        let status = loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                break status;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "Go wrapper did not exit after output EOF"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        };
+        child.stop().await.unwrap();
+        assert!(status.success(), "Actual Go Run failed: {status}");
+        read.unwrap().unwrap();
+        assert_eq!(output.trim(), "42");
+        std::fs::create_dir_all(root.join("module/library")).unwrap();
+        std::fs::write(
+            root.join("module/library/value.go"),
+            "package library\n// package main\nfunc Value() int { return 1 }\n",
+        )
+        .unwrap();
+        let plan_root = root.clone();
+        tokio::task::spawn_blocking(move || {
+            assert!(crate::integration::go_tests::debug_target(
+                &plan_root,
+                "module/cmd/app/excluded.go",
+                None
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("excluded"));
+            assert!(crate::integration::go_tests::debug_target(
+                &plan_root,
+                "module/library/value.go",
+                None
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("not a runnable Go package"));
+        })
+        .await
+        .unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[tokio::test]
     async fn stopping_owned_process_reaps_it_without_stopping_an_unrelated_child() {
         fn command() -> tokio::process::Command {

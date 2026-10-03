@@ -44,9 +44,12 @@ pub enum LaunchMode {
         work: Option<String>,
     },
     /// Debug a Go package given by a package pattern such as `./cmd/app`.
-    /// The `cwd` field is the absolute path to the workspace root so that the
-    /// relative pattern is resolved correctly.
-    Package { package: String, cwd: String },
+    /// `cwd` is Go's actual package build/runtime directory; `work` is a scoped go.work.
+    Package {
+        package: String,
+        cwd: String,
+        work: Option<String>,
+    },
 }
 
 pub fn serialize_dap_path(path: &Path) -> String {
@@ -224,7 +227,7 @@ impl DapClient {
         }
         // Package mode is self-contained: use the package pattern and cwd from the
         // variant directly, ignoring the legacy workspace_root / target_file params.
-        if let LaunchMode::Package { package, cwd } = &mode {
+        if let LaunchMode::Package { package, cwd, work } = &mode {
             let response = self
                 .request(
                     "launch",
@@ -233,6 +236,7 @@ impl DapClient {
                         "program": package,
                         "cwd": normalize_platform_path_for_dap(cwd),
                         "dlvCwd": normalize_platform_path_for_dap(cwd),
+                        "env": { "GOFLAGS": "", "GOWORK": work.as_deref().unwrap_or("off") },
                         "stopOnEntry": false
                     }),
                 )
