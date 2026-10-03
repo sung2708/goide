@@ -167,6 +167,7 @@ jobs:
       - name: Generate public Tauri updater build configuration
         run: node scripts/update-build-config.mjs
       - name: Verify versions and documentation
+        shell: bash
         run: |
           npm run version:check
           npm run docs:check
