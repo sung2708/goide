@@ -1,6 +1,6 @@
-# Testing GoIDE
+# Testing Goro
 
-GoIDE maintains a comprehensive automated testing suite to prevent behavioral regressions across editor operations, runtime inspection, and IPC communication.
+Goro maintains a comprehensive automated testing suite to prevent behavioral regressions across editor operations, runtime inspection, and IPC communication.
 
 ---
 

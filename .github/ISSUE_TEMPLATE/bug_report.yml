@@ -1,17 +1,17 @@
 name: Bug Report
-description: Create a report to help us improve GoIDE
+description: Create a report to help us improve Goro
 title: "fix: "
 labels: ["bug"]
 body:
   - type: markdown
     attributes:
       value: |
-        Thank you for reporting an issue with GoIDE. Please fill in the details below to help us reproduce and resolve the problem.
+        Thank you for reporting an issue with Goro. Please fill in the details below to help us reproduce and resolve the problem.
   - type: input
     id: version
     attributes:
-      label: GoIDE Version / Git Commit
-      description: What version or commit of GoIDE are you running?
+      label: Goro Version / Git Commit
+      description: What version or commit of Goro are you running?
       placeholder: "e.g. 0.2.0-alpha.1 or git commit hash"
     validations:
       required: true

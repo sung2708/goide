@@ -1,12 +1,12 @@
 # Security Policy
 
-The GoIDE project takes security vulnerabilities seriously. We appreciate the responsible disclosure of security issues by researchers, developers, and users.
+The Goro project takes security vulnerabilities seriously. We appreciate the responsible disclosure of security issues by researchers, developers, and users.
 
 ---
 
 ## Supported Versions
 
-Because GoIDE is currently on a pre-1.0 stabilization track, security patches are actively applied to the latest development branch and released in subsequent pre-release/minor tags.
+Because Goro is currently on a pre-1.0 stabilization track, security patches are actively applied to the latest development branch and released in subsequent pre-release/minor tags.
 
 | Version Track | Supported | Notes |
 |:---|:---:|:---|
@@ -29,7 +29,7 @@ To report a vulnerability privately:
 ### What to Include in Your Report
 
 To help us triage and resolve the issue quickly, please provide:
-- **GoIDE Version**: Exact release tag or Git commit hash.
+- **Goro Version**: Exact release tag or Git commit hash.
 - **Operating System and Architecture**: Windows, macOS, or Linux (x86_64 or aarch64).
 - **Vulnerability Description**: Type of vulnerability (e.g., command injection, arbitrary path traversal, memory unsafety).
 - **Proof of Concept / Reproduction**: Clear, step-by-step instructions or minimal project demonstrating the issue.
@@ -49,7 +49,7 @@ To help us triage and resolve the issue quickly, please provide:
 
 ## Architectural Security Considerations
 
-GoIDE combines a Web frontend (React / Vite) with a native Rust backend (Tauri v2). Maintainers and contributors must respect these architectural boundaries:
+Goro combines a Web frontend (React / Vite) with a native Rust backend (Tauri v2). Maintainers and contributors must respect these architectural boundaries:
 
 ### 1. Tauri Content Security Policy (CSP)
 The application window operates under a strict CSP configured in `src-tauri/tauri.conf.json`:
@@ -59,7 +59,7 @@ default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src
 Remote network access from the webview is prohibited; network communication is routed exclusively through native Rust IPC handlers.
 
 ### 2. Process Execution & Command Sanitization
-- GoIDE executes local binaries (`go`, `gopls`, `dlv`) on behalf of the user.
+- Goro executes local binaries (`go`, `gopls`, `dlv`) on behalf of the user.
 - Subprocesses are spawned directly using `std::process::Command` / `tokio::process::Command` without passing strings to an intermediate shell interpreter (`cmd.exe` or `/bin/sh`), preventing shell injection attacks.
 - Arguments are explicitly structured as individual strings rather than concatenated command lines.
 

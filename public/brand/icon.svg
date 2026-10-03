@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" fill="none"><title>GoIDE</title><rect x="2" y="2" width="100" height="100" rx="23" fill="#10232F"/><g transform="translate(6 5) scale(.87)">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 104 104" fill="none"><title>Goro</title><rect x="2" y="2" width="100" height="100" rx="23" fill="#10232F"/><g transform="translate(6 5) scale(.87)">
   
-  <desc>GoIDE adaptation of Renee French's Go gopher, CC BY 4.0. Redrawn with three concurrent flow trails.</desc>
+  <desc>Goro adaptation of Renee French's Go gopher, CC BY 4.0. Redrawn with three concurrent flow trails.</desc>
   <g stroke="#35CDBE" stroke-width="6" stroke-linecap="round">
     <path d="M64 48C81 48 78 34 95 34"/><path d="M65 61H95"/><path d="M64 74C81 74 78 88 95 88"/>
   </g>

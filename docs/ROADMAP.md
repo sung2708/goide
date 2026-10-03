@@ -1,9 +1,9 @@
-# GoIDE Product Roadmap
+# Goro Product Roadmap
 
-This document outlines the engineering and product roadmap for GoIDE leading toward its first production-stable 1.0 release.
+This document outlines the engineering and product roadmap for Goro leading toward its first production-stable 1.0 release.
 
 > [!NOTE]
-> Historical `v1.x` prototype tags do not indicate product maturity. GoIDE is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
+> Historical `v1.x` prototype tags do not indicate product maturity. Goro is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
 
 ---
 
@@ -69,7 +69,7 @@ Phase 1: Foundation & Hygiene  ──►  Phase 2: Alpha (0.2.x)  ──►  Pha
 
 ### Priority and Evidence Rules
 
-P0 is required core before approaching Beta. P1 is the strong initial-stable target. P2 differentiates GoIDE after P0 workflows are reliable. Post-1.0 is explicitly outside the initial release. Missing P2 alone does not block Alpha/Beta/RC unless selected as part of that release's feature set.
+P0 is required core before approaching Beta. P1 is the strong initial-stable target. P2 differentiates Goro after P0 workflows are reliable. Post-1.0 is explicitly outside the initial release. Missing P2 alone does not block Alpha/Beta/RC unless selected as part of that release's feature set.
 
 Do not implement P1 while fundamental P0 architecture is broken or P2 while P0 workflows are unreliable. Existing checked entries describe implemented baseline capabilities, not full compliance with the expanded requirements or release readiness. Unchecked entries include missing capabilities and partial implementations whose required behavior is not yet verified.
 
@@ -175,4 +175,4 @@ Implementation order is baseline green, data safety, process ownership, command/
 - [ ] Extensions and marketplace only after API stability, sandbox/security and compatibility design.
 - [ ] AI features only with separate product/privacy/security design; not required for the Go-native core.
 - [ ] Accounts/cloud sync, remote SSH/container development and real-time collaboration only with explicit product justification.
-- [ ] Database/Docker/Kubernetes IDE tooling is outside the initial GoIDE scope.
+- [ ] Database/Docker/Kubernetes IDE tooling is outside the initial Goro scope.

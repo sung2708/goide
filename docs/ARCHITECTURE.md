@@ -1,12 +1,12 @@
-# GoIDE System Architecture
+# Goro System Architecture
 
-This document describes the real architecture of GoIDE as implemented in the codebase.
+This document describes the real architecture of Goro as implemented in the codebase.
 
 ---
 
 ## 1. System Overview
 
-GoIDE is structured into two primary tiers:
+Goro is structured into two primary tiers:
 1. **Frontend Tier (Webview)**: A React 19 and TypeScript application that manages the workbench UI, CodeMirror editor, terminal views, and user interactions.
 2. **Backend Tier (Native Host)**: A Rust application powered by Tauri v2 that owns operating system interactions, process execution, PTY sessions, file operations, and developer tooling bridges (`gopls`, `dlv`).
 
@@ -199,9 +199,11 @@ features/documents owns the single document snapshot consumed by EditorShell thr
 
 The Problems feature maps typed diagnostic DTOs and located compiler stderr into source-tagged results. It does not infer errors from arbitrary terminal text. Compiler paths must remain inside the active workspace, and results are tied to the originating Run ID/root. Editing or filesystem changes permanently invalidate that run's results rather than temporarily hiding them until Save. Diagnostic caches reject stale request completions and are retired on workspace/branch changes. Navigation uses the latest document text and clamps the reported column to its line.
 
+
 ## gopls teardown hardening
 
 The persistent gopls process now owns its process tree through a synchronous native owner. Teardown terminates descendants even when the root exits first, reaps the root, then joins its bounded protocol reader. Explicit application shutdown propagates teardown failures. LSP headers are bounded at 16 KiB before allocation, duplicate Content-Length headers are rejected, and bodies remain bounded at 16 MiB. Windows tests verify scoped descendant termination, an unrelated process surviving, and repeated stop calls; parser and session teardown tests pass. This is lifecycle hardening, not completion of the addendum's language features or platform release gates.
+
 
 ## Workspace language queries milestone
 
@@ -211,11 +213,13 @@ Requests validate scoped Go files and positions, limit the synchronized set to 1
 
 Validation includes real gopls definition/reference/hover queries over unsaved changes across two files without writing disk, protocol content/location parsing, Windows URI normalization, frontend stale-response/error handling, and EditorShell F12 navigation to the returned file/detailed position. The implementation follows the [LSP 3.17 language feature specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#languageFeatures).
 
+
 ## Reviewed Format Document milestone
 
 Format Document (Shift+Alt+F, also in the command palette) requests actual gopls formatting edits for the current unsaved Go buffer. A review dialog shows complete before/after source. Cancel leaves the buffer unchanged; Apply marks the edited buffer dirty without writing disk or changing its saved baseline. A later Save/Save All retains optimistic conflict checks. The shared document edit operation validates an entire proposed set before publishing any change, refuses changed snapshots/read-only files/invalid or duplicate paths/pending saves, and retains baselines for already-open and newly opened documents.
 
 Native edit conversion validates UTF-16 positions, Unicode scalar boundaries, range ordering and overlaps, and the existing size limits. Reviewed controlled values synchronize immediately before the editor wrapper can defer them behind a typing timer. CodeMirror changes retain cursor placement through whitespace-only formatting and support Undo; other changes conservatively retain a clamped line/column. Applying a format retires stale diagnostics and completion requests. Tests cover real gopls formatting without disk writes, CRLF/Unicode/range safety, review cancellation and stale results, multi-file atomicity and baseline retention, real CodeMirror cursor/Undo behavior, and EditorShell format-review-save integration. Format on Save, Organize Imports, Rename and Code Actions remain unfinished. This milestone does not complete the addendum or release gates.
+
 
 ## Reviewed Organize Imports milestone
 
@@ -224,6 +228,7 @@ Organize Imports is available in the shared command palette and requests the act
 The persistent session tracks the versions it sends for each open document. Both WorkspaceEdit `changes` and versioned `documentChanges` are accepted for the requested file; stale versions, other files, overlaps and resource operations are rejected before applying. Disabled actions show their returned reason. Unresolved actions may be resolved through gopls; actions requiring unsupported command execution or multiple-choice selection report that limitation. Automatic import organization on Save and the broader Code Actions chooser remain unfinished.
 
 Validation includes real gopls adding a missing fmt import and removing an unused os import from unsaved text without writing disk, version/path/resource-operation rejection, palette review/Cancel/Apply integration, and completion/server-teardown compatibility. See the official [gopls code transformation documentation](https://go.dev/gopls/features/transformation).
+
 
 ### Reviewed symbol rename checkpoint — 2026-10-03
 

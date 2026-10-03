@@ -1,6 +1,6 @@
-# GoIDE Engineering Rules
+# Goro Engineering Rules
 
-This document establishes durable architectural and engineering rules for all contributors and maintainers working on GoIDE. These rules govern code structure, lifecycle management, security boundaries, and code quality.
+This document establishes durable architectural and engineering rules for all contributors and maintainers working on Goro. These rules govern code structure, lifecycle management, security boundaries, and code quality.
 
 ---
 

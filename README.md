@@ -1,15 +1,19 @@
-# GoIDE
+# Goro
 
 <div align="center">
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="public/brand/logo-dark.svg" />
-  <img src="public/brand/logo-light.svg" alt="GoIDE — Go gopher with an editor and concurrent runtime paths" width="326" height="104" />
+  <img src="public/brand/logo-light.svg" alt="Goro — Go gopher with an editor and concurrent runtime paths" width="278" height="104" />
 </picture>
 
-**A lightweight, native-backed desktop IDE built for Go developers.**
+**Understand Go in motion.**
 
-Fast startup, low memory footprint, native terminal execution, integrated `gopls` language intelligence, Delve debugging, and specialized workflows for runtime inspection and concurrency analysis.
+A Go IDE for coding, debugging, and understanding concurrent programs.
+
+Go source editing, native terminal execution, `gopls`, Delve, and runtime/concurrency inspection in one desktop workbench.
+
+[Releases](https://github.com/sung2708/goide/releases) · [Quick start](#quick-start-development) · [Product vision](docs/PRODUCT.md) · [Roadmap](docs/ROADMAP.md)
 
 [![CI](https://github.com/sung2708/goide/actions/workflows/ci.yml/badge.svg)](https://github.com/sung2708/goide/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -17,22 +21,27 @@ Fast startup, low memory footprint, native terminal execution, integrated `gopls
 
 </div>
 
+**Goro** takes its name from *goroutine*. It is a Go IDE built to help you write Go and understand it while it runs: follow execution, inspect goroutines, and investigate race reports without losing the source context. The product is called **Goro**; this repository remains **[`sung2708/goide`](https://github.com/sung2708/goide)**.
+
 ---
 
 > [!NOTE]
-> **Product Maturity Notice**: GoIDE is currently undergoing a formal pre-1.0 stabilization track (`0.x.y`). While core editing, terminal, and debugging workflows are functional, GoIDE is **not yet declared stable for production use**. See our [Roadmap](docs/ROADMAP.md) and [Versioning Policy](docs/VERSIONING.md) for details.
+> **Product Maturity Notice**: Goro is currently undergoing a formal pre-1.0 stabilization track (`0.x.y`). While core editing, terminal, and debugging workflows are functional, Goro is **not yet declared stable for production use**. See our [Roadmap](docs/ROADMAP.md) and [Versioning Policy](docs/VERSIONING.md) for details.
 
 ---
 
-## Why GoIDE?
+## Why Goro?
 
-Many contemporary developer environments consume gigabytes of system memory, take seconds to load, and treat Go as merely one of dozens of generic languages.
+Go source tells you what a program can do. Understanding a concurrent program also means investigating what happens when it runs: which goroutine is blocked, where a channel operation connects, and which accesses appear in a race report.
 
-GoIDE is built from the ground up specifically for Go:
-- **Instantaneous Startup & Lean Footprint**: Powered by **Tauri v2** and **React 19**, GoIDE opens in under a second and maintains minimal memory overhead compared to Electron-based IDEs.
-- **Concurrency & Race First**: First-class support for `go run -race`, runtime signal sampling, and channel counterpart jump actions.
-- **Native Developer Tooling**: Direct integration with the official Go toolchain, `gopls` language server, and `dlv` (Delve) debugger.
-- **Workspace-Owned Terminal**: Persistent PTY shell sessions that remain active and uninterrupted as you browse and edit files.
+Goro brings those questions into the workbench:
+
+- **Write Go with context**: CodeMirror editing and `gopls` language intelligence, backed by your local Go toolchain.
+- **Follow execution**: Native terminal sessions and Delve debugging alongside the source.
+- **Investigate concurrency**: `go run -race` findings, sampled runtime signals, and channel counterpart navigation.
+- **Keep the workbench focused**: Tauri v2 and React 19 provide a native-backed desktop environment dedicated to Go.
+
+Runtime inspection combines observations and heuristic analysis; it is not a complete execution trace or proof of causality. See [Product Vision & Goals](docs/PRODUCT.md) for the evidence model and [Key Capabilities](#key-capabilities) for implemented, experimental, and planned work.
 
 ---
 
@@ -59,7 +68,7 @@ GoIDE is built from the ground up specifically for Go:
 
 ## Prerequisites & Required Tooling
 
-GoIDE integrates directly with tools installed in your local environment. Ensure these commands are available on your system `PATH`:
+Goro integrates directly with tools installed in your local environment. Ensure these commands are available on your system `PATH`:
 
 | Tool | Version | Purpose | Installation |
 |:---|:---|:---|:---|
@@ -67,13 +76,13 @@ GoIDE integrates directly with tools installed in your local environment. Ensure
 | **gopls** | Latest | Language intelligence, diagnostics, completion | `go install golang.org/x/tools/gopls@latest` |
 | **dlv** | Latest | Delve debugger for runtime sessions | `go install github.com/go-delve/delve/cmd/dlv@latest` |
 
-GoIDE performs an automated toolchain preflight on launch and surfaces missing tools in the status bar.
+Goro performs an automated toolchain preflight on launch and surfaces missing tools in the status bar.
 
 ---
 
 ## Supported Platforms
 
-GoIDE is developed and tested for 64-bit desktop environments:
+Goro is developed and tested for 64-bit desktop environments:
 
 | Operating System | Architecture | Package Format | Status |
 |:---|:---|:---|:---:|
@@ -99,7 +108,7 @@ npm run version:check
 # 4. Run test suites
 npm test
 
-# 5. Launch GoIDE in development mode
+# 5. Launch Goro in development mode
 npm run tauri dev
 ```
 
@@ -116,6 +125,7 @@ For complete platform build instructions, see [docs/BUILDING.md](docs/BUILDING.m
 - **[Build Guide](docs/BUILDING.md)**: Platform prerequisites, MSVC setup, and release packaging.
 - **[Testing Guide](docs/TESTING.md)**: Vitest frontend suites, unit testing conventions, and test commands.
 - **[Product Roadmap](docs/ROADMAP.md)**: Pre-stable stabilization phases and exit criteria.
+- **[Brand & Artwork](docs/BRAND.md)**: Goro logo, gopher, color palette, app icons, and attribution.
 - **[Versioning Policy](docs/VERSIONING.md)**: Semantic versioning rules, tag naming, and version synchronization.
 - **[Release Runbook](docs/RELEASE.md)**: Maintainer release checklist, GitHub Actions pipeline, and recovery.
 - **[Troubleshooting Guide](docs/TROUBLESHOOTING.md)**: Solutions for common toolchain, terminal, and build issues.
@@ -144,6 +154,6 @@ Please report vulnerabilities privately via [GitHub Private Vulnerability Report
 
 ## License
 
-GoIDE is released under the [MIT License](LICENSE).
+Goro is released under the [MIT License](LICENSE).
 
-The GoIDE gopher artwork adapts the Go gopher by Renee French, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes include a vector redraw, editor/breakpoint panel, concurrent flow trails, and GoIDE colors. See the [original Go gopher](https://go.dev/blog/gopher) and [brand guide](docs/BRAND.md). GoIDE is an independent project.
+The Goro gopher artwork adapts the Go gopher by Renee French, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes include a vector redraw, editor/breakpoint panel, concurrent flow trails, and Goro colors. See the [original Go gopher](https://go.dev/blog/gopher) and [brand guide](docs/BRAND.md). Goro is an independent project.

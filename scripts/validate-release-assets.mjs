@@ -23,17 +23,17 @@ function parseArgs() {
 }
 
 const CANONICAL_ARTIFACT_REGEX =
-  /^goide-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?-(windows|macos|linux)-(x86_64|aarch64)(?:-[a-z0-9]+)?\.(exe|msi|dmg|AppImage|deb|tar\.gz|zip)$/;
+  /^goro-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?-(windows|macos|linux)-(x86_64|aarch64)(?:-[a-z0-9]+)?\.(exe|msi|dmg|AppImage|deb|tar\.gz|zip)$/;
 
 const FORBIDDEN_GENERIC_PATTERNS = [
   /^setup\.exe$/i,
   /^installer\.exe$/i,
   /^app\.exe$/i,
   /^bundle\.zip$/i,
-  /^goide\.exe$/i,
-  /^goide\.dmg$/i,
-  /^goide\.AppImage$/i,
-  /^goide\.deb$/i,
+  /^goro\.exe$/i,
+  /^goro\.dmg$/i,
+  /^goro\.AppImage$/i,
+  /^goro\.deb$/i,
 ];
 
 function computeSha256(filePath) {
@@ -115,7 +115,7 @@ function main() {
     // Rule 2: Must match canonical naming pattern
     if (!CANONICAL_ARTIFACT_REGEX.test(file)) {
       console.error(
-        `[ERROR] Asset filename "${file}" does not match canonical pattern: goide-v{VERSION}-{PLATFORM}-{ARCH}[-{PACKAGE}].{EXT}`
+        `[ERROR] Asset filename "${file}" does not match canonical pattern: goro-v{VERSION}-{PLATFORM}-{ARCH}[-{PACKAGE}].{EXT}`
       );
       errors++;
     }
