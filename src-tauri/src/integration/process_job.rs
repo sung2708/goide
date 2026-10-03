@@ -1,5 +1,7 @@
 //! Windows app boundary: descendants inherit the job before tools are launched.
 #[cfg(windows)]
+mod windows_spawn;
+#[cfg(windows)]
 mod windows {
     use std::{
         os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle},
@@ -52,6 +54,25 @@ mod windows {
                 return Err(std::io::Error::last_os_error().to_string());
             }
             Ok(())
+        }
+        pub fn resume_registered(&self, process: RawHandle) -> Result<(), String> {
+            use windows_sys::Win32::System::JobObjects::IsProcessInJob;
+            let mut assigned = 0;
+            // SAFETY: Both owned handles remain valid, and the initialized BOOL output is writable.
+            if unsafe {
+                IsProcessInJob(
+                    process as HANDLE,
+                    self.0.as_raw_handle() as HANDLE,
+                    &mut assigned,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            if assigned == 0 {
+                return Err("Suspended process is not registered in its owned job.".into());
+            }
+            super::windows_spawn::resume_initial_thread(process)
         }
         pub fn terminate(&self) -> Result<(), String> {
             // SAFETY: This handle owns only its explicitly assigned process tree.
