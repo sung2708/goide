@@ -121,42 +121,62 @@ pub struct OwnedSyncChild {
 impl OwnedSyncChild {
     pub fn spawn(command: &mut Command) -> std::io::Result<Self> {
         retry_pending_cleanup()?;
-        #[cfg(unix)]
+        crate::integration::language_requests::check()
+            .map_err(crate::integration::language_requests::into_io_error)?;
+        #[cfg(windows)]
+        {
+            Self::spawn_windows(command, crate::integration::process_job::Job::assign)
+        }
+        #[cfg(not(windows))]
         {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
+            let child = command.spawn()?;
+            Ok(Self {
+                process: Some(SyncProcess {
+                    process_group: child.id(),
+                    group_signalled: false,
+                    child,
+                    #[cfg(test)]
+                    fail_stops: 0,
+                }),
+                stopped: false,
+            })
         }
-        #[allow(unused_mut)]
-        let mut child = command.spawn()?;
-        #[cfg(windows)]
-        let tree = {
-            use std::os::windows::io::AsRawHandle;
-            match crate::integration::process_job::Job::new().and_then(|job| {
-                job.assign(child.as_raw_handle())?;
-                Ok(job)
-            }) {
-                Ok(tree) => tree,
-                Err(error) => {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Err(std::io::Error::other(error));
-                }
-            }
-        };
-        Ok(Self {
+    }
+    #[cfg(windows)]
+    fn spawn_windows(
+        command: &mut Command,
+        register: impl FnOnce(
+            &crate::integration::process_job::Job,
+            std::os::windows::io::RawHandle,
+        ) -> Result<(), String>,
+    ) -> std::io::Result<Self> {
+        use std::os::windows::{io::AsRawHandle, process::CommandExt};
+        use windows_sys::Win32::System::Threading::{CREATE_NO_WINDOW, CREATE_SUSPENDED};
+        // Create the job before the child exists; no project instruction runs before registration.
+        let tree = crate::integration::process_job::Job::new().map_err(std::io::Error::other)?;
+        command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
+        let child = command.spawn()?;
+        let owned = Self {
             process: Some(SyncProcess {
-                #[cfg(unix)]
-                process_group: child.id(),
-                #[cfg(unix)]
-                group_signalled: false,
                 child,
-                #[cfg(windows)]
                 tree,
                 #[cfg(test)]
                 fail_stops: 0,
             }),
             stopped: false,
-        })
+        };
+        let process = owned.process.as_ref().expect("owned suspended process");
+        register(&process.tree, process.child.as_raw_handle()).map_err(std::io::Error::other)?;
+        crate::integration::language_requests::check()
+            .map_err(crate::integration::language_requests::into_io_error)?;
+        process
+            .tree
+            .resume_registered(process.child.as_raw_handle())
+            .map_err(std::io::Error::other)?;
+        // Any failure above drops `owned`: stop/reap it or retain its full resources for retry.
+        Ok(owned)
     }
     pub fn stop(&mut self) -> std::io::Result<()> {
         if self.stopped {
@@ -209,6 +229,116 @@ mod tests {
         Foundation::WAIT_OBJECT_0,
         System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
     };
+    fn suspended_fixture() -> (std::path::PathBuf, std::path::PathBuf, Command) {
+        let root =
+            std::env::temp_dir().join(format!("goide-suspended-sdk-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        let script = root.join("first.ps1");
+        let marker = root.join("marker");
+        std::fs::write(&script, "param([string]$MarkerPath)\nSet-Content -LiteralPath $MarkerPath -Value ran\nStart-Sleep -Seconds 60\n").unwrap();
+        let mut command = std_command("powershell.exe");
+        command
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+            ])
+            .arg(script)
+            .arg(&marker)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        (root, marker, command)
+    }
+    fn remove_suspended_fixture(root: std::path::PathBuf) {
+        // Only remove the fresh, isolated fixture created above, after ownership is retired.
+        std::fs::remove_file(root.join("first.ps1")).unwrap();
+        if root.join("marker").exists() {
+            std::fs::remove_file(root.join("marker")).unwrap();
+        }
+        std::fs::remove_dir(root).unwrap();
+    }
+    #[test]
+    fn sdk_child_runs_no_instruction_before_job_assignment() {
+        let (root, marker, mut command) = suspended_fixture();
+        let mut owned = OwnedSyncChild::spawn_windows(&mut command, |job, process| {
+            // A running child would already be allowed to write its first-instruction marker.
+            std::thread::sleep(Duration::from_millis(100));
+            assert!(
+                !marker.exists(),
+                "SDK child ran before its job was assigned"
+            );
+            job.assign(process)
+        })
+        .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !marker.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "Registered SDK child was not resumed"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        owned.stop().unwrap();
+        assert!(owned.try_wait().unwrap().is_some());
+        remove_suspended_fixture(root);
+    }
+    #[test]
+    fn cancellation_after_job_assignment_prevents_first_instruction_and_preserves_its_cause() {
+        let (root, marker, mut command) = suspended_fixture();
+        let id = uuid::Uuid::new_v4().to_string();
+        let scope = crate::integration::language_requests::begin_with_timeout(
+            &root,
+            Some(&id),
+            Duration::from_secs(15),
+        )
+        .unwrap();
+        let failed = OwnedSyncChild::spawn_windows(&mut command, |job, process| {
+            job.assign(process)?;
+            crate::integration::language_requests::cancel(&root, &id).unwrap();
+            Ok(())
+        });
+        let error = match failed {
+            Ok(_) => panic!("Cancelled SDK child resumed"),
+            Err(error) => error,
+        };
+        assert!(crate::integration::language_requests::is_stopped(
+            &anyhow::Error::from(error)
+        ));
+        retry_pending_cleanup().unwrap();
+        assert!(!marker.exists(), "Cancelled SDK child ran project code");
+        drop(scope);
+        remove_suspended_fixture(root);
+    }
+    #[test]
+    fn failed_sdk_job_registration_never_runs_project_code_and_reaps_the_child() {
+        use std::cell::RefCell;
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::System::Threading::GetProcessId;
+        let (root, marker, mut command) = suspended_fixture();
+        let pinned = RefCell::new(None::<OwnedHandle>);
+        let failed = OwnedSyncChild::spawn_windows(&mut command, |_job, process| {
+            // SAFETY: The newly created Child remains pinned in spawn_windows throughout this callback.
+            let pid = unsafe { GetProcessId(process as _) };
+            // SAFETY: Open a wait-only handle while the pinned original process is still alive.
+            let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            assert!(!raw.is_null());
+            // SAFETY: OpenProcess returned a unique kernel handle, retained past failed registration.
+            *pinned.borrow_mut() = Some(unsafe { OwnedHandle::from_raw_handle(raw as _) });
+            Err("injected owned job registration failure".into())
+        });
+        assert!(failed.is_err());
+        retry_pending_cleanup().unwrap();
+        let handle = pinned.into_inner().unwrap();
+        // SAFETY: The retained handle is the exact child created by this fixture.
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle() as _, 2000) },
+            WAIT_OBJECT_0
+        );
+        assert!(!marker.exists(), "Unregistered SDK child ran project code");
+        remove_suspended_fixture(root);
+    }
     #[test]
     fn failed_cleanup_retains_native_handles_and_retries_without_stopping_unrelated_children() {
         let mut unrelated = OwnedSyncChild::spawn(

@@ -40,13 +40,30 @@ impl std::fmt::Display for Stopped {
     }
 }
 impl std::error::Error for Stopped {}
+fn stopped_cause<'a>(cause: &'a (dyn std::error::Error + 'static)) -> Option<&'a Stopped> {
+    cause.downcast_ref::<Stopped>().or_else(|| {
+        // io::Error::source can skip its custom payload when that payload has no source.
+        cause
+            .downcast_ref::<std::io::Error>()
+            .and_then(std::io::Error::get_ref)
+            .and_then(|inner| inner.downcast_ref::<Stopped>())
+    })
+}
 pub(crate) fn is_deadline(error: &anyhow::Error) -> bool {
     error
-        .downcast_ref::<Stopped>()
-        .is_some_and(|error| error.0.contains("deadline"))
+        .chain()
+        .filter_map(stopped_cause)
+        .any(|error| error.0.contains("deadline"))
+}
+pub(crate) fn into_io_error(error: anyhow::Error) -> std::io::Error {
+    // Preserve the concrete cancellation cause across the std::process I/O boundary.
+    match error.downcast::<Stopped>() {
+        Ok(stopped) => std::io::Error::other(stopped),
+        Err(error) => std::io::Error::other(error),
+    }
 }
 pub fn is_stopped(error: &anyhow::Error) -> bool {
-    error.downcast_ref::<Stopped>().is_some()
+    error.chain().any(|cause| stopped_cause(cause).is_some())
 }
 pub fn check() -> Result<()> {
     if super::lifecycle::gate().is_closing() {
@@ -310,6 +327,23 @@ pub fn cancel(root: &Path, id: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cancellation_and_deadline_classification_survive_owned_spawn_io_wrapping() {
+        let cancelled = anyhow::Error::from(into_io_error(
+            anyhow::Error::new(Stopped("Native request cancelled."))
+                .context("before native resumption"),
+        ));
+        assert!(is_stopped(&cancelled));
+        assert!(!is_deadline(&cancelled));
+        let deadline = anyhow::Error::from(into_io_error(anyhow::Error::new(Stopped(
+            "Native request exceeded its execution deadline.",
+        ))));
+        assert!(is_stopped(&deadline));
+        assert!(is_deadline(&deadline));
+        let permission =
+            anyhow::Error::from(std::io::Error::from(std::io::ErrorKind::PermissionDenied));
+        assert!(!is_stopped(&permission));
+    }
     #[test]
     fn acknowledged_startup_disarms_abandonment_but_keeps_identity_scoped() {
         let root = Path::new("acknowledged-startup");

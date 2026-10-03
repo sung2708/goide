@@ -359,3 +359,11 @@ Bugs found/fixed: Windows extended-path prefixes caused cancellation identity mi
 Earlier loaded-machine runs hit default five/ten-second UI test budgets, and one native Go discovery command reached its existing tool deadline; final native reruns pass without changing production deadlines. Final debugger/terminal integration runs use a command-line 20-second test budget. The two multi-dialog Race flows use the same 15-second budget as the existing full Race workflow; the observed-Pause query waits for a native polling cycle. Assertions are retained. Fresh fixture deletion retries transient Windows PermissionDenied for at most three seconds, after process ownership has retired. Performance acceptance is NOT RUN.
 
 The full latest repository suite, complete Git/addendum requirements, Windows suspended-spawn acceptance, Linux/macOS and native window/installer acceptance remain unfinished or NOT RUN. No release/tag is authorized.
+
+
+## Suspended Windows SDK startup validation (2026-10-03)
+
+- PASS: 8 language-request tests, including actual typed I/O cancellation/deadline conversion. The new classification test initially failed because the std I/O error chain omitted its custom payload; explicit typed payload inspection fixed it.
+- PASS: 5 synchronous-owner tests, including no first instruction before job assignment, registration failure preventing project execution, cancellation after assignment before resumption, retained failed cleanup and scoped descendant retirement.
+- PASS: 4 owned-output tests and all-target MSVC Clippy. Actual Go test and Go/gopls/Delve probe fixtures also passed for the suspended SDK path.
+- This native-only change does not alter frontend contracts. Async Run/Delve/PTY spawn registration and Linux/macOS/native-window/manual performance acceptance remain NOT RUN or unfinished; this is not a release gate pass.
