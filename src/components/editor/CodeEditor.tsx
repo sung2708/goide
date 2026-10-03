@@ -651,10 +651,118 @@ function CodeEditor({
 }: CodeEditorProps) {
   const { values: settings } = useSettings();
   const [editorView, setEditorView] = useState<EditorView | null>(null);
+
+  const viewRef = useRef<EditorView | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const findWidget = useFindWidget(viewRef);
+  const findWidgetRef = useRef(findWidget);
+  findWidgetRef.current = findWidget;
+
   const entryContextRef = useRef({ key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction });
   entryContextRef.current = { key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction };
   const entryLenses = useMemo(() => entryActionLenses(() => entryContextRef.current), []);
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const onSelectionLineChangeRef = useRef(onSelectionLineChange);
+  onSelectionLineChangeRef.current = onSelectionLineChange;
+  const onCursorOffsetChangeRef = useRef(onCursorOffsetChange);
+  onCursorOffsetChangeRef.current = onCursorOffsetChange;
+  const onInteractionAnchorChangeRef = useRef(onInteractionAnchorChange);
+  onInteractionAnchorChangeRef.current = onInteractionAnchorChange;
+  const onCounterpartAnchorChangeRef = useRef(onCounterpartAnchorChange);
+  onCounterpartAnchorChangeRef.current = onCounterpartAnchorChange;
+  const onRequestCompletionsRef = useRef(onRequestCompletions);
+  onRequestCompletionsRef.current = onRequestCompletions;
+  const onRequestHoverRef = useRef(onRequestHover);
+  onRequestHoverRef.current = onRequestHover;
+  const onRequestSignatureRef = useRef(onRequestSignature);
+  onRequestSignatureRef.current = onRequestSignature;
+  const counterpartLineRef = useRef(counterpartLine);
+  counterpartLineRef.current = counterpartLine;
+  const suppressFindWidgetRef = useRef(suppressFindWidget);
+  suppressFindWidgetRef.current = suppressFindWidget;
 
+  const highlightedLineRef = useRef<number | null>(null);
+  const executionLineRef = useRef<number | null>(null);
+  const hoveredLineRef = useRef<number | null>(null);
+  const selectedLineRef = useRef<number | null>(null);
+  const cursorOffsetRef = useRef<number | null>(null);
+  const viewportRangeRef = useRef<VisibleLineRange | null>(null);
+  const lastAnchorRef = useRef<InteractionAnchor | null>(null);
+
+  const handledJumpRequestIdRef = useRef<number | null>(null);
+  const handledWheelEventsRef = useRef(new WeakSet<Event>());
+
+  const emitSelectionLine = useCallback((line: number | null) => {
+    const callback = onSelectionLineChangeRef.current;
+    if (!callback) {
+      return;
+    }
+
+    if (selectedLineRef.current === line) {
+      return;
+    }
+
+    selectedLineRef.current = line;
+    callback(line);
+  }, []);
+
+  const emitCursorOffset = useCallback((offset: number | null) => {
+    const callback = onCursorOffsetChangeRef.current;
+    if (!callback) {
+      return;
+    }
+
+    if (cursorOffsetRef.current === offset) {
+      return;
+    }
+
+    cursorOffsetRef.current = offset;
+    callback(offset);
+  }, []);
+
+  const emitInteractionAnchor = useCallback((line: number | null) => {
+    const callback = onInteractionAnchorChangeRef.current;
+    if (!callback) {
+      return;
+    }
+
+    const view = viewRef.current;
+    const container = containerRef.current;
+    if (!view || !container || line === null || line < 1 || line > view.state.doc.lines) {
+      if (lastAnchorRef.current !== null) {
+        lastAnchorRef.current = null;
+        callback(null);
+      }
+      return;
+    }
+
+    const from = view.state.doc.line(line).from;
+    const coords = view.coordsAtPos(from);
+    if (!coords) {
+      if (lastAnchorRef.current !== null) {
+        lastAnchorRef.current = null;
+        callback(null);
+      }
+      return;
+    }
+
+    const rect = container.getBoundingClientRect();
+    const nextTop = Math.max(8, Math.round(coords.top - rect.top));
+    const nextLeft = Math.max(8, Math.round(coords.left - rect.left + 16));
+
+    if (
+      lastAnchorRef.current &&
+      lastAnchorRef.current.top === nextTop &&
+      lastAnchorRef.current.left === nextLeft
+    ) {
+      return;
+    }
+
+    const nextAnchor = { top: nextTop, left: nextLeft };
+    lastAnchorRef.current = nextAnchor;
+    callback(nextAnchor);
+  }, []);
   useLayoutEffect(() => {
     const view = viewRef.current;
     if (view && typeof view.state.doc.length === "number") synchronizeControlledDocument(view, value);
@@ -797,7 +905,7 @@ function CodeEditor({
 
   const goplsCompletionSource = useCallback(
     async (context: CompletionContext): Promise<CompletionResult | null> => {
-      if (!onRequestCompletions) {
+      if (!onRequestCompletionsRef.current) {
         return null;
       }
 
@@ -857,7 +965,7 @@ function CodeEditor({
         fileContent: virtualCompletionDocument?.fileContent ?? documentText,
       };
 
-      const items = await onRequestCompletions(request);
+      const items = await onRequestCompletionsRef.current(request);
       if (context.aborted) {
         return null;
       }
@@ -930,7 +1038,7 @@ function CodeEditor({
         })),
       };
     },
-    [onRequestCompletions]
+    []
   );
 
   const buildCodeMirrorDiagnostics = (view: EditorView): Diagnostic[] => {
@@ -1021,8 +1129,10 @@ function CodeEditor({
     return true;
   };
 
-  const hoverExtensions = useMemo(() => onRequestHover ? languageHover(onRequestHover) : [], [onRequestHover]);
-  const signatureExtensions = useMemo(() => onRequestSignature ? signatureHelp(onRequestSignature) : [], [onRequestSignature]);
+  const hoverEnabled = Boolean(onRequestHover);
+  const hoverExtensions = useMemo(() => hoverEnabled ? languageHover((request) => onRequestHoverRef.current!(request)) : [], [hoverEnabled]);
+  const signatureEnabled = Boolean(onRequestSignature);
+  const signatureExtensions = useMemo(() => signatureEnabled ? signatureHelp((request) => onRequestSignatureRef.current!(request)) : [], [signatureEnabled]);
   const extensions = useMemo(() => [
     ...hoverExtensions,
     ...signatureExtensions,
@@ -1124,7 +1234,7 @@ function CodeEditor({
       {
         key: "Mod-f",
         run: () => {
-          if (suppressFindWidget) {
+          if (suppressFindWidgetRef.current) {
             return true;
           }
           findWidgetRef.current.open();
@@ -1134,7 +1244,7 @@ function CodeEditor({
       {
         key: "Mod-s",
         run: (view) => {
-          onSave?.(view.state.doc.toString());
+          onSaveRef.current?.(view.state.doc.toString());
           return true;
         },
       },
@@ -1144,7 +1254,7 @@ function CodeEditor({
     ])),
     preserveExternalSelection,
     EditorView.updateListener.of((update) => {
-      if (suppressFindWidget && searchPanelOpen(update.state)) {
+      if (suppressFindWidgetRef.current && searchPanelOpen(update.state)) {
         closeSearchPanel(update.view);
       }
 
@@ -1161,7 +1271,9 @@ function CodeEditor({
         queueMicrotask(() => {
           const view = update.view;
           const container = containerRef.current;
-          if (!view || !container) return;
+          if (!view || !container || viewRef.current !== view) return;
+          const onCounterpartAnchorChange = onCounterpartAnchorChangeRef.current;
+          const counterpartLine = counterpartLineRef.current;
 
           if (onCounterpartAnchorChange && counterpartLine !== null && counterpartLine >= 1 && counterpartLine <= view.state.doc.lines) {
             const cFrom = view.state.doc.line(counterpartLine).from;
@@ -1177,43 +1289,24 @@ function CodeEditor({
             }
           }
 
-          if (onInteractionAnchorChange) {
-            let activeLineNum = hoveredLineRef.current ?? selectedLineRef.current;
-            if (activeLineNum !== null && activeLineNum >= 1 && activeLineNum <= view.state.doc.lines) {
-              const aFrom = view.state.doc.line(activeLineNum).from;
-              const aCoords = view.coordsAtPos(aFrom);
-              if (aCoords) {
-                const rect = container.getBoundingClientRect();
-                onInteractionAnchorChange({
-                  top: Math.max(8, Math.round(aCoords.top - rect.top)),
-                  left: Math.max(8, Math.round(aCoords.left - rect.left + 16)),
-                });
-              } else {
-                // Out of view
-                onInteractionAnchorChange(null);
-              }
-            }
-          }
+          emitInteractionAnchor(hoveredLineRef.current ?? selectedLineRef.current);
         });
       }
     })
   ], [
-    settings,
-    counterpartLine,
+    settings["editor.tabSize"],
+    settings["editor.fontSize"],
+    settings["editor.wordWrap"],
     editable,
     goplsCompletionSource,
     hoverExtensions,
     signatureExtensions,
     localSnippetSource,
-    onCounterpartAnchorChange,
-    onCursorOffsetChange,
-    onDocumentSymbolsChange,
-    onInteractionAnchorChange,
-    onSelectionLineChange,
-    onSave,
-    suppressFindWidget,
+    entryLenses,
+    emitSelectionLine,
+    emitCursorOffset,
+    emitInteractionAnchor,
   ]);
-  const viewRef = useRef<EditorView | null>(null);
   const lastSignatureRequest = useRef(signatureRequestTrigger);
   useEffect(() => {
     if (!viewRef.current || lastSignatureRequest.current === signatureRequestTrigger) return;
@@ -1225,16 +1318,6 @@ function CodeEditor({
   useEffect(() => () => {
     if (viewRef.current && sessionDispose.current) sessionDispose.current(captureEditorSession(viewRef.current));
   }, []);
-  const findWidget = useFindWidget(viewRef);
-  const findWidgetRef = useRef(findWidget);
-  findWidgetRef.current = findWidget;
-  const highlightedLineRef = useRef<number | null>(null);
-  const executionLineRef = useRef<number | null>(null);
-  const hoveredLineRef = useRef<number | null>(null);
-  const selectedLineRef = useRef<number | null>(null);
-  const cursorOffsetRef = useRef<number | null>(null);
-  const viewportRangeRef = useRef<VisibleLineRange | null>(null);
-
   useEffect(() => {
     if (suppressFindWidget && findWidgetRef.current.isOpen) {
       findWidgetRef.current.dismiss();
@@ -1263,10 +1346,6 @@ function CodeEditor({
       // Ignore invalid externally provided search patterns.
     }
   }, [externalSearchQuery, editorView, value]);
-  const containerRef = useRef<HTMLDivElement | null>(null);
-  const handledJumpRequestIdRef = useRef<number | null>(null);
-  const handledWheelEventsRef = useRef(new WeakSet<Event>());
-
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
       return null;
@@ -1338,6 +1417,8 @@ function CodeEditor({
       executionLineRef.current = executionLine;
     }
   }, [executionLine, value, editorView]);
+
+  useEffect(() => { lastAnchorRef.current = null; }, [selectionContextKey, filePath]);
 
   useEffect(() => {
     // New file/content context should not inherit previous-line dedupe state.
@@ -1602,57 +1683,6 @@ function CodeEditor({
     });
   }, [counterpartLine, value, onCounterpartAnchorChange, editorView]);
 
-  const emitSelectionLine = (line: number | null) => {
-    if (!onSelectionLineChange) {
-      return;
-    }
-
-    if (selectedLineRef.current === line) {
-      return;
-    }
-
-    selectedLineRef.current = line;
-    onSelectionLineChange(line);
-  };
-
-  const emitCursorOffset = (offset: number | null) => {
-    if (!onCursorOffsetChange) {
-      return;
-    }
-
-    if (cursorOffsetRef.current === offset) {
-      return;
-    }
-
-    cursorOffsetRef.current = offset;
-    onCursorOffsetChange(offset);
-  };
-
-  const emitInteractionAnchor = (line: number | null) => {
-    if (!onInteractionAnchorChange) {
-      return;
-    }
-
-    const view = viewRef.current;
-    const container = containerRef.current;
-    if (!view || !container || line === null || line < 1 || line > view.state.doc.lines) {
-      onInteractionAnchorChange(null);
-      return;
-    }
-
-    const from = view.state.doc.line(line).from;
-    const coords = view.coordsAtPos(from);
-    if (!coords) {
-      onInteractionAnchorChange(null);
-      return;
-    }
-
-    const rect = container.getBoundingClientRect();
-    onInteractionAnchorChange({
-      top: Math.max(8, Math.round(coords.top - rect.top)),
-      left: Math.max(8, Math.round(coords.left - rect.left + 16)),
-    });
-  };
 
   return (
     <div

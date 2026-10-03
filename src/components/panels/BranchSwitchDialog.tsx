@@ -48,12 +48,12 @@ export default function BranchSwitchDialog({ open, targetBranch, changedFiles, o
   if (!open) return null;
 
   return (
-    <div role="dialog" aria-label="Branch switch confirmation" className="rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] p-4 shadow-[var(--panel-shadow)]">
+    <div role="dialog" aria-label="Branch switch confirmation" className="rounded-none border border-[var(--border-muted)] bg-[var(--mantle)] p-4 shadow-[var(--panel-shadow)]">
       <h3 className="text-sm font-semibold text-[var(--text)]">Switch to {targetBranch}</h3>
       <p className="mt-2 text-sm text-[var(--subtext0)]">You have uncommitted changes that must be handled before switching.</p>
 
       {changedFiles.length > 0 && (
-        <div className="mt-3 rounded border border-[var(--border-subtle)] bg-[var(--crust)] px-2 py-1.5" aria-label="Changed files summary">
+        <div className="mt-3 rounded-none border border-[var(--border-subtle)] bg-[var(--crust)] px-2 py-1.5" aria-label="Changed files summary">
           <ul className="space-y-0.5">
             {visibleFiles.map((file) => {
               const badge = statusLabel(file.status);
@@ -93,7 +93,7 @@ export default function BranchSwitchDialog({ open, targetBranch, changedFiles, o
           aria-label="Commit message"
           value={commitMessage}
           onChange={(event) => setCommitMessage(event.target.value)}
-          className="mt-3 h-9 w-full rounded-md border border-[var(--border-muted)] bg-[var(--crust)] px-3 text-sm text-[var(--text)]"
+          className="mt-3 h-9 w-full rounded-none border border-[var(--border-muted)] bg-[var(--crust)] px-3 text-sm text-[var(--text)]"
         />
       )}
       <div className="mt-4 flex items-center justify-end gap-2">

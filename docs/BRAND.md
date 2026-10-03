@@ -53,6 +53,8 @@ Use the simplified icon at 16–32 px; it drops fine strokes while retaining the
 
 These tokens live in `src/styles/global.css`; editor syntax and diagnostic colors remain independent. Choose `logo-light.svg` on pale surfaces and `logo-dark.svg` on dark surfaces. Monochrome SVGs use `currentColor`, defaulting to black when loaded as standalone images; when inlining them, set the surrounding color for the chosen background.
 
+In the workbench, use one static 16 px icon in the compact titlebar and a 28 px simplified mascot on the welcome screen. Keep branding out of the code surface: no editor watermark, animated mascot, logo overlay or glow. The titlebar uses a plain surface without backdrop blur. Editing, completion, selection and keyboard response take priority over decorative effects; preserve all named palettes and the Black & White default.
+
 ## Extensions
 
 Future neutral, focused, happy, confused, warning, and debugging illustrations should preserve the tall body, round ears, white eyes, two teeth, and three paths. Expressions belong in illustrations, not alternate primary logos. The editor breakpoint and parallel paths can extend into race and goroutine illustrations without implying that a planned product feature already exists.

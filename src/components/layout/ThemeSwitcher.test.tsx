@@ -23,7 +23,7 @@ describe("Color theme preference", () => {
     expect(screen.getByRole("combobox", { name: "Color theme" })).toHaveValue("light");
   });
 
-  it("falls back to black and white for an unknown saved theme", () => {
+  it("falls back to default theme for an unknown saved theme", () => {
     localStorage.setItem(THEME_STORAGE_KEY, "unknown");
     render(<ThemeSwitcher />);
     expect(document.documentElement.dataset.theme).toBe("monochrome");
@@ -45,5 +45,18 @@ describe("Color theme preference", () => {
     render(<ThemeSwitcher />);
     fireEvent.change(screen.getByRole("combobox", { name: "Color theme" }), { target: { value: "nord" } });
     expect(document.documentElement.dataset.theme).toBe("nord");
+  });
+
+  it("selects a palette with keyboard navigation and returns focus to the trigger", () => {
+    render(<ThemeSwitcher />);
+    const trigger = screen.getByRole("button", { name: "Color theme" });
+    fireEvent.click(trigger);
+    const list = screen.getByRole("listbox", { name: "Color theme" });
+    expect(list).toHaveFocus();
+    fireEvent.keyDown(list, { key: "ArrowDown" });
+    fireEvent.keyDown(list, { key: "Enter" });
+    expect(document.documentElement.dataset.theme).toBe("kott");
+    expect(trigger).toHaveFocus();
+    expect(screen.queryByRole("listbox")).toBeNull();
   });
 });

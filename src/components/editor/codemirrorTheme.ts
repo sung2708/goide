@@ -100,8 +100,8 @@ const editorTheme = EditorView.theme(
     },
     ".cm-gutters": {
       backgroundColor: "var(--bg-editor) !important",
-      color: "var(--overlay0)",
-      borderRight: "1px solid var(--border-subtle)",
+      color: "var(--overlay0) !important",
+      borderRight: "1px solid var(--border-subtle) !important",
       padding: "0",
     },
     ".cm-lineNumbers": {
@@ -114,6 +114,7 @@ const editorTheme = EditorView.theme(
       textAlign: "right",
       fontVariantNumeric: "tabular-nums",
       boxSizing: "border-box",
+      color: "var(--overlay0) !important",
     },
     ".cm-gutterElement": {
       boxSizing: "border-box",
@@ -136,14 +137,14 @@ const editorTheme = EditorView.theme(
       borderRadius: "999px",
       backgroundColor: "var(--red)",
       margin: "0 auto",
-      boxShadow: "0 0 0 1px rgba(35, 38, 52, 0.8)",
+      boxShadow: "0 0 0 1px var(--crust)",
     },
-    ".cm-activeLine": {
-      backgroundColor: "var(--bg-active)",
+    "&.cm-editor .cm-activeLine, .cm-activeLine": {
+      backgroundColor: "var(--bg-active) !important",
     },
-    ".cm-activeLineGutter": {
-      backgroundColor: "var(--bg-active)",
-      color: "var(--subtext1)",
+    "&.cm-editor .cm-activeLineGutter, .cm-activeLineGutter": {
+      backgroundColor: "var(--bg-active) !important",
+      color: "var(--subtext1) !important",
     },
     ".cm-selectionBackground, .cm-content ::selection": {
       backgroundColor: "var(--selection-bg) !important",
@@ -367,15 +368,22 @@ const editorTheme = EditorView.theme(
     },
     ".cm-cursor, .cm-dropCursor": {
       borderLeft: "2px solid var(--blue)",
-      animation: "cm-blink 1s steps(1) infinite",
+      marginLeft: "-1px",
+    },
+    "&.cm-focused > .cm-scroller > .cm-cursorLayer": {
+      animation: "cm-blink 1.2s cubic-bezier(0.4, 0, 0.2, 1) infinite",
     },
     "@keyframes cm-blink": {
-      "0%": { opacity: "1" },
-      "50%": { opacity: "0" },
+      "0%, 45%": { opacity: "1" },
+      "65%, 90%": { opacity: "0" },
       "100%": { opacity: "1" },
     },
-  },
-  { dark: true }
+    "@keyframes cm-blink2": {
+      "0%, 45%": { opacity: "1" },
+      "65%, 90%": { opacity: "0" },
+      "100%": { opacity: "1" },
+    },
+  }
 );
 
 const syntaxStyle = HighlightStyle.define([

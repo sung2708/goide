@@ -967,11 +967,11 @@ function Explorer({
     }
     const target = activeContextTarget;
     const commonMenuItemClass =
-      "w-full rounded px-2.5 py-1.5 text-left text-[13px] text-[var(--subtext1)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors duration-75";
+      "w-full rounded-none px-2.5 py-1.5 text-left text-[13px] text-[var(--subtext1)] hover:bg-[var(--bg-hover)] hover:text-[var(--text)] transition-colors duration-75";
     return (
       <div
         ref={menuRef}
-        className="fixed z-50 min-w-[180px] rounded-lg border border-[var(--border-muted)] bg-[var(--mantle)] p-1 shadow-[var(--panel-shadow)]"
+        className="fixed z-50 min-w-[180px] rounded-none border border-[var(--border-muted)] bg-[var(--mantle)] p-1 shadow-[var(--panel-shadow)]"
         style={{ left: contextMenu.x, top: contextMenu.y }}
         role="menu"
       >
