@@ -1,3 +1,5 @@
+import { useInspectionGate } from "../../features/debugger/useInspectionGate";
+import DebuggerInspector from "../../features/debugger/DebuggerInspector";
 import { open } from "@tauri-apps/plugin-dialog";
 import WelcomeScreen from "./WelcomeScreen";
 import { useQuickOpenIndex } from "../../features/navigation/useQuickOpenIndex";
@@ -349,6 +351,9 @@ function EditorShell() {
   const [debugUiState, setDebugUiState] = useState<DebugUiState>("idle");
   const [debugFailure, setDebugFailure] = useState<DebugFailure | null>(null);
   const [debuggerState, setDebuggerState] = useState<DebuggerState | null>(null);
+  const debuggerInspectionGate = useInspectionGate(debuggerState?.stopToken);
+  const debuggerStopTokenRef = useRef<string | null>(null);
+  debuggerStopTokenRef.current = debuggerInspectionGate.token;
   const {
     runtimePanelSnapshot,
     setRuntimePanelSnapshot,
@@ -1542,8 +1547,8 @@ function EditorShell() {
   // A DAP acknowledgement does not prove that the target paused/continued.
   // Runtime polling updates the UI from backend-observed debugger state.
   const handleToggleDebugPause = useCallback(
-    () => isDebugPaused ? debuggerContinue() : debuggerPause(),
-    [isDebugPaused]
+    () => debuggerInspectionGate.control(isDebugPaused ? debuggerContinue : debuggerPause),
+    [isDebugPaused, debuggerInspectionGate]
   );
 
   // Fall back to explorer when the debug tab becomes unavailable while active.
@@ -2061,12 +2066,12 @@ function EditorShell() {
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
     { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
-    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: debuggerState?.cleanupPending ? "Retry Stop to finish debugger cleanup." : !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
+    { id: "debug.startOrContinue", title: isDebugSessionRunning ? "Continue / Pause Debugging" : "Start Debugging", shortcut: "F5", disabled: debuggerState?.cleanupPending ? "Retry Stop to finish debugger cleanup." : debuggerInspectionGate.pending ? "Wait for the debugger's observed state." : !isDebugSessionRunning && debugStartDisabled ? "Open a Go file and wait for active operations." : undefined, run: () => isDebugSessionRunning ? handleToggleDebugPause() : handleStartDebug() },
     { id: "debug.stop", title: "Stop Debugging", shortcut: "Shift+F5", disabled: !isDebugSessionRunning && !debuggerState?.cleanupPending ? "No active debug session." : undefined, run: handleStopDebug },
     { id: "debug.breakpoint", title: "Toggle Breakpoint", shortcut: "F9", disabled: !activeFilePath || !selectedLine ? "Place the cursor on a source line." : undefined, run: () => selectedLine ? handleToggleBreakpoint(selectedLine) : undefined },
-    { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepOver },
-    { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepInto },
-    { id: "debug.stepOut", title: "Debug: Step Out", shortcut: "Shift+F11", disabled: !isDebugPaused ? "Pause debugging first." : undefined, run: debuggerStepOut },
+    { id: "debug.stepOver", title: "Debug: Step Over", shortcut: "F10", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepOver) },
+    { id: "debug.stepInto", title: "Debug: Step Into", shortcut: "F11", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepInto) },
+    { id: "debug.stepOut", title: "Debug: Step Out", shortcut: "Shift+F11", disabled: !isDebugPaused || debuggerInspectionGate.pending ? "Pause debugging and wait for observed state." : undefined, run: () => debuggerInspectionGate.control(debuggerStepOut) },
     { id: "navigation.nextSymbol", title: "Next Document Symbol", shortcut: "F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("next") },
     { id: "navigation.previousSymbol", title: "Previous Document Symbol", shortcut: "Shift+F8", disabled: !activeFilePath ? "Open a file first." : undefined, run: () => navigateDocumentSymbol("previous") },
   ];
@@ -2313,6 +2318,18 @@ function EditorShell() {
                   )}
                 </div>
               )}
+
+              <DebuggerInspector root={workspacePath} state={debuggerState ? { ...debuggerState, stopToken: debuggerInspectionGate.token } : null} navigate={frame => {
+                const root = workspacePath;
+                if (workspacePathRef.current !== root) return;
+                const token = debuggerStopTokenRef.current;
+                const generation = debuggerInspectionGate.generation.current;
+                if (!frame.relativePath || !frame.line || !root || !token) return;
+                const path = frame.relativePath;
+                void handleOpenFile(path).then(() => {
+                  if (workspacePathRef.current === root && activeFilePathRef.current === path && debuggerStopTokenRef.current === token && debuggerInspectionGate.generation.current === generation) requestJump(frame.line!, frame.column ?? 1);
+                });
+              }} />
 
               <div className="rounded-md border border-[var(--border-subtle)] px-3 py-2 text-[11px] text-[var(--subtext0)]">
                 {isDebugSessionRunning
@@ -2572,7 +2589,7 @@ function EditorShell() {
                             editable={!documents.active?.readOnly && !isBranchMutationInProgress && !gitOperationBusy && !explorerOperationBusy}
                             value={activeFileContent}
                             filePath={activeFilePath}
-                            executionLine={debuggerState?.activeLine ?? null}
+                            executionLine={!debuggerInspectionGate.pending && debuggerState?.activeRelativePath === activeFilePath ? debuggerState.activeLine ?? null : null}
                             breakpoints={breakpoints}
                             onToggleBreakpoint={handleToggleBreakpoint}
                             diagnostics={diagnostics}

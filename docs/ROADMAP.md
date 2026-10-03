@@ -417,3 +417,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: teardown transfers mark ownership before retiring the active slot; pending owners block new debug/run/module/test operations and tool-path changes until cleanup succeeds. Retry includes app shutdown, uses owner UUID identity and visits retained owners fairly. Previous debug sessions stop before replacements launch.
 - Delivered: typed cleanup-pending state suppresses obsolete frames, disables Pause/Step and keeps Stop retry available. Startup cleanup errors include the recovery reason.
 - Remaining: debugger variables/stack/goroutines, full platform/spawn-ownership acceptance and all unfinished Git/addendum workflows. No release/tag is authorized.
+
+## Observed debugger inspection checkpoint (2026-10-03)
+
+- Delivered: actual Delve goroutines, selectable call stacks, combined argument/local scopes and lazy nested variables, with indexed paging and explicit unavailable/truncated results. No goroutine wait states are inferred from labels.
+- Delivered: workspace/session/stop identity and issued-handle validation before and after requests; bounded queues, frames, variable references, values and UI expansion. Resume/Step immediately hides the old stop's inspection while execution state remains owned by observed DAP events.
+- Delivered: canonical workspace source navigation, selected frame source state, rejection of delayed results and clearing obsolete execution markers. Natural program termination retires the session through retained owned cleanup.
+- Remaining: session-bound execution control, semantic Test/Main CodeLens, Debug Test, live test streaming, session restore, complete Git workflows and the platform/process acceptance matrix. No release/tag is authorized.

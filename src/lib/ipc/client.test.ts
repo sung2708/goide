@@ -6,9 +6,19 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { queryDebuggerInspection, runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
+  it("requires native debugger data and preserves the workspace and observed stop identity", async () => {
+    const request = { workspaceRoot: "D:/workspace", stopToken: "session:7", query: { kind: "variables" as const, reference: 19, start: 100, indexed: true } };
+    expect(await queryDebuggerInspection(request)).toMatchObject({ ok: false, error: { code: "debugger_native_required" } });
+    expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    const data = { kind: "variables", stopToken: request.stopToken, items: [], nextStart: null, limited: false };
+    invokeMock.mockResolvedValue({ ok: true, data });
+    expect(await queryDebuggerInspection(request)).toEqual({ ok: true, data });
+    expect(invokeMock).toHaveBeenCalledWith("query_debugger_inspection", { request });
+  });
   it("requires native test execution and preserves the typed target/cancellation identity", async () => {
     delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
     invokeMock.mockReset();

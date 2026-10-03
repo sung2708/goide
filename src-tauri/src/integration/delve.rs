@@ -15,6 +15,7 @@ use tokio::time::timeout;
 const DAP_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const DAP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 mod execution;
+pub mod inspection;
 pub mod ownership;
 #[cfg(test)]
 mod session_tests;
@@ -116,6 +117,8 @@ pub struct DapClient {
     reader: BufReader<tokio::net::tcp::OwnedReadHalf>,
     writer: tokio::net::tcp::OwnedWriteHalf,
     next_seq: i64,
+    identity: uuid::Uuid,
+    access: inspection::Access,
     execution: Execution,
     poisoned: bool,
     configuration_done_supported: bool,
@@ -137,6 +140,8 @@ impl DapClient {
             reader: BufReader::new(reader),
             writer,
             next_seq: 1,
+            identity: uuid::Uuid::new_v4(),
+            access: inspection::Access::default(),
             execution: Execution::default(),
             poisoned: false,
             configuration_done_supported: false,
@@ -183,6 +188,9 @@ impl DapClient {
     pub fn is_poisoned(&self) -> bool {
         self.poisoned
     }
+    pub fn has_terminated(&self) -> bool {
+        self.execution.terminated()
+    }
 
     pub async fn launch(
         &mut self,
@@ -199,7 +207,7 @@ impl DapClient {
                     json!({
                         "mode": "debug",
                         "program": package,
-                        "cwd": cwd,
+                        "cwd": normalize_platform_path_for_dap(cwd),
                         "stopOnEntry": false
                     }),
                 )
@@ -263,7 +271,7 @@ impl DapClient {
             .ok_or_else(|| anyhow!("threads response missing threads array"))?;
 
         let mut items = Vec::with_capacity(threads.len());
-        for thread in threads {
+        for thread in threads.iter().take(512) {
             let id = thread
                 .get("id")
                 .and_then(Value::as_i64)

@@ -363,6 +363,11 @@ export async function getRuntimeTopologySnapshot(): Promise<
   );
 }
 
+export async function queryDebuggerInspection(request: import("./types").DebuggerInspectionRequest): Promise<ApiResponse<import("./types").DebuggerInspectionOutput>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "debugger_native_required", message: "Debugger inspection requires the desktop app and an observed Delve stop." } };
+  return invoke("query_debugger_inspection", { request });
+}
+
 export async function getDebuggerState(): Promise<ApiResponse<DebuggerState>> {
   if (!hasTauriInternals()) {
     return {

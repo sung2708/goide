@@ -5,6 +5,7 @@ pub(super) struct Execution {
     paused: Option<bool>,
     thread: Option<i64>,
     revision: u64,
+    terminated: bool,
 }
 impl Execution {
     pub(super) fn paused(&self) -> Option<bool> {
@@ -16,14 +17,23 @@ impl Execution {
     pub(super) fn revision(&self) -> u64 {
         self.revision
     }
+    pub(super) fn terminated(&self) -> bool {
+        self.terminated
+    }
     pub(super) fn observe(&mut self, message: &Value) {
         match message["event"].as_str() {
             Some("stopped") => {
+                if self.terminated {
+                    return;
+                }
                 self.paused = Some(true);
                 self.thread = message["body"]["threadId"].as_i64().filter(|id| *id > 0);
                 self.revision += 1;
             }
             Some("continued" | "exited" | "terminated") => {
+                if matches!(message["event"].as_str(), Some("exited" | "terminated")) {
+                    self.terminated = true;
+                }
                 self.paused = Some(false);
                 self.thread = None;
                 self.revision += 1;
@@ -49,6 +59,18 @@ impl Execution {
 mod tests {
     use super::*;
     use serde_json::json;
+    #[test]
+    fn a_terminated_session_cannot_be_revived_by_a_late_stop_event() {
+        let mut state = Execution::default();
+        state.observe(&json!({ "event": "stopped", "body": { "threadId": 7 } }));
+        let revision = state.revision();
+        state.observe(&json!({ "event": "exited" }));
+        state.acknowledge("continue", revision);
+        state.observe(&json!({ "event": "stopped", "body": { "threadId": 7 } }));
+        assert!(state.terminated());
+        assert_eq!(state.paused(), Some(false));
+        assert_eq!(state.thread(), None);
+    }
     #[test]
     fn pause_acknowledgement_does_not_invent_a_stopped_state() {
         let mut state = Execution::default();

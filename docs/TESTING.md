@@ -283,3 +283,13 @@ Windows ownership tests cover injected Stop failure retaining the process and re
 PASS: 19 EditorShell.debug tests include visible cleanup-pending state even before opening a UI debug session, unavailable Pause/Step and F5, an enabled Stop retry and actual retry IPC. TypeScript and the production build pass (251 modules). The installed Delve breakpoint fixture was rerun successfully with the new owner. PASS: the complete native suite passes 218 tests with 17 installed-tool fixtures ignored; all three debugger retention regressions pass. The installed Delve fixture was also run explicitly earlier with the new owner. Native all-target Clippy passes without warnings.
 
 Linux/macOS execution and Windows spawn-to-job assignment gap acceptance remain NOT RUN; this checkpoint does not authorize a release/tag.
+
+## Observed debugger inspection regression (2026-10-03)
+
+PASS: 25 native Delve tests, explicitly including the installed Go/Delve fixture. A real module stops in main.inspect at line 6; actual threads, main.inspect/main.main frames, argument box, local value 42, struct field 41 and slice values 1/2/3 are read through issued DAP references. Continue invalidates the previous stop token. Protocol tests cover unissued/stale handles, resumed replies, dummy threads, limits and workspace source boundaries.
+
+PASS: the native debug filter runs 11 tests with installed fixtures enabled, including real natural program exit through the UI bridge and retained teardown ownership. The filters overlap; they are not 36 unique tests. Native all-target Clippy passes.
+
+PASS: 34 frontend tests across debugger inspection, execution-intent gating, EditorShell.debug and IPC. Coverage includes lazy expansion, indexed paging, frame selection, stale workspace/stop replies, native-only transport and preventing repeated control while awaiting observed state. TypeScript and production build pass (255 modules).
+
+Session-bound execution control, Debug Test/CodeLens/live streaming and Linux/macOS plus Windows spawn-assignment acceptance remain incomplete or NOT RUN. These focused checks do not authorize a release/tag.

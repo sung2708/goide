@@ -69,6 +69,7 @@ pub fn run() {
             ui_bridge::commands::get_runtime_panel_snapshot,
             ui_bridge::commands::get_runtime_topology_snapshot,
             ui_bridge::commands::get_debugger_state,
+            ui_bridge::debugger_commands::query_debugger_inspection,
             ui_bridge::commands::debugger_continue,
             ui_bridge::commands::debugger_pause,
             ui_bridge::commands::debugger_step_over,
