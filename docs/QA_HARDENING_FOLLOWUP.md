@@ -60,3 +60,14 @@ Save As/export-copy and crash-draft recovery remain part of the dependable stabl
 - Full npm audit: zero findings. Cargo application audit: zero vulnerability records, ten informational warnings retained as described above. Release verifier audit: zero findings/warnings.
 
 Raw logs/fixture projects remain ignored under .tmp; only this summarized report is committed. Native visual/manual QA and hosted CI are not counted as passing by these local checks.
+
+## Hosted CI fixture follow-up (2026-10-04)
+
+The Windows and macOS backend jobs in run 37146247220 failed in different fixtures:
+
+- Windows: `normal_root_exit_still_reaps_descendants_that_keep_output_pipes_open` exceeded its five-second execution deadline while launching a PowerShell fixture. Replace that launcher with the current Rust test executable. The descendant explicitly inherits both output pipes; the observer retains its process handle and confirms it is alive before acknowledging the parent may exit. Success requires a successful parent exit, drained output and the same descendant handle becoming signalled. This removes the PowerShell startup dependency and strengthens the previous optional PID lookup. The five-second fixture deadline and production process cleanup are unchanged.
+- macOS: `spawn_process_extracts_dynamic_port_from_output` parsed the advertised DAP port, then failed to confirm retirement of the shell/sleep fixture group. Use `exec sleep` so the fake adapter replaces its launcher and remains the owned group leader. This test concerns port parsing and adapter ownership; the dedicated Unix descendant/permission-denial tests remain intact. No EPERM-to-success bypass or process-group policy change is introduced.
+
+Windows focused output tests passed (6 tests), the inherited-pipe regression passed 20 consecutive subprocess runs, and all-target Clippy passed with warnings denied. Full Windows suite results and hosted macOS verification are recorded after completion; this fixture correction does not certify native platform acceptance or resolve the outstanding Unix PTY containment gate.
+
+The existing `v0.2.0-alpha.1` tag continues to point to its original commit. Rerunning that tag's workflow does not incorporate later fixes on main; a release containing this correction needs a new version/tag.

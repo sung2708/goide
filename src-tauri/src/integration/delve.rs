@@ -1230,7 +1230,10 @@ mod tests {
         let script_path = script_dir.join("fake_dlv.sh");
         fs::write(
             &script_path,
-            "#!/usr/bin/env sh\necho 'DAP server listening at: 127.0.0.1:40123' 1>&2\nsleep 10\n",
+            // Replace the launcher with the fake adapter instead of leaving a
+            // shell waiting for a child. This test checks port parsing and adapter
+            // ownership; descendant retirement has separate process-group tests.
+            "#!/usr/bin/env sh\necho 'DAP server listening at: 127.0.0.1:40123' 1>&2\nexec sleep 60\n",
         )
         .expect("write fake script");
         fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))

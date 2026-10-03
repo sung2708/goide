@@ -321,34 +321,109 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn inherited_pipe_subprocess_fixture() {
+        let Ok(mode) = std::env::var("GORO_PIPE_FIXTURE_MODE") else {
+            return;
+        };
+        if mode == "descendant" {
+            println!("owned-descendant:{}", std::process::id());
+            std::io::stdout().flush().unwrap();
+            std::thread::sleep(Duration::from_secs(90));
+            panic!("Descendant survived owned-tree cleanup");
+        }
+        assert_eq!(mode, "parent");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).unwrap();
+        assert_eq!(input, "start\n");
+        let mut descendant = Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "integration::owned_tool_output::tests::inherited_pipe_subprocess_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("GORO_PIPE_FIXTURE_MODE", "descendant")
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        let acknowledgement =
+            std::path::PathBuf::from(std::env::var_os("GORO_PIPE_FIXTURE_ACK").unwrap());
+        let deadline = Instant::now() + Duration::from_secs(4);
+        while !acknowledgement.exists() {
+            assert!(
+                Instant::now() < deadline,
+                "Descendant was not observed alive"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(descendant.try_wait().unwrap().is_none());
+        println!("owned-parent-exited");
+        // Dropping Child does not terminate it: it still owns our output pipes.
+        drop(descendant);
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn normal_root_exit_still_reaps_descendants_that_keep_output_pipes_open() {
-        use super::super::command::std_command;
         use std::os::windows::io::{FromRawHandle, OwnedHandle};
         use windows_sys::Win32::{
-            Foundation::WAIT_OBJECT_0,
+            Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT},
             System::Threading::{OpenProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE},
         };
         let root = std::env::temp_dir().join(format!("goide-cli-child-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir(&root).unwrap();
-        let script = root.join("parent.ps1");
-        std::fs::write(&script, r#"[Console]::ReadLine() | Out-Null
-$OwnedDescendant = Start-Process ping.exe -ArgumentList @('-n','90','127.0.0.1') -WindowStyle Hidden -PassThru
-Write-Output $OwnedDescendant.Id
-"#).unwrap();
-        let result = bounded_output(
-            std_command("powershell.exe")
+        let acknowledgement = root.join("observed-alive");
+        let observed = Arc::new(std::sync::Mutex::new((Vec::new(), None::<OwnedHandle>)));
+        let observed_reader = observed.clone();
+        let ack_writer = acknowledgement.clone();
+        let observer: Observer = Arc::new(move |stream, bytes| {
+            if stream != "stdout" {
+                return;
+            }
+            let mut state = observed_reader.lock().unwrap();
+            state.0.extend_from_slice(bytes);
+            if state.1.is_some() {
+                return;
+            }
+            let output = String::from_utf8_lossy(&state.0);
+            let Some(pid) = output.lines().find_map(|line| {
+                let (_, value) = line.split_once("owned-descendant:")?;
+                // A pipe read can split the PID; wait for its terminating newline.
+                if !output.contains(&format!("owned-descendant:{value}\n")) {
+                    return None;
+                }
+                value.trim().parse::<u32>().ok()
+            }) else {
+                return;
+            };
+            let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
+            assert!(
+                !raw.is_null(),
+                "Could not retain the live descendant handle"
+            );
+            let handle = unsafe { OwnedHandle::from_raw_handle(raw) };
+            assert_eq!(unsafe { WaitForSingleObject(raw, 0) }, WAIT_TIMEOUT);
+            state.1 = Some(handle);
+            std::fs::write(&ack_writer, b"alive").unwrap();
+        });
+        let result = bounded_output_observed(
+            Command::new(std::env::current_exe().unwrap())
                 .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-File",
+                    "--exact",
+                    "integration::owned_tool_output::tests::inherited_pipe_subprocess_fixture",
+                    "--nocapture",
+                    "--test-threads=1",
                 ])
-                .arg(&script),
+                .env("GORO_PIPE_FIXTURE_MODE", "parent")
+                .env("GORO_PIPE_FIXTURE_ACK", &acknowledgement),
             Some("start\n"),
             Duration::from_secs(5),
+            Some(observer),
+            None,
         );
-        let _ = std::fs::remove_file(&script);
+        let _ = std::fs::remove_file(&acknowledgement);
         let _ = std::fs::remove_dir(&root);
         let result = result.unwrap();
         assert!(
@@ -356,15 +431,14 @@ Write-Output $OwnedDescendant.Id
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        let pid: u32 = String::from_utf8(result.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap();
-        let raw = unsafe { OpenProcess(PROCESS_SYNCHRONIZE, 0, pid) };
-        if !raw.is_null() {
-            let _handle = unsafe { OwnedHandle::from_raw_handle(raw) };
-            assert_eq!(unsafe { WaitForSingleObject(raw, 1000) }, WAIT_OBJECT_0);
-        }
+        assert!(String::from_utf8_lossy(&result.stdout).contains("owned-parent-exited"));
+        use std::os::windows::io::AsRawHandle;
+        let observed = observed.lock().unwrap();
+        let handle = observed.1.as_ref().expect("Descendant was observed alive");
+        assert_eq!(
+            unsafe { WaitForSingleObject(handle.as_raw_handle(), 1000) },
+            WAIT_OBJECT_0,
+            "Owned descendant must be stopped before output returns"
+        );
     }
 }
