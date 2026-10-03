@@ -5,6 +5,7 @@ on:
     branches:
       - main
       - develop
+      - "codex/**"
   pull_request:
     branches:
       - main

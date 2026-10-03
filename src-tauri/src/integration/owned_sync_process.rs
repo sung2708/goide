@@ -10,9 +10,7 @@ struct SyncProcess {
     #[cfg(windows)]
     tree: crate::integration::process_job::Job,
     #[cfg(unix)]
-    process_group: u32,
-    #[cfg(unix)]
-    group_signalled: bool,
+    group: super::unix_process_group::Group,
     #[cfg(test)]
     fail_stops: usize,
 }
@@ -29,39 +27,20 @@ impl SyncProcess {
         #[cfg(windows)]
         self.tree.terminate().map_err(std::io::Error::other)?;
         #[cfg(unix)]
-        if !self.group_signalled {
-            // SAFETY: This negative group ID was established by this owner at spawn.
-            if unsafe { libc::kill(-(self.process_group as i32), libc::SIGKILL) } != 0 {
-                let error = std::io::Error::last_os_error();
-                if error.raw_os_error() != Some(libc::ESRCH) {
-                    return Err(error);
-                }
-            }
-            // Never re-send a numeric group signal after its leader has been reaped.
-            // Retried teardown probes completion and keeps ownership while it is uncertain.
-            self.group_signalled = true;
-        }
+        self.group.signal_once()?;
+        #[cfg(windows)]
         if self.child.try_wait()?.is_none() {
             self.child.kill()?;
         }
         loop {
+            #[cfg(windows)]
             let root_stopped = self.child.try_wait()?.is_some();
+            #[cfg(unix)]
+            let root_stopped = self.group.try_wait(&mut self.child)?.is_some();
             #[cfg(windows)]
             let tree_stopped = self.tree.is_empty().map_err(std::io::Error::other)?;
             #[cfg(unix)]
-            let tree_stopped = {
-                // SAFETY: Probe only the process group created and retained by this owner.
-                if unsafe { libc::kill(-(self.process_group as i32), 0) } == 0 {
-                    false
-                } else {
-                    let error = std::io::Error::last_os_error();
-                    if error.raw_os_error() == Some(libc::ESRCH) {
-                        true
-                    } else {
-                        return Err(error);
-                    }
-                }
-            };
+            let tree_stopped = self.group.is_empty()?;
             if root_stopped && tree_stopped {
                 return Ok(());
             }
@@ -117,8 +96,20 @@ pub(crate) fn retry_pending_cleanup() -> std::io::Result<()> {
 pub struct OwnedSyncChild {
     process: Option<SyncProcess>,
     stopped: bool,
+    pub stdin: Option<std::process::ChildStdin>,
+    pub stdout: Option<std::process::ChildStdout>,
+    pub stderr: Option<std::process::ChildStderr>,
 }
 impl OwnedSyncChild {
+    fn wrap(mut process: SyncProcess) -> Self {
+        Self {
+            stdin: process.child.stdin.take(),
+            stdout: process.child.stdout.take(),
+            stderr: process.child.stderr.take(),
+            process: Some(process),
+            stopped: false,
+        }
+    }
     pub fn spawn(command: &mut Command) -> std::io::Result<Self> {
         if crate::integration::process_job::async_cleanup_pending()
             || crate::integration::shell::owned_cleanup_pending()
@@ -139,16 +130,12 @@ impl OwnedSyncChild {
             use std::os::unix::process::CommandExt;
             command.process_group(0);
             let child = command.spawn()?;
-            Ok(Self {
-                process: Some(SyncProcess {
-                    process_group: child.id(),
-                    group_signalled: false,
-                    child,
-                    #[cfg(test)]
-                    fail_stops: 0,
-                }),
-                stopped: false,
-            })
+            Ok(Self::wrap(SyncProcess {
+                group: super::unix_process_group::Group::new(child.id()),
+                child,
+                #[cfg(test)]
+                fail_stops: 0,
+            }))
         }
     }
     #[cfg(windows)]
@@ -165,15 +152,12 @@ impl OwnedSyncChild {
         let tree = crate::integration::process_job::Job::new().map_err(std::io::Error::other)?;
         command.creation_flags(CREATE_NO_WINDOW | CREATE_SUSPENDED);
         let child = command.spawn()?;
-        let owned = Self {
-            process: Some(SyncProcess {
-                child,
-                tree,
-                #[cfg(test)]
-                fail_stops: 0,
-            }),
-            stopped: false,
-        };
+        let owned = Self::wrap(SyncProcess {
+            child,
+            tree,
+            #[cfg(test)]
+            fail_stops: 0,
+        });
         let process = owned.process.as_ref().expect("owned suspended process");
         register(&process.tree, process.child.as_raw_handle()).map_err(std::io::Error::other)?;
         crate::integration::language_requests::check()
@@ -185,6 +169,31 @@ impl OwnedSyncChild {
         // Any failure above drops `owned`: stop/reap it or retain its full resources for retry.
         Ok(owned)
     }
+    pub fn try_wait(&mut self) -> std::io::Result<Option<std::process::ExitStatus>> {
+        let process = self.process.as_mut().expect("owned process handle");
+        #[cfg(windows)]
+        return process.child.try_wait();
+        #[cfg(unix)]
+        process.group.try_wait(&mut process.child)
+    }
+    pub fn wait(&mut self) -> std::io::Result<std::process::ExitStatus> {
+        #[cfg(windows)]
+        return self
+            .process
+            .as_mut()
+            .expect("owned process handle")
+            .child
+            .wait();
+        #[cfg(unix)]
+        loop {
+            if let Some(status) = self.try_wait()? {
+                return Ok(status);
+            }
+            crate::integration::language_requests::check()
+                .map_err(crate::integration::language_requests::into_io_error)?;
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
     pub fn stop(&mut self) -> std::io::Result<()> {
         if self.stopped {
             return Ok(());
@@ -193,6 +202,7 @@ impl OwnedSyncChild {
             .as_mut()
             .expect("owned process handle")
             .stop()?;
+        self.wait()?;
         self.stopped = true;
         Ok(())
     }
@@ -201,11 +211,6 @@ impl std::ops::Deref for OwnedSyncChild {
     type Target = Child;
     fn deref(&self) -> &Child {
         &self.process.as_ref().expect("owned process handle").child
-    }
-}
-impl std::ops::DerefMut for OwnedSyncChild {
-    fn deref_mut(&mut self) -> &mut Child {
-        &mut self.process.as_mut().expect("owned process handle").child
     }
 }
 impl Drop for OwnedSyncChild {

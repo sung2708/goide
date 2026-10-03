@@ -135,7 +135,6 @@ mod tests {
         let worker = std::thread::spawn(move || {
             let _registration = registration;
             let _scope = language_requests::begin(&worker_root, Some(&worker_id)).unwrap();
-            ready.send(()).unwrap();
             #[cfg(windows)]
             let mut child = {
                 let mut child = command::std_command("ping.exe");
@@ -144,16 +143,31 @@ mod tests {
             };
             #[cfg(not(windows))]
             let mut child = {
-                let mut child = command::std_command("sleep");
-                child.arg("90");
+                let mut child = command::std_command("sh");
+                child.args(["-c", "printf ready; exec sleep 90"]);
                 child
             };
-            owned_tool_output::output(&mut child, None)
-                .unwrap_err()
-                .kind()
+            let sent = std::sync::atomic::AtomicBool::new(false);
+            let observer: owned_tool_output::Observer =
+                std::sync::Arc::new(move |stream, bytes| {
+                    if stream == "stdout"
+                        && !bytes.is_empty()
+                        && !sent.swap(true, std::sync::atomic::Ordering::AcqRel)
+                    {
+                        let _ = ready.send(());
+                    }
+                });
+            owned_tool_output::output_with_observer(
+                &mut child,
+                std::time::Duration::from_secs(30),
+                observer,
+            )
+            .unwrap_err()
+            .kind()
         });
-        receiver.recv().unwrap();
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        receiver
+            .recv_timeout(std::time::Duration::from_secs(15))
+            .expect("first output from an actually owned CLI");
         let response =
             super::confirm_go_module_cleanup(super::super::types::LanguageCancelRequestDto {
                 workspace_root: root.to_string_lossy().into_owned(),
