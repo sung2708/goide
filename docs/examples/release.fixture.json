@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "product": "Goro",
+  "version": "0.2.0-alpha.1",
+  "tag": "v0.2.0-alpha.1",
+  "channel": "alpha",
+  "publishedAt": "2026-10-03T00:00:00Z",
+  "releaseNotes": "notes",
+  "releaseUrl": "https://github.com/fixture/public/releases/tag/v0.2.0-alpha.1",
+  "checksumUrl": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/SHA256SUMS.txt",
+  "downloads": [
+    {
+      "filename": "goro-v0.2.0-alpha.1-windows-x86_64-setup.exe",
+      "platformKey": "windows-x86_64",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "format": "exe",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-windows-x86_64-setup.exe",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-windows-x86_64.msi",
+      "platformKey": "windows-x86_64",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "format": "msi",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-windows-x86_64.msi",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-macos-aarch64.dmg",
+      "platformKey": "macos-aarch64",
+      "platform": "macos",
+      "architecture": "aarch64",
+      "format": "dmg",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-macos-aarch64.dmg",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-macos-aarch64-updater.tar.gz",
+      "platformKey": "macos-aarch64",
+      "platform": "macos",
+      "architecture": "aarch64",
+      "format": "app.tar.gz",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-macos-aarch64-updater.tar.gz",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-macos-x86_64.dmg",
+      "platformKey": "macos-x86_64",
+      "platform": "macos",
+      "architecture": "x86_64",
+      "format": "dmg",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-macos-x86_64.dmg",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-macos-x86_64-updater.tar.gz",
+      "platformKey": "macos-x86_64",
+      "platform": "macos",
+      "architecture": "x86_64",
+      "format": "app.tar.gz",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-macos-x86_64-updater.tar.gz",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-linux-x86_64.AppImage",
+      "platformKey": "linux-x86_64",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "format": "AppImage",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-linux-x86_64.AppImage",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.1-linux-x86_64.deb",
+      "platformKey": "linux-x86_64",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "format": "deb",
+      "url": "https://github.com/fixture/public/releases/download/v0.2.0-alpha.1/goro-v0.2.0-alpha.1-linux-x86_64.deb",
+      "sha256": "c7c5c1d70c5dec4416ab6158afd0b223ef40c29b1dc1f97ed9428b94d4cadb1c",
+      "size": 8
+    }
+  ]
+}

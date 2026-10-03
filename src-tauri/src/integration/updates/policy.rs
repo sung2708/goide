@@ -51,7 +51,7 @@ pub fn endpoint(base: &str, channel: Channel) -> Result<Url, &'static str> {
     if !base.path().ends_with('/') {
         return Err("Release base URL must end with a slash.");
     }
-    base.join(&format!("{}/updater.json", channel.name()))
+    base.join(&format!("{}/latest.json", channel.name()))
         .map_err(|_| "Invalid channel endpoint.")
 }
 pub fn allowed_host(host: &str, endpoint_host: &str) -> bool {
@@ -114,7 +114,7 @@ mod tests {
             endpoint("https://example.test/releases/", Channel::Beta)
                 .unwrap()
                 .as_str(),
-            "https://example.test/releases/beta/updater.json"
+            "https://example.test/releases/beta/latest.json"
         );
         assert!(endpoint("https://example.test/releases", Channel::Stable).is_err());
         assert!(!artifact_url(

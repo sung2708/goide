@@ -24,6 +24,7 @@ const docs = [
   "docs/RELEASE.md",
   "docs/UPDATES.md",
   "docs/UPDATE_SYSTEM_REPORT.md",
+  "docs/RELEASE_METADATA_REPORT.md",
   "docs/RELEASE_READINESS.md",
   "docs/FINAL_PRODUCT_AUDIT.md",
   "docs/NAVIGATION_SEARCH.md",

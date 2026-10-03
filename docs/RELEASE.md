@@ -121,6 +121,11 @@ Once the workflow completes:
    - Linux Debian: `goro-v<VER>-linux-x86_64.deb`
    - Checksums: `SHA256SUMS.txt`
 4. Confirm that `SHA256SUMS.txt` matches the final published filenames and verify hashes.
+5. Confirm the website `release.json` and Tauri `latest.json` point to the same
+   version, actual publication date and verified artifacts. Run the public
+   CORS/cache/propagation probe described in [UPDATES.md](UPDATES.md). See the
+   [Release Metadata Report](RELEASE_METADATA_REPORT.md) for schema, exact fixture
+   example, secret locations and the alpha.1 → alpha.2 acceptance procedure.
 
 ---
 

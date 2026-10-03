@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { artifactMatrix, releaseChannel } from "./release-contract.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT_DIR = resolve(__dirname, "..");
@@ -113,6 +114,10 @@ function main() {
   const tag = options.tag.startsWith("v") ? options.tag : `v${options.tag}`;
   const platform = normalizePlatform(options.platform);
   const arch = normalizeArch(options.arch);
+  releaseChannel(tag.slice(1));
+  if (!artifactMatrix.some(entry => entry.platformKey === `${platform}-${arch}`)) {
+    throw new Error("Platform/architecture is not in the supported release matrix");
+  }
 
   if (!["windows", "macos", "linux"].includes(platform)) {
     console.error(

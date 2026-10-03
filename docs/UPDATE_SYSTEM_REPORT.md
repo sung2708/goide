@@ -128,7 +128,7 @@ credentials needed by clients; source visibility can remain private.
 
 ## Website Integration Contract
 
-Fetch stable latest.json by default; explicit prerelease selector; escaped text,
+Fetch stable release.json by default; explicit prerelease selector; escaped text,
 validated schema, exact asset selection, short pointer caches and truthful
 network/unsupported-platform UI. Website code is outside this repository.
 
