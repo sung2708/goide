@@ -49,7 +49,7 @@ pub struct ProjectInfo {
     pub limited: bool,
     pub environment: BTreeMap<String, String>,
 }
-fn directory(root: &Path, relative: &str) -> Result<PathBuf> {
+pub(crate) fn directory(root: &Path, relative: &str) -> Result<PathBuf> {
     if relative.len() > 4096
         || relative.contains('\0')
         || Path::new(relative).components().any(|part| {

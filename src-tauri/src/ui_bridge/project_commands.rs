@@ -1,5 +1,30 @@
 use super::types::{ApiResponse, GoProjectInfoDto, GoProjectRequestDto};
 #[tauri::command]
+pub async fn run_go_tests(
+    request: super::types::GoTestRequestDto,
+) -> ApiResponse<super::types::GoTestOutputDto> {
+    match super::commands::with_idle_go_tools(move || crate::integration::go_tests::run(request))
+        .await
+    {
+        Ok(output) => ApiResponse::ok(output),
+        Err(error) => ApiResponse::err("go_test_failed", &error),
+    }
+}
+#[tauri::command]
+pub async fn confirm_go_test_cleanup(
+    request: super::types::LanguageCancelRequestDto,
+) -> ApiResponse<bool> {
+    let mut response = confirm_go_module_cleanup(request).await;
+    if let Some(error) = response.error.as_mut() {
+        error.code = "go_test_cleanup_pending".into();
+        error.message = error
+            .message
+            .replace("Module", "Test")
+            .replace("module", "test");
+    }
+    response
+}
+#[tauri::command]
 pub async fn confirm_go_module_cleanup(
     request: super::types::LanguageCancelRequestDto,
 ) -> ApiResponse<bool> {

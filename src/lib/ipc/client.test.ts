@@ -6,9 +6,19 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-import { confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
+import { runGoTests, confirmGoTestCleanup, confirmGoModuleCleanup, runGoModuleAction, inspectGoProject, getToolchainStatus, searchWorkspaceText, startWorkspaceFsWatch, stopWorkspaceFsWatch } from "./client";
 
 describe("ipc client searchWorkspaceText", () => {
+  it("requires native test execution and preserves the typed target/cancellation identity", async () => {
+    delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
+    invokeMock.mockReset();
+    const request = { workspaceRoot: "C:/workspace", relativeDirectory: "a", requestId: "owned-test-id", target: "package" as const, testName: "TestActual" };
+    expect(await runGoTests(request)).toMatchObject({ ok: false, error: { code: "go_test_native_required" } });
+    expect(await confirmGoTestCleanup(request)).toMatchObject({ ok: false }); expect(invokeMock).not.toHaveBeenCalled();
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {};
+    invokeMock.mockResolvedValue({ ok: true, data: true }); await runGoTests(request); await confirmGoTestCleanup(request);
+    expect(invokeMock).toHaveBeenCalledWith("run_go_tests", { request }); expect(invokeMock).toHaveBeenCalledWith("confirm_go_test_cleanup", { request });
+  });
   beforeEach(() => {
     vi.clearAllMocks();
     delete (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__;
