@@ -139,6 +139,7 @@ pub enum DeepTraceConstructKindDto {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct ActivateDeepTraceRequestDto {
+    pub request_id: String,
     pub workspace_root: String,
     pub relative_path: String,
     pub line: usize,
@@ -162,6 +163,7 @@ pub struct ActivateDeepTraceResponseDto {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartDebugSessionRequestDto {
+    pub request_id: String,
     pub test_name: Option<String>,
     pub workspace_root: String,
     pub relative_path: String,

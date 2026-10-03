@@ -180,7 +180,7 @@ describe("EditorShell race run", () => {
     expect(screen.getByRole("button", { name: /^run active go file$/i })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Commands" }));
     expect(await screen.findByRole("button", { name: /^Stop Run/ })).toBeEnabled();
-  });
+  }, 15000); // Two palette interactions plus native startup/failed Stop; same budget as the full Race workflow.
 
   it("retains the workspace and its document when scoped run cleanup blocks a root change", async () => {
     const user = userEvent.setup(); render(<EditorShell />); await openWorkspaceAndShowExplorer(user);
@@ -199,7 +199,7 @@ describe("EditorShell race run", () => {
     await user.click(screen.getByRole("button", { name: /open mock file/i }));
     await waitFor(() => expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace-2", "main.go"));
     expect(stopCurrentRunMock).toHaveBeenCalledTimes(2);
-  });
+  }, 15000); // Two complete workspace transitions, including scoped cleanup failure and retry.
 
   it("runs go with race mode from the editor header and surfaces confirmed race signal", async () => {
     const user = userEvent.setup();

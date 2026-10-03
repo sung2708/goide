@@ -150,6 +150,7 @@ export type DeepTraceConstructKind =
   | "wait-group";
 
 export type ActivateDeepTraceRequest = {
+  requestId: string;
   workspaceRoot: string;
   relativePath: string;
   line: number;
@@ -169,6 +170,7 @@ export type ActivateDeepTraceResponse = {
 };
 
 export type StartDebugSessionRequest = {
+  requestId: string;
   testName?: string | null;
   workspaceRoot: string;
   relativePath: string;

@@ -44,6 +44,7 @@ async fn debugger_controls_reject_wrong_owners_and_old_stops_before_actual_step_
             return Err(format!("Breakpoint failed: {:?}", breakpoint.error));
         }
         let started = start_debug_session(StartDebugSessionRequestDto {
+            request_id: uuid::Uuid::new_v4().to_string(),
             test_name: None,
             workspace_root: root.to_string_lossy().into(),
             relative_path: "main.go".into(),

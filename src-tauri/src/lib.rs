@@ -57,6 +57,7 @@ pub fn run() {
             ui_bridge::commands::get_active_file_completions,
             ui_bridge::commands::activate_scoped_deep_trace,
             ui_bridge::commands::start_debug_session,
+            ui_bridge::commands::cancel_debugger_startup,
             ui_bridge::commands::deactivate_deep_trace,
             ui_bridge::commands::get_runtime_availability,
             ui_bridge::commands::get_toolchain_status,

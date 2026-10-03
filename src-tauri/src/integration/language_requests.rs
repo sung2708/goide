@@ -40,6 +40,11 @@ impl std::fmt::Display for Stopped {
     }
 }
 impl std::error::Error for Stopped {}
+pub(crate) fn is_deadline(error: &anyhow::Error) -> bool {
+    error
+        .downcast_ref::<Stopped>()
+        .is_some_and(|error| error.0.contains("deadline"))
+}
 pub fn is_stopped(error: &anyhow::Error) -> bool {
     error.downcast_ref::<Stopped>().is_some()
 }
@@ -149,6 +154,7 @@ fn register(root: &Path, id: Option<&str>, timeout: Duration) -> Result<(Uuid, C
 pub(crate) struct StartupRequest {
     id: Uuid,
     context: Context,
+    completed: bool,
 }
 pub(crate) struct BoundContext {
     previous: Option<Context>,
@@ -164,7 +170,11 @@ impl Drop for BoundContext {
 impl StartupRequest {
     pub(crate) fn begin(root: &Path, id: &str, timeout: Duration) -> Result<Self> {
         let (id, context) = register(root, Some(id), timeout)?;
-        let request = Self { id, context };
+        let request = Self {
+            id,
+            context,
+            completed: false,
+        };
         request.check()?;
         Ok(request)
     }
@@ -180,6 +190,20 @@ impl StartupRequest {
         }
         Ok(())
     }
+    pub(crate) fn disarm(&mut self) {
+        self.completed = true;
+    }
+    pub(crate) fn cancellation_token(&self) -> Arc<AtomicBool> {
+        self.context.cancelled.clone()
+    }
+    pub(crate) async fn stopped(&self) -> anyhow::Error {
+        loop {
+            if let Err(error) = self.check() {
+                return error;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
     pub(crate) fn binder(&self) -> impl FnOnce() -> BoundContext + Send + 'static {
         let context = self.context.clone();
         move || BoundContext {
@@ -191,9 +215,31 @@ impl StartupRequest {
 impl Drop for StartupRequest {
     fn drop(&mut self) {
         // Abandoned async callers cancel the still-owned blocking tool as well.
-        self.context.cancelled.store(true, Ordering::Release);
+        if !self.completed {
+            self.context.cancelled.store(true, Ordering::Release);
+        }
         if let Ok(mut requests) = REQUESTS.get_or_init(Default::default).lock() {
-            requests.active.remove(&self.id);
+            if let Some((root, _)) = requests.active.remove(&self.id) {
+                requests
+                    .cancelled
+                    .retain(|_, (_, time)| time.elapsed() < Duration::from_secs(300));
+                if requests.cancelled.len() >= 256 {
+                    if let Some(oldest) = requests
+                        .cancelled
+                        .iter()
+                        .min_by_key(|(_, (_, time))| *time)
+                        .map(|(id, _)| *id)
+                    {
+                        requests.cancelled.remove(&oldest);
+                    }
+                }
+                // Startup UUIDs are single-use, including successful acknowledgements.
+                // Keep their root binding so a foreign late cancellation cannot poison cleanup.
+                requests
+                    .cancelled
+                    .entry(self.id)
+                    .or_insert((root, Instant::now()));
+            }
         }
     }
 }
@@ -264,6 +310,30 @@ pub fn cancel(root: &Path, id: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn acknowledged_startup_disarms_abandonment_but_keeps_identity_scoped() {
+        let root = Path::new("acknowledged-startup");
+        let id = Uuid::new_v4().to_string();
+        let mut startup = StartupRequest::begin(root, &id, Duration::from_secs(10)).unwrap();
+        let token = startup.cancellation_token();
+        startup.disarm();
+        drop(startup);
+        assert!(!token.load(Ordering::Acquire));
+        assert!(StartupRequest::begin(root, &id, Duration::from_secs(10)).is_err());
+        assert!(cancel(Path::new("foreign-ack-root"), &id).is_err());
+        assert!(cancel(root, &id).unwrap());
+    }
+    #[tokio::test]
+    async fn asynchronous_startup_wait_observes_a_shared_deadline() {
+        let startup = StartupRequest::begin(
+            Path::new("async-deadline"),
+            &Uuid::new_v4().to_string(),
+            Duration::from_millis(25),
+        )
+        .unwrap();
+        let error = startup.stopped().await;
+        assert!(is_deadline(&error));
+    }
     #[test]
     fn startup_identity_cancels_bound_sdk_thread_and_abandonment() {
         let root = Path::new("startup-owner");
