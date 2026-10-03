@@ -255,3 +255,13 @@ PASS: parser/hook/dialog and IPC checks cover interleaved native events, old/new
 The preceding full frontend baseline passed 94 files and 666 tests before this test-runner slice. Live streaming, CodeLens/Debug Test and complete platform acceptance remain NOT RUN. Existing cross-platform process ownership limitations and concurrent filesystem races are not certified by these focused checks; release remains gated.
 
 Native test-runner fixture/unit rerun PASS (3 checks, including live binary cancellation and missing/empty selections). Cargo Clippy --all-targets also passes for this slice.
+
+## Retained native cleanup regression (2026-10-03)
+
+PASS: Windows checks retain handles through injected stop failures, retry cleanup idempotently, reap descendants after root exit and leave unrelated children alive. Bounded tool output tests cover deadline, scoped cancellation, descendant pipes and output limits. Process/Job suites pass (9 checks), including observed natural completion and rejecting obsolete owner identities. Native cleanup identity/gate checks pass (2 tests).
+
+PASS: four frontend suites pass 20 tests for module/test cleanup, including structured cleanup-pending responses retaining document ownership until successful confirmation. TypeScript and production build pass (251 modules).
+
+Linux/macOS execution is NOT RUN on this Windows host. Unix synchronous cleanup now uses checked process-group signals and probes, avoids re-sending numeric group signals during retained retries, and retains uncertain handles. This is not certification of every Unix identity, zombie, descendant or PTY case. The full release/platform gate remains incomplete.
+
+Final ownership filter PASS: 15 native tests, with one installed-Go module fixture ignored by this filter (previously run separately). Coverage includes Git-hook cancellation, synchronous trees/retention, async Run jobs, PTY ownership/readers/reaping, tool configuration ownership and native module cleanup. Cargo Clippy --all-targets passes without the retired Windows fallback warning.

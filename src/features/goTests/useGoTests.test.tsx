@@ -53,3 +53,10 @@ it("cancels during executable configuration before any test process starts", asy
   act(() => { hook.result.current.cancel(); }); expect(cancelPreparation).toHaveBeenCalledOnce();
   await act(async () => { finish({ ok: true, data: {} }); await work; }); expect(run).not.toHaveBeenCalled(); expect(hook.result.current.status).toBe("cancelled");
 });
+it("retains ownership after a structured native cleanup-pending response", async () => {
+  run.mockResolvedValueOnce({ ok: false, error: { code: "go_test_cleanup_pending", message: "owned process still stopping" } });
+  confirm.mockResolvedValueOnce({ ok: false, error: { message: "cleanup not confirmed" } });
+  const { hook } = setup(); let work!: Promise<void>; act(() => { work = hook.result.current.run("package", "."); });
+  await waitFor(() => expect(hook.result.current.needsCleanup).toBe(true)); expect(hook.result.current.busy).toBe(true);
+  await act(async () => { await hook.result.current.retryCleanup(); await work; }); expect(hook.result.current.busy).toBe(false);
+});

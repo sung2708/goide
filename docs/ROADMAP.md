@@ -394,3 +394,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: real JSON results/status/duration, scoped test/compiler failure navigation, Save All and merge-result preservation, toolchain preflight, cancellation and IPC cleanup recovery.
 - Delivered: exact top-level test selection through typed native IPC with rejection of missing selections; semantic editor actions are not yet wired.
 - Remaining: live streaming, semantic Test/Main CodeLens, Debug Test, debugger variables/stack/goroutines, remaining session/Git features and the complete platform ownership matrix. No release/tag is authorized.
+
+## Native cleanup ownership checkpoint (2026-10-03)
+
+- Delivered: failed synchronous teardown retains process/job handles for bounded cleanup retry; pending ownership blocks new synchronous tool starts until cleanup succeeds.
+- Delivered: Windows synchronous and asynchronous children confirm empty owned jobs, natural Run completion checks descendant cleanup before retiring ownership, and module/test errors distinguish incomplete teardown from acknowledged failure.
+- Delivered: module/test document locks remain held for structured cleanup-pending replies as well as lost IPC transport. Global cleanup includes retained synchronous handles and pipe workers.
+- Remaining: complete Linux/macOS descendant/zombie/identity acceptance, Windows spawn-to-job assignment failure/gap coverage, PTY/platform acceptance and unfinished debugger/Git/addendum features. No release/tag is authorized.

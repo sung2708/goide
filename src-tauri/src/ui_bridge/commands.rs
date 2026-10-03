@@ -1146,9 +1146,14 @@ pub(super) async fn with_idle_go_tools<T: Send + 'static>(
     if run_guard.is_some() || debug_guard.is_some() {
         return Err("Stop the active Go run/debugger before running module commands.".into());
     }
-    match tauri::async_runtime::spawn_blocking(action).await {
+    let result = match tauri::async_runtime::spawn_blocking(action).await {
         Ok(result) => result.map_err(|error| format!("{error:#}")),
         Err(error) => Err(error.to_string()),
+    };
+    match tauri::async_runtime::spawn_blocking(crate::integration::owned_tool_output::wait_for_shutdown).await {
+        Ok(Ok(())) => result,
+        Ok(Err(error)) => Err(format!("owned_go_cleanup_pending: {error}")),
+        Err(error) => Err(format!("owned_go_cleanup_pending: {error}")),
     }
 }
 

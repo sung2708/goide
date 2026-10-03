@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
+#[cfg(not(windows))]
 use tokio::process::Child;
 use tokio::sync::Mutex;
 
@@ -23,12 +24,12 @@ pub(crate) async fn wait_for_owned_exit(
         }
         match child.try_wait() {
             Ok(Some(status)) => {
+                child.stop().await?;
                 drop(guard.take());
                 return Ok(status.code());
             }
             Ok(None) => {}
             Err(error) => {
-                drop(guard.take());
                 return Err(format!("Unable to inspect owned process: {error}"));
             }
         }
@@ -101,34 +102,6 @@ fn build_go_run_args(workspace_root: &Path, target: &Path, mode: RunMode) -> Vec
     }
     args.push(to_package_run_target(workspace_root, target));
     args
-}
-
-#[cfg(windows)]
-pub async fn kill_process_group(child: &mut Child) -> Result<()> {
-    if let Some(pid) = child.id() {
-        let output = tokio_command("taskkill")
-            .arg("/F")
-            .arg("/T")
-            .arg("/PID")
-            .arg(pid.to_string())
-            .output()
-            .await
-            .context("Unable to stop the owned process tree")?;
-        if !output.status.success() && child.try_wait()?.is_none() {
-            return Err(anyhow!(
-                "Unable to stop owned process tree: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-    }
-    if child.try_wait()?.is_none() {
-        child
-            .kill()
-            .await
-            .context("Unable to terminate owned process")?;
-    }
-    child.wait().await.context("Unable to reap owned process")?;
-    Ok(())
 }
 
 #[cfg(not(windows))]
@@ -318,8 +291,8 @@ pub fn emit_run_failure<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
+    use super::tokio_command;
     use super::{build_go_run_args, to_package_run_target, RunMode};
-    use super::{kill_process_group, tokio_command};
     use std::path::Path;
     use std::process::Stdio;
     #[tokio::test]
@@ -338,7 +311,7 @@ mod tests {
                 command
             }
         }
-        let mut owned = command()
+        let owned = command()
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .kill_on_drop(true)
@@ -350,10 +323,14 @@ mod tests {
             .kill_on_drop(true)
             .spawn()
             .unwrap();
-        kill_process_group(&mut owned).await.unwrap();
+        let mut owned = crate::integration::process_job::OwnedChild::new(owned)
+            .await
+            .unwrap();
+        owned.stop().await.unwrap();
         assert!(owned.try_wait().unwrap().is_some());
         assert!(unrelated.try_wait().unwrap().is_none());
-        kill_process_group(&mut unrelated).await.unwrap();
+        unrelated.kill().await.unwrap();
+        unrelated.wait().await.unwrap();
     }
 
     #[test]
