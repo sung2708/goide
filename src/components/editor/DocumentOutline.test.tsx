@@ -30,7 +30,7 @@ describe("DocumentOutline", () => {
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
       configurable: true,
       writable: true,
-      value: scrollIntoViewMock,
+      value: function () {},
     });
     const scrollIntoViewSpy = vi
       .spyOn(HTMLElement.prototype, "scrollIntoView")

@@ -4,6 +4,8 @@ Initial readiness review on 2026-10-03 used develop `0455c6e41b882d5a6fa32155a59
 
 **Release classification: NOT READY. Recommended release version: NONE.**
 
+The [October 4 QA hardening follow-up](QA_HARDENING_FOLLOWUP.md) records operation-bound Git cancellation, dependency remediation and the remaining native interaction failures. Historical audit counts below retain their named revision; the follow-up is the current dependency audit snapshot.
+
 The subsequent [update system report](UPDATE_SYSTEM_REPORT.md) records the new
 official updater and public distribution implementation. Production key/endpoint
 setup, signed platform upgrade acceptance and native Computer Use QA remain
@@ -38,7 +40,7 @@ Implemented means source and tests exist; it does not mean complete native/platf
 
 `src-tauri/src/integration/shell/owned_child.rs` uses the custom Windows owner but delegates Unix spawn to portable-pty. `shell.rs` kills/reaps the shell and joins its reader; this is insufficient evidence that every descendant or changed process group is contained. This is a known ownership gap, not a newly reproduced leak in this review.
 
-`src-tauri/src/integration/git/mod.rs::cancel` canonicalizes the current root to look up cancellation. External deletion or retargeting can prevent lookup of the original operation. Give each operation a stable request identity independent of a subsequently changed filesystem path, retaining workspace authorization at registration.
+Git cancellation now uses a registered operation UUID and the original authorized workspace path rather than live canonicalization. Regression fixtures cover deleted/replaced roots, stale IDs and alias ambiguity. Installed-app cancellation acceptance still needs the native QA journey; the Unix PTY ownership gap above remains open.
 
 Acceptance: cancel and close during startup/execution/teardown; root exits before descendants; descendants retain pipes or create groups; root deleted/retargeted; cleanup fails and is retried; unrelated processes remain alive. Never release mutation ownership before cleanup is acknowledged. Exercise Windows, Linux and macOS independently.
 
@@ -80,7 +82,7 @@ Tracked config/workflow does not establish signing/notarization credentials or t
 
 Test Windows NSIS/MSI, macOS Apple Silicon/Intel DMG and Linux AppImage/deb if all remain declared targets. Include WebView/runtime prerequisites, first launch, executable/icon/version, paths with spaces, tool discovery, upgrade with retained settings, uninstall and missing-tool fallback. Do not claim a target supported merely because source tests compile on one runner. A narrower initial release requires explicit support-policy and asset-matrix changes; this audit does not silently drop platforms.
 
-Rust dependency audit is NOT RUN here (cargo-audit unavailable), and security.yml currently checks npm only. Audit Cargo.lock and vendored dependencies, review license notices and capability scopes, and retain dated results. Address or explicitly disposition dev-tool advisories; do not run an uncontrolled major-version audit fix.
+The October 4 follow-up audits both tracked Cargo lockfiles and remediates the reported vulnerability records. security.yml now audits npm and Rust. Informational warnings, transitive GTK reachability and shipped license notices remain under review; see the follow-up for exact scope and limitations.
 
 ## Evidence collected during the initial readiness review
 

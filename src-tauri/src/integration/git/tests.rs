@@ -707,6 +707,59 @@ fn mutations_are_serialized() {
 }
 
 #[test]
+fn cancellation_retains_registration_identity_when_root_is_replaced() {
+    let repo = Repo::new();
+    let original = repo.0.clone();
+    let moved = original.with_extension("moved");
+    let id = uuid::Uuid::new_v4();
+    let lease = mutation_lock_identified(&original, &original, id).unwrap();
+    let token = cancellation(&original).unwrap();
+    fs::rename(&original, &moved).unwrap();
+    // Cancellation must succeed while the original path is absent.
+    assert!(cancel_identified(&original, Some(id)).unwrap());
+    token.store(false, Ordering::Release);
+    fs::create_dir(&original).unwrap();
+    // Nor may a replacement path change the operation's identity.
+    assert!(!cancel_identified(&original, Some(uuid::Uuid::new_v4())).unwrap());
+    assert!(!token.load(Ordering::Acquire));
+    assert!(cancel_identified(&original, Some(id)).unwrap());
+    fs::remove_dir(&original).unwrap();
+    fs::rename(&moved, &original).unwrap();
+    drop(lease);
+    let next_id = uuid::Uuid::new_v4();
+    let _next = mutation_lock_identified(&original, &original, next_id).unwrap();
+    assert!(!cancel_identified(&original, Some(id)).unwrap());
+    assert!(!cancellation(&original).unwrap().load(Ordering::Acquire));
+}
+
+#[test]
+fn cancellation_identity_cannot_target_another_workspace() {
+    let repo = Repo::new();
+    let other = Repo::new();
+    let id = uuid::Uuid::new_v4();
+    let _lease = mutation_lock_identified(&repo.0, &repo.0, id).unwrap();
+    assert!(!cancel_identified(&other.0, Some(id)).unwrap());
+    assert!(!cancellation(&repo.0).unwrap().load(Ordering::Acquire));
+}
+
+#[test]
+fn a_retargeted_alias_needs_the_exact_operation_identity() {
+    let repo = Repo::new();
+    let other = Repo::new();
+    let alias = repo.0.join("workspace-alias");
+    let first = uuid::Uuid::new_v4();
+    let second = uuid::Uuid::new_v4();
+    let _first_lease = mutation_lock_identified(&repo.0, &alias, first).unwrap();
+    let _second_lease = mutation_lock_identified(&other.0, &alias, second).unwrap();
+    assert!(cancel_identified(&alias, None).is_err());
+    assert!(!cancellation(&repo.0).unwrap().load(Ordering::Acquire));
+    assert!(!cancellation(&other.0).unwrap().load(Ordering::Acquire));
+    assert!(cancel_identified(&alias, Some(first)).unwrap());
+    assert!(cancellation(&repo.0).unwrap().load(Ordering::Acquire));
+    assert!(!cancellation(&other.0).unwrap().load(Ordering::Acquire));
+}
+
+#[test]
 fn discard_preserves_index_and_untracked_deletion_is_explicit_and_file_only() {
     let repo = Repo::new();
     repo.write("main.go", b"base");

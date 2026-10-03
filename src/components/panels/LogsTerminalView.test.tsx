@@ -12,7 +12,7 @@ const clearMock = vi.fn();
 let lastTerminalOptions: Record<string, unknown> = {};
 
 vi.mock("@xterm/xterm", () => ({
-  Terminal: vi.fn().mockImplementation((opts: Record<string, unknown>) => {
+  Terminal: vi.fn().mockImplementation(function (opts: Record<string, unknown>) {
     lastTerminalOptions = opts ?? {};
     return {
       open: openMock,
@@ -28,7 +28,7 @@ vi.mock("@xterm/xterm", () => ({
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: vi.fn().mockImplementation(() => ({ fit: fitMock })),
+  FitAddon: vi.fn().mockImplementation(function () { return ({ fit: fitMock }); }),
 }));
 
 afterEach(() => {
