@@ -1,0 +1,93 @@
+{
+  "schemaVersion": 1,
+  "product": "Goro",
+  "version": "0.2.0-alpha.5",
+  "tag": "v0.2.0-alpha.5",
+  "channel": "alpha",
+  "publishedAt": "2026-10-03T20:56:49Z",
+  "releaseNotes": "# Goro 0.2.0-alpha.5\n\nAn experimental desktop IDE for Go. This release is built from main and uses your locally installed Go, gopls, Delve and Git. It is an alpha for evaluation; native preservation, packaging and platform acceptance are still incomplete.\n\n## Included\n\n- Go editor with syntax highlighting, completion, hover, diagnostics, signature help and supported gopls edits. Review applicable workspace edits before applying them.\n- File navigation, command palette, in-file and workspace search/replace with replacement preview. Workspace search reads files on disk.\n- Run and test with Go; debug with Delve breakpoints, stepping, variables and call stacks.\n- Source Control and Git Graph, including diffs, commit history, branches, stashes and conflict handling. Cancellation targets a specific operation and remains bound to its original workspace.\n- Interactive terminal, editor/tool settings and twelve color palettes.\n- Experimental sampled goroutine inspection and Go race-report views. Samples do not establish a complete causality trace.\n- Signed updater support, channel selection and explicit installation consent. Download links, checksums and update manifests are generated from the same verified artifacts.\n- Dependency security patches and automated npm/Rust advisory checks.\n\n## Known limitations\n\n- Native UI journeys for external-file conflicts, failed saves, dirty close/Explorer/Git transitions and active-process shutdown have not completed acceptance. Local Computer Use capture/input was unavailable.\n- Unix PTY descendant/session containment remains incomplete. Do not assume every descendant is stopped on Unix.\n- Clean-machine install/upgrade/uninstall, platform publisher trust, editor latency and IME/accessibility acceptance remain unverified. Updater signatures verify update integrity; they do not provide Windows Authenticode or macOS notarization.\n- Save As/export-copy and crash recovery of unsaved drafts are not implemented. View/session restoration does not preserve unsaved text after a crash. Back up work and save regularly.\n- Workspace search does not include unsaved buffers. Sampled runtime views are experimental.\n- Debian packages require manual updates; automatic Linux updates apply to AppImage installations. Windows/Linux ARM are not included.\n\n## Verification and prerequisites\n\nVerification includes 798 frontend tests, a Windows native run with 263 passing tests and 24 tool-dependent tests intentionally ignored, and a prior separate passing run of those 24 Go/gopls/Delve fixtures. The Windows inherited-pipe cleanup regression passed 20 consecutive runs. Hosted CI passed on Windows, macOS and Linux after correcting the Windows and macOS process fixtures. Automated results do not certify native UI journeys, installers or signed upgrades. The release workflow runs its own deterministic checks and signs/verifies the complete artifact matrix before publication.\n\nInstall the Go toolchain, gopls, Delve and Git separately. Keep this alpha's limitations in mind when choosing a workspace. The full QA evidence and outstanding gates remain in docs/QA_HARDENING_FOLLOWUP.md and docs/RELEASE_READINESS.md.\n",
+  "releaseUrl": "https://github.com/sung2708/goide/releases/tag/v0.2.0-alpha.5",
+  "checksumUrl": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/SHA256SUMS.txt",
+  "downloads": [
+    {
+      "filename": "goro-v0.2.0-alpha.5-windows-x86_64-setup.exe",
+      "platformKey": "windows-x86_64",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "format": "exe",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-windows-x86_64-setup.exe",
+      "sha256": "e287f0ccbb99d07ffc932f703a82f817bf933c167d9b3e9b908144473bb8a37d",
+      "size": 4894117
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-windows-x86_64.msi",
+      "platformKey": "windows-x86_64",
+      "platform": "windows",
+      "architecture": "x86_64",
+      "format": "msi",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-windows-x86_64.msi",
+      "sha256": "09a4b6ae7778a03fd1a4edb77f43d42ae47174ea065c423a98fff55ad45e486e",
+      "size": 7012352
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-macos-aarch64.dmg",
+      "platformKey": "macos-aarch64",
+      "platform": "macos",
+      "architecture": "aarch64",
+      "format": "dmg",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-macos-aarch64.dmg",
+      "sha256": "3ffc828cbc72d8c4b914bf0af8a8aeb3d9224fda6eaa1138c02aba267c6fb0e3",
+      "size": 7120933
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-macos-aarch64-updater.tar.gz",
+      "platformKey": "macos-aarch64",
+      "platform": "macos",
+      "architecture": "aarch64",
+      "format": "app.tar.gz",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-macos-aarch64-updater.tar.gz",
+      "sha256": "f5c4dfa7c2387c5daa3c176717323f862b497e8955a867a76acdcd7139ab2ccd",
+      "size": 7223832
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-macos-x86_64.dmg",
+      "platformKey": "macos-x86_64",
+      "platform": "macos",
+      "architecture": "x86_64",
+      "format": "dmg",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-macos-x86_64.dmg",
+      "sha256": "35062ca80afaaaea4a5d5dee8074b5485ea7307072bf73ff31950084cad77726",
+      "size": 7268331
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-macos-x86_64-updater.tar.gz",
+      "platformKey": "macos-x86_64",
+      "platform": "macos",
+      "architecture": "x86_64",
+      "format": "app.tar.gz",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-macos-x86_64-updater.tar.gz",
+      "sha256": "bd266890446d08de31c877c7ab62bd97e1ada58b43b20809e73b61d74d5c81be",
+      "size": 7304187
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-linux-x86_64.AppImage",
+      "platformKey": "linux-x86_64",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "format": "AppImage",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-linux-x86_64.AppImage",
+      "sha256": "dcedf0e036e09c21615e94d53dff2ff826f76825859a1e428e6636fa211b813c",
+      "size": 88046072
+    },
+    {
+      "filename": "goro-v0.2.0-alpha.5-linux-x86_64.deb",
+      "platformKey": "linux-x86_64",
+      "platform": "linux",
+      "architecture": "x86_64",
+      "format": "deb",
+      "url": "https://github.com/sung2708/goide/releases/download/v0.2.0-alpha.5/goro-v0.2.0-alpha.5-linux-x86_64.deb",
+      "sha256": "b720bbd39060112e5e91b3445ab8fce51f5c298ea4a564702e3d4e75765220b2",
+      "size": 8347398
+    }
+  ]
+}
