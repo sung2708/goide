@@ -432,3 +432,9 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: breakpoint templates belong to one canonical workspace, active changes require the owner UUID and metadata changes only after an adapter acknowledgement. Browser control/breakpoint/Stop calls fail explicitly. Workspace-bound inspection, source markers and delayed breakpoint replies are guarded.
 - Delivered: failed control replies include the actual post-request stop observation. UI restores old values only when native confirms that same owner and stop; unknown transport outcomes keep old inspection hidden until a new observation or Stop.
 - Remaining: breakpoint verification/resolution presentation, Run/Debug Save All preflight, semantic Test/Main actions, Debug Test, live test streaming, recent workspaces/session restore, complete Git workflows and platform acceptance. No release/tag is authorized.
+
+## Execution preparation checkpoint (2026-10-03)
+
+- Delivered: Run, Race Run, Debug and scoped Deep Trace preserve every dirty document and retained conflict draft before applying configured tool paths and verifying required tools. Inactive-tab save failures block execution and retain edits. Go execution does not require gopls/Delve; debugging requires actual Go and Delve readiness.
+- Delivered: document/Explorer/branch/window transitions remain locked through preparation and native startup acknowledgement. Preparation can be cancelled before launch; changed roots/preferences and unmounted editors cannot launch from delayed probes. Late debugger success retires only the returned session UUID.
+- Remaining: semantic Test/Main actions, Debug Test, live test streaming, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.

@@ -303,3 +303,9 @@ PASS: adapter event tests invalidate execution authority when thread reads consu
 PASS: 46 frontend tests across EditorShell.debug, inspection, intent gating, workspace ownership and typed IPC; immediate Stop uses the startup UUID, idle unmount sends no global teardown, preview mutations report native-required errors, and unknown/failed transport cannot restore obsolete stop values. TypeScript and production build pass (256 modules).
 
 Run/Debug Save All preflight, semantic actions/Debug Test/live streaming, complete Git and platform acceptance remain unfinished or NOT RUN. No release/tag is authorized.
+
+## Execution preparation regression (2026-10-03)
+
+PASS: 92 frontend tests across execution preparation, EditorShell Run/Debug/Race/Terminal/inline actions and release document gates. Focused checks cover failed writes in an inactive tab, saving all dirty tabs plus a retained conflict result, actual missing Delve errors, preparation cancellation and disabled document edits/close while probes are pending. Hook checks reject changed tool preferences, failed preservation/configuration and unnecessary language/debugger dependencies for Go Run. TypeScript and production build pass (257 modules).
+
+These focused checks do not establish Debug Test, semantic actions, live test streaming, complete Git or platform/process acceptance. No release/tag is authorized.
