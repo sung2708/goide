@@ -168,6 +168,15 @@ pub(crate) fn debug_target(
     name: Option<&str>,
 ) -> Result<super::delve::LaunchMode> {
     let root = normalize_platform_pathbuf(root.canonicalize()?);
+    let _scope = language_requests::begin_with_timeout(&root, None, Duration::from_secs(120))?;
+    execution_target(&root, relative_path, name)
+}
+pub(crate) fn execution_target(
+    root: &Path,
+    relative_path: &str,
+    name: Option<&str>,
+) -> Result<super::delve::LaunchMode> {
+    let root = normalize_platform_pathbuf(root.canonicalize()?);
     let is_test = relative_path.ends_with("_test.go");
     if name.is_some() && !is_test {
         return Err(anyhow!("A selected test requires a saved _test.go file."));
@@ -180,7 +189,6 @@ pub(crate) fn debug_target(
         .parent()
         .context("Test file has no package directory")?;
     let filter = test_filter(name)?;
-    let _scope = language_requests::begin_with_timeout(&root, None, Duration::from_secs(120))?;
     let plan = patterns(&root, directory, &Target::Package)?;
     let work = plan.work.as_ref().map_or_else(
         || std::ffi::OsString::from("off"),

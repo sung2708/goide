@@ -147,7 +147,13 @@ async fn completion_uses_owner_identity_and_cannot_retire_a_replacement_run() {
     drop(old);
     let current = OwnedChild::new(spawn()).await.unwrap();
     let current_identity = current.identity();
-    let handle = Arc::new(Mutex::new(Some(current)));
+    let handle = Arc::new(Mutex::new(Some(
+        crate::integration::process::OwnedRun::new(
+            current,
+            std::path::PathBuf::from("test"),
+            uuid::Uuid::new_v4(),
+        ),
+    )));
     let result = crate::integration::process::wait_for_owned_exit(&handle, old_identity)
         .await
         .unwrap();
@@ -177,7 +183,13 @@ async fn completion_reaps_and_retires_a_naturally_exited_owned_process() {
         .unwrap();
     let child = OwnedChild::new(child).await.unwrap();
     let identity = child.identity();
-    let handle = Arc::new(Mutex::new(Some(child)));
+    let handle = Arc::new(Mutex::new(Some(
+        crate::integration::process::OwnedRun::new(
+            child,
+            std::path::PathBuf::from("test"),
+            uuid::Uuid::new_v4(),
+        ),
+    )));
     let code = tokio::time::timeout(
         Duration::from_secs(10),
         crate::integration::process::wait_for_owned_exit(&handle, identity),

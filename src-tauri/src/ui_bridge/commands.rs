@@ -14,7 +14,7 @@ use crate::integration::delve::{self, DapClient, RuntimeSignal, RuntimeSignalSco
 use crate::integration::fs;
 use crate::integration::fs_watch::{FsWatchMode, FsWatchService};
 use crate::integration::gopls;
-use crate::integration::process::{emit_run_failure, run_go_file, ProcessHandle, RunMode};
+use crate::integration::process::{run_go_file, ProcessHandle, RunMode};
 use crate::integration::shell::{
     dispose_shell_session_inner, ensure_shell_session_inner, resize_shell_session_inner,
     write_shell_input_inner, ShellSessionState, ShellSessionStore,
@@ -308,29 +308,14 @@ pub async fn run_workspace_file<R: tauri::Runtime>(
     relative_path: String,
     run_id: String,
 ) -> ApiResponse<()> {
-    if run_id.trim().is_empty() {
-        return ApiResponse::err("run_invalid_input", "run id is required");
-    }
-
-    let handle = get_process_handle();
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_go_file(
-            app.clone(),
-            workspace_root,
-            relative_path,
-            run_id.clone(),
-            RunMode::Standard,
-            handle,
-        )
-        .await
-        {
-            emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
-            #[cfg(debug_assertions)]
-            eprintln!("[goide] run_go_file error: {e:#}");
-        }
-    });
-    // Returns immediately — output streams via events
-    ApiResponse::ok(())
+    start_run(
+        app,
+        workspace_root,
+        relative_path,
+        run_id,
+        RunMode::Standard,
+    )
+    .await
 }
 
 #[tauri::command]
@@ -340,44 +325,80 @@ pub async fn run_workspace_file_with_race<R: tauri::Runtime>(
     relative_path: String,
     run_id: String,
 ) -> ApiResponse<()> {
-    if run_id.trim().is_empty() {
-        return ApiResponse::err("run_invalid_input", "run id is required");
-    }
+    start_run(app, workspace_root, relative_path, run_id, RunMode::Race).await
+}
 
-    let handle = get_process_handle();
-    tauri::async_runtime::spawn(async move {
-        if let Err(e) = run_go_file(
-            app.clone(),
-            workspace_root,
-            relative_path,
-            run_id.clone(),
-            RunMode::Race,
-            handle,
-        )
-        .await
-        {
-            emit_run_failure(&app, &run_id, &format!("Failed to start run: {e}"));
-            #[cfg(debug_assertions)]
-            eprintln!("[goide] run_go_file error: {e:#}");
+async fn start_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    workspace_root: String,
+    relative_path: String,
+    run_id: String,
+    mode: RunMode,
+) -> ApiResponse<()> {
+    if workspace_root.len() > 8192
+        || relative_path.len() > 4096
+        || run_id.len() > 64
+        || workspace_root.contains('\0')
+        || relative_path.contains('\0')
+        || uuid::Uuid::parse_str(&run_id).is_err()
+    {
+        return ApiResponse::err(
+            "run_start_failed",
+            "Run requires bounded workspace/file paths and a request UUID.",
+        );
+    }
+    let requested_root = std::path::Path::new(&workspace_root)
+        .canonicalize()
+        .ok()
+        .map(crate::integration::gopls::normalize_platform_pathbuf);
+    let requested_id = uuid::Uuid::parse_str(&run_id).ok();
+    match run_go_file(
+        app.clone(),
+        workspace_root,
+        relative_path,
+        run_id.clone(),
+        mode,
+        get_process_handle(),
+    )
+    .await
+    {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => {
+            let tools_clean = matches!(
+                tokio::task::spawn_blocking(
+                    crate::integration::owned_tool_output::wait_for_shutdown
+                )
+                .await,
+                Ok(Ok(()))
+            );
+            let retained = get_process_handle()
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(|child| {
+                    requested_root
+                        .as_ref()
+                        .zip(requested_id)
+                        .is_some_and(|(root, id)| child.matches(root, id))
+                });
+            ApiResponse::err(
+                if retained || !tools_clean {
+                    "run_cleanup_pending"
+                } else {
+                    "run_start_failed"
+                },
+                &error.to_string(),
+            )
         }
-    });
-    // Returns immediately - output streams via events
-    ApiResponse::ok(())
+    }
 }
 
 #[tauri::command]
-pub async fn stop_current_run() -> ApiResponse<()> {
-    let handle = get_process_handle();
-    let mut guard = handle.lock().await;
-
-    if let Some(child) = guard.as_mut() {
-        if let Err(error) = child.stop().await {
-            return ApiResponse::err("run_stop_failed", &error);
-        }
+pub async fn stop_current_run(context: crate::integration::process::RunContext) -> ApiResponse<()> {
+    match crate::integration::process::stop_owned_run(&get_process_handle(), context).await {
+        Ok(()) => ApiResponse::ok(()),
+        Err(error) => ApiResponse::err("run_stop_failed", &error),
     }
-    *guard = None;
-
-    ApiResponse::ok(())
 }
 
 /// One shutdown authority for GoIDE-owned run, debugger, PTY, watcher and LSP resources.
@@ -414,9 +435,8 @@ pub async fn shutdown_owned_resources<R: tauri::Runtime>(
         Ok(Err(error)) => return ApiResponse::err("shutdown_failed", &error),
         Err(error) => return ApiResponse::err("shutdown_failed", &error.to_string()),
     }
-    let stopped = stop_current_run().await;
-    if !stopped.ok {
-        return stopped;
+    if let Err(error) = crate::integration::process::stop_all_runs(&get_process_handle()).await {
+        return ApiResponse::err("shutdown_failed", &error);
     }
     if let Some(session) = take_dap_session_for_cleanup().await {
         if let Err(error) = stop_dap_session(session).await {
@@ -3023,7 +3043,11 @@ mod tests {
             .stderr(std::process::Stdio::null())
             .spawn()
             .unwrap();
-        *handle.lock().await = Some(OwnedChild::new(child).await.unwrap());
+        *handle.lock().await = Some(crate::integration::process::OwnedRun::new(
+            OwnedChild::new(child).await.unwrap(),
+            std::path::PathBuf::from("test"),
+            uuid::Uuid::new_v4(),
+        ));
         let response = super::configure_toolchain_paths(ToolPaths {
             gopls: std::env::current_exe()
                 .unwrap()
