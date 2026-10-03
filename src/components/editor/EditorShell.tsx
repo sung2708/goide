@@ -21,6 +21,7 @@ import { useSavePreparation } from "../../features/language/useSavePreparation";
 import { useSettings } from "../../features/settings/useSettings";
 import SettingsDialog from "../../features/settings/SettingsDialog";
 import ToolchainDialog from "../../features/settings/ToolchainDialog";
+import GoProjectDialog from "../../features/goProject/GoProjectDialog";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -290,6 +291,7 @@ function EditorShell() {
   const settingsRef = useRef(settings.values); settingsRef.current = settings.values;
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isToolchainOpen, setIsToolchainOpen] = useState(false);
+  const [isGoProjectOpen, setIsGoProjectOpen] = useState(false);
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const { session: documents, snapshot: documentSnapshot, workspacePath, setWorkspacePath, activeFilePath, setActiveFilePath, activeFileContent, setActiveFileContent, isDirty, activeFilePathRef, savedContentRef, latestEditorContentRef } = useDocumentSession();
   const [isOpening, setIsOpening] = useState(false);
@@ -2019,6 +2021,7 @@ function EditorShell() {
     { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
     { id: "go.toolchain", title: "Go: Inspect Toolchain", run: () => setIsToolchainOpen(true) },
+    { id: "go.project", title: "Go: Inspect Project and Environment", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => setIsGoProjectOpen(true) },
     { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
     { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
     { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
@@ -2061,6 +2064,7 @@ function EditorShell() {
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
+        <GoProjectDialog open={isGoProjectOpen} onClose={() => setIsGoProjectOpen(false)} root={workspacePath} activePath={activeFilePath} />
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {

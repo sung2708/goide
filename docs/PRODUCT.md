@@ -108,3 +108,9 @@ Settings now includes application-scoped Go executable, gopls executable and Del
 Preferences are applied on field commit, serialized to the native service, and followed by inspection. Native validation or busy errors retain the previous native profile and remain visible; correct the setting and retry Tools inspection after stopping Run/Debug or the current language operation. Changing an accepted profile stops the previous gopls session before subsequent queries start a new one. Git settings also choose the initial Source Control view (Changes, Git Graph or Stashes); explicit navigation commands still select their requested view.
 
 Module/environment workflows, explicit probe cancellation, session restoration and full Git/platform acceptance remain unfinished. This checkpoint does not authorize a release or tag.
+
+## Go project and environment inspection (2026-10-03)
+
+Use the command palette action Go: Inspect Project and Environment to inspect the saved Go context for the active file directory, or the opened workspace directory when no file is selected. The desktop runs bounded, cancellable Go commands and shows the actual selected single-module, go.work workspace or non-module directory. Workspace modules show their go.mod, module path and Go directive; outside-workspace modules are reported without inspecting their contents. The environment disclosure is limited to GOROOT, GOPATH, GOMOD, GOWORK, GOVERSION, GOOS, GOARCH, CGO_ENABLED and GOTOOLCHAIN.
+
+Refresh after saved module/workspace changes. Cancel, context changes and closing the dialog cancel native requests and reject late results. Invalid executable settings and malformed Go project data remain visible errors. Inspection does not run tidy/download or edit module files; those actions and full addendum/Git acceptance remain unfinished.

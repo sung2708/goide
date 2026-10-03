@@ -136,6 +136,18 @@ describe("EditorShell panels", () => {
     expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
   });
 
+  it("opens Go project inspection from the command registry for an actual workspace", async () => {
+    openMock.mockResolvedValue("C:/workspace");
+    render(<EditorShell />);
+    await userEvent.setup().click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
+    const input = await screen.findByRole("textbox", { name: "Search commands" });
+    fireEvent.change(input, { target: { value: "Go: Inspect Project and Environment" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(await screen.findByRole("dialog", { name: "Go Project" })).toBeInTheDocument();
+    expect(await screen.findByRole("alert")).toHaveTextContent("desktop app");
+  });
+
   it("pressing Ctrl+Shift+F switches to search tab and focuses the search input", async () => {
     render(<EditorShell />);
     expect(screen.queryByPlaceholderText(/^search$/i)).toBeNull();

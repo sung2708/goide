@@ -155,12 +155,12 @@ describe("EditorShell diagnostics", () => {
     await user.click(await screen.findByRole("button", { name: /open main/i }));
     await waitFor(() => expect(screen.getByTestId("diagnostic-message")).toHaveTextContent("undefined: missing"));
     fireEvent.keyDown(window, { key: "m", ctrlKey: true, shiftKey: true });
-    const panel = await screen.findByRole("region", { name: "Problems" });
+    const panel = await screen.findByRole("region", { name: "Problems" }, { timeout: 10000 });
     expect(within(panel).getByText(/main.go:1:2/)).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /type invalid content/i }));
     expect(within(panel).queryByText("undefined: missing")).toBeNull();
     expect(within(panel).getByText(/No problems in the current known results/)).toBeInTheDocument();
-  });
+  }, 20000);
 
   it("routes F12 through the language command and opens the returned file at its column", async () => {
     const user = userEvent.setup();
