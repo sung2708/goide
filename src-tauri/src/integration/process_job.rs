@@ -5,7 +5,7 @@ mod windows_spawn;
 mod windows {
     use std::{
         os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle, RawHandle},
-        sync::OnceLock,
+        sync::{Arc, OnceLock},
     };
     use windows_sys::Win32::{
         Foundation::HANDLE,
@@ -19,7 +19,7 @@ mod windows {
         },
     };
     #[derive(Debug)]
-    pub struct Job(OwnedHandle);
+    pub struct Job(Arc<OwnedHandle>);
     impl Job {
         pub fn new() -> Result<Self, String> {
             // An unnamed, non-inheritable handle; descendants inherit membership, not the handle.
@@ -43,7 +43,10 @@ mod windows {
             if configured == 0 {
                 return Err(std::io::Error::last_os_error().to_string());
             }
-            Ok(Self(handle))
+            Ok(Self(Arc::new(handle)))
+        }
+        pub fn handle(&self) -> Arc<OwnedHandle> {
+            self.0.clone()
         }
         pub fn assign(&self, process: RawHandle) -> Result<(), String> {
             // SAFETY: Both handles remain valid for the duration of this call.
