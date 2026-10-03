@@ -121,6 +121,10 @@ export type GoProjectRequest = { workspaceRoot: string; relativeDirectory: strin
 export type GoModuleAction = "tidy" | "download";
 export type GoTestRequest = GoProjectRequest & { target: "package" | "workspace"; testName: string | null };
 export type GoTestOutput = { packages: { importPath: string; relativeDirectory: string }[]; success: boolean; exitCode: number | null; stdout: string; stderr: string };
+export type GoTestEvent = { workspaceRoot: string; requestId: string; sequence: number } & (
+  { kind: "packages"; packages: GoTestOutput["packages"] } |
+  { kind: "output"; stream: "stdout" | "stderr"; bytes: number[] }
+);
 export type GoModuleRequest = GoProjectRequest & { action: GoModuleAction; expectedWorkFile: string | null };
 export type GoModuleOutput = { action: GoModuleAction; directory: string; success: boolean; exitCode: number | null; stdout: string; stderr: string };
 export type GoProjectInfo = {

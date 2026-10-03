@@ -1,8 +1,10 @@
+import { settingsStore } from "../settings/SettingsStore";
+import type { GoTestEvent } from "./liveOutput";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { useGoTests } from "./useGoTests";
-const { run, cancel, confirm, configure } = vi.hoisted(() => ({ run: vi.fn(), cancel: vi.fn(), confirm: vi.fn(), configure: vi.fn() }));
-vi.mock("../../lib/ipc/client", () => ({ runGoTests: run, cancelLanguageRequest: cancel, confirmGoTestCleanup: confirm }));
+const { run, cancel, confirm, configure, subscribe } = vi.hoisted(() => ({ run: vi.fn(), cancel: vi.fn(), confirm: vi.fn(), configure: vi.fn(), subscribe: vi.fn() }));
+vi.mock("../../lib/ipc/client", () => ({ runGoTests: run, cancelLanguageRequest: cancel, confirmGoTestCleanup: confirm, subscribeGoTestOutput: subscribe }));
 vi.mock("../settings/toolchainConfiguration", () => ({ configureInOrder: configure }));
 const result = { packages: [], success: false, exitCode: 1, stdout: "actual test events", stderr: "build failed" };
 function setup(preserve = vi.fn(async (action: () => Promise<void>) => { await action(); return true; })) {
@@ -10,7 +12,7 @@ function setup(preserve = vi.fn(async (action: () => Promise<void>) => { await a
   const hook = renderHook(({ root }) => useGoTests({ root, transaction: preserve, cancelPreparation, onChanged }), { initialProps: { root: "/root" } });
   return { hook, preserve, onChanged, cancelPreparation };
 }
-beforeEach(() => { configure.mockReset().mockResolvedValue({ ok: true, data: {} }); run.mockReset().mockResolvedValue({ ok: true, data: result }); cancel.mockReset().mockResolvedValue({ ok: true, data: true }); confirm.mockReset().mockResolvedValue({ ok: true, data: true }); });
+beforeEach(() => { settingsStore.reset(); subscribe.mockReset().mockResolvedValue(() => {}); configure.mockReset().mockResolvedValue({ ok: true, data: {} }); run.mockReset().mockResolvedValue({ ok: true, data: result }); cancel.mockReset().mockResolvedValue({ ok: true, data: true }); confirm.mockReset().mockResolvedValue({ ok: true, data: true }); });
 afterEach(cleanup);
 it("refuses to start after toolchain configuration fails", async () => {
   configure.mockResolvedValueOnce({ ok: false, error: { message: "Selected Go executable is unavailable" } });
@@ -59,4 +61,43 @@ it("retains ownership after a structured native cleanup-pending response", async
   const { hook } = setup(); let work!: Promise<void>; act(() => { work = hook.result.current.run("package", "."); });
   await waitFor(() => expect(hook.result.current.needsCleanup).toBe(true)); expect(hook.result.current.busy).toBe(true);
   await act(async () => { await hook.result.current.retryCleanup(); await work; }); expect(hook.result.current.busy).toBe(false);
+});
+
+it("publishes native packets before completion, keeps final outcomes authoritative and removes its listener", async () => {
+  let receive!: (event: GoTestEvent) => void; const unlisten = vi.fn();
+  subscribe.mockImplementation(async (_request, listener) => { receive = listener; return unlisten; });
+  let finish!: (value: unknown) => void; run.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { hook } = setup(); let work!: Promise<void>; act(() => { work = hook.result.current.run("package", "."); });
+  await waitFor(() => expect(run).toHaveBeenCalledOnce()); const request = run.mock.calls[0][0];
+  act(() => {
+    receive({ ...request, sequence: 1, kind: "packages", packages: [{ importPath: "example.com/fixture", relativeDirectory: "." }] });
+    receive({ ...request, sequence: 2, kind: "output", stream: "stdout", bytes: [...new TextEncoder().encode('actual native packet\n')] });
+    receive({ ...request, requestId: "foreign", sequence: 3, kind: "output", stream: "stdout", bytes: [88] });
+  });
+  await waitFor(() => expect(hook.result.current.live?.report.stdout).toBe("actual native packet\n"));
+  expect(hook.result.current.output).toBeNull(); expect(hook.result.current.status).toBe("running");
+  await act(async () => { finish({ ok: true, data: result }); await work; });
+  expect(hook.result.current.output).toEqual(result); expect(unlisten).toHaveBeenCalledOnce();
+  act(() => receive({ ...request, sequence: 4, kind: "output", stream: "stdout", bytes: [89] }));
+  expect(hook.result.current.live?.report.stdout).toBe("actual native packet\n");
+});
+it("never revives an older test when the workspace changes away and back", async () => {
+  let receive!: (event: GoTestEvent) => void; subscribe.mockImplementation(async (_request, listener) => { receive = listener; return () => {}; });
+  let finish!: (value: unknown) => void; run.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const { hook } = setup(); let work!: Promise<void>; act(() => { work = hook.result.current.run("package", "."); }); await waitFor(() => expect(run).toHaveBeenCalledOnce());
+  const request = run.mock.calls[0][0]; hook.rerender({ root: "/other" }); hook.rerender({ root: "/root" });
+  act(() => receive({ ...request, sequence: 1, kind: "output", stream: "stdout", bytes: [88] }));
+  await act(async () => { finish({ ok: true, data: result }); await work; });
+  expect(hook.result.current.live).toBeNull(); expect(hook.result.current.output).toBeNull(); expect(hook.result.current.status).toBe("not run");
+});
+it("does not launch with obsolete tool preferences or after cancellation during listener registration", async () => {
+  let finishConfiguration!: (value: unknown) => void; configure.mockImplementationOnce(() => new Promise(resolve => { finishConfiguration = resolve; }));
+  const first = setup(); let work!: Promise<void>; act(() => { work = first.hook.result.current.run("package", "."); }); await waitFor(() => expect(configure).toHaveBeenCalledOnce());
+  act(() => settingsStore.update("go.executablePath", "D:/new/go.exe"));
+  await act(async () => { finishConfiguration({ ok: true, data: {} }); await work; });
+  expect(run).not.toHaveBeenCalled(); expect(first.hook.result.current.error).toContain("tool preferences changed"); first.hook.unmount();
+  let finishSubscription!: (value: () => void) => void; const unlisten = vi.fn(); subscribe.mockImplementationOnce(() => new Promise(resolve => { finishSubscription = resolve; }));
+  const second = setup(); act(() => { work = second.hook.result.current.run("package", "."); }); await waitFor(() => expect(subscribe).toHaveBeenCalledOnce());
+  act(() => second.hook.result.current.cancel()); await act(async () => { finishSubscription(unlisten); await work; });
+  expect(run).not.toHaveBeenCalled(); expect(unlisten).toHaveBeenCalledOnce(); expect(second.hook.result.current.status).toBe("cancelled");
 });

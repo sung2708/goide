@@ -10,7 +10,8 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({ open }));
 vi.mock("../../lib/ipc/git", async () => ({ ...await vi.importActual("../../lib/ipc/git"), mutateGit: mutation }));
 vi.mock("../panels/BottomPanel", () => ({ default: () => null }));
 vi.mock("../../lib/ipc/client", async () => ({
-  ...await vi.importActual("../../lib/ipc/client"), readWorkspaceFile: read, writeWorkspaceFile: write,
+  ...await vi.importActual("../../lib/ipc/client"),
+  subscribeGoTestOutput: async () => () => {}, readWorkspaceFile: read, writeWorkspaceFile: write,
   configureToolchainPaths: async (paths: import("../../lib/ipc/types").ToolPaths) => ({ ok: true, data: paths }), getToolchainStatus: tools,
   runWorkspaceFile: run, startDebugSession: debug, runGoTests: testRun,
 }));
