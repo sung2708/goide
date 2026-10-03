@@ -5,6 +5,7 @@ pub mod fs;
 pub mod fs_watch;
 pub mod git;
 pub mod gopls;
+pub mod go_project;
 pub mod language;
 pub mod language_edits;
 pub mod language_requests;
