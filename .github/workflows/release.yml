@@ -24,7 +24,7 @@ env:
   GORO_UPDATER_PUBLIC_KEY: ${{ vars.GORO_UPDATER_PUBLIC_KEY }}
   GORO_SIGNING_PUBLIC_KEY: ${{ vars.GORO_SIGNING_PUBLIC_KEY || vars.GORO_UPDATER_PUBLIC_KEY }}
   GORO_RELEASE_BASE_URL: ${{ vars.GORO_RELEASE_BASE_URL }}
-  GORO_RELEASE_REPOSITORY: ${{ vars.GORO_RELEASE_REPOSITORY }}
+  GORO_RELEASE_REPOSITORY: ${{ vars.GORO_RELEASE_REPOSITORY || github.repository }}
 
 jobs:
   validate-and-plan:
@@ -44,15 +44,8 @@ jobs:
         env:
           RELEASE_EVENT: ${{ github.event_name }}
           RELEASE_REF: ${{ github.ref }}
-        run: |
-          if [[ "$RELEASE_EVENT" == "workflow_dispatch" && "$RELEASE_REF" != "refs/heads/develop" && "$RELEASE_REF" != "refs/heads/main" ]]; then
-            echo "::error::Candidate dispatch must run from develop or main"
-            exit 1
-          fi
-          if ! git merge-base --is-ancestor HEAD origin/develop && ! git merge-base --is-ancestor HEAD origin/main; then
-            echo "::error::Release commit must be reachable from develop or main"
-            exit 1
-          fi
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: node scripts/validate-release-ref.mjs
 
       - name: Setup Node.js
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
@@ -62,6 +55,9 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify public update configuration before platform builds
+        run: node scripts/validate-update-config.mjs --public-only
 
       - name: Verify Windows installer version conversion
         run: node --test scripts/windows-installer-version.node-test.mjs
@@ -91,8 +87,14 @@ jobs:
           fi
 
       - name: Generate Release Notes
+        env:
+          RELEASE_TAG: ${{ steps.parse_tag.outputs.tag }}
         run: |
-          node scripts/generate-changelog.mjs --tag "${{ steps.parse_tag.outputs.tag }}" --output release-notes.md
+          if [[ -f "docs/releases/$RELEASE_TAG.md" ]]; then
+            cp "docs/releases/$RELEASE_TAG.md" release-notes.md
+          else
+            node scripts/generate-changelog.mjs --tag "$RELEASE_TAG" --output release-notes.md
+          fi
 
       - name: Upload Release Notes artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -215,6 +217,8 @@ jobs:
           retention-days: 2
 
   publish:
+    permissions:
+      contents: write
     environment: release-distribution
     name: Verify Release Metadata and Optional Public Distribution
     needs: [validate-and-plan, build-artifacts]
@@ -275,5 +279,32 @@ jobs:
       - name: Publish to public distribution repository with metadata last
         if: github.event_name == 'push' || inputs.publish
         env:
-          GORO_RELEASE_TOKEN: ${{ secrets.GORO_RELEASE_TOKEN }}
+          GORO_RELEASE_TOKEN: ${{ secrets.GORO_RELEASE_TOKEN || github.token }}
         run: node scripts/publish-release.mjs --assets-dir release-assets --metadata-dir release-metadata --notes release-notes.md
+
+  deploy-metadata:
+    name: Deploy verified update metadata to Pages
+    needs: publish
+    if: (github.event_name == 'push' || inputs.publish) && (vars.GORO_RELEASE_REPOSITORY == '' || vars.GORO_RELEASE_REPOSITORY == github.repository)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout published metadata only
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: gh-pages
+      - name: Configure Pages
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
+      - name: Upload metadata site
+        uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3
+        with:
+          path: .
+      - name: Deploy metadata site
+        id: deployment
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # v4

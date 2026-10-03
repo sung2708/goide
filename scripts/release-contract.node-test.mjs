@@ -65,12 +65,14 @@ test("canonical SemVer and calendar dates are strict; unknown feeds cannot accep
   assert.equal(accepts("unknown", "1.0.0"), false);
   assert.throws(()=>validateDate("2026-02-30T00:00:00Z"));
 });
-test("privileged workflow pins actions, gates trusted refs, and keeps source token read-only", () => {
+test("privileged workflow pins actions, gates main, and scopes publication permissions", () => {
   const workflow = readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8");
   const uses = [...workflow.matchAll(/uses:\s*([^\s#]+)/g)].map(match=>match[1]);
   assert.ok(uses.every(action=>/@[a-f0-9]{40}$/.test(action)));
   assert.match(workflow,/contents: read/);
-  assert.match(workflow,/git merge-base --is-ancestor HEAD origin\/develop/);
+  assert.match(workflow,/node scripts\/validate-release-ref\.mjs/);
+  assert.match(workflow,/publish:\s+permissions:\s+contents: write/);
+  assert.match(workflow,/pages: write/);
   assert.match(workflow,/environment: release-signing/);
   assert.match(workflow,/environment: release-distribution/);
   assert.ok(!workflow.includes("pull_request_target:"));

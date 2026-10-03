@@ -71,6 +71,12 @@ test("publisher rejects modified metadata before creating any release", () => {
   const failure=fixture({BAD_METADATA:"1"}); assert.equal(failure.result.status,1);
   assert.ok(!failure.requests.some(row=>row.method==="POST"));
 });
+
+test("an already public source repository can also host verified distribution", () => {
+  const {result,requests}=fixture({GITHUB_REPOSITORY:"fixture/public"});
+  assert.equal(result.status,0,result.stderr);
+  assert.ok(requests.some(row=>row.method==="PATCH"&&row.path.endsWith("git/refs/heads/gh-pages")));
+});
 test("published versions and immutable version metadata are never reused", () => {
   for (const overrides of [{REUSED_VERSION:"1"},{REUSED_METADATA:"1"}]) {
     const failure=fixture(overrides); assert.equal(failure.result.status,1);
