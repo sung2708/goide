@@ -112,10 +112,11 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
         "module example.com/dapfixture\n\ngo 1.22\n",
     )
     .unwrap();
+    let root = root.canonicalize().unwrap();
     let main = root.join("main.go");
     std::fs::write(
         &main,
-        "package main\nimport \"time\"\nfunc main() {\n time.Sleep(30*time.Second)\n}\n",
+        "package main\nimport \"time\"\ntype Box struct { N int; Values []int }\nfunc inspect(box Box) {\n value := box.N + 1\n time.Sleep(time.Duration(value)*time.Second)\n}\nfunc main() { box := Box{N: 41, Values: []int{1,2,3}}; inspect(box) }\n",
     )
     .unwrap();
     let process = spawn_dlv_dap(&root).await.unwrap();
@@ -132,7 +133,7 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
                 &main,
             )
             .await?;
-        client.set_breakpoints(&main, &[4]).await?;
+        client.set_breakpoints(&main, &[6]).await?;
         client.configuration_done().await?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         loop {
@@ -153,7 +154,122 @@ async fn installed_delve_hits_an_actual_breakpoint_after_configuration_done() {
             .stack_trace(thread)
             .await?
             .context("missing stopped frame")?;
-        anyhow::ensure!(frame.line == 4, "breakpoint source differs: {frame:?}");
+        anyhow::ensure!(frame.line == 6, "breakpoint source differs: {frame:?}");
+        use inspection::{Output, Query};
+        let token = client.stop_token().context("missing actual stop token")?;
+        client.inspect(&token, Query::Threads, &root).await?;
+        let Output::Stack { items: frames, .. } = client
+            .inspect(&token, Query::Stack { thread_id: thread }, &root)
+            .await?
+        else {
+            anyhow::bail!("missing stack");
+        };
+        let top = frames.first().context("missing actual call stack frame")?;
+        anyhow::ensure!(
+            top.name == "main.inspect" && top.relative_path.as_deref() == Some("main.go"),
+            "unexpected real frame: {top:?}"
+        );
+        anyhow::ensure!(
+            frames.iter().any(|frame| frame.name == "main.main"),
+            "missing real calling frame"
+        );
+        let frame_id = top.id;
+        let Output::Scopes { items: scopes, .. } = client
+            .inspect(&token, Query::Scopes { frame_id }, &root)
+            .await?
+        else {
+            anyhow::bail!("missing scopes");
+        };
+        let scope = scopes
+            .iter()
+            .find(|scope| scope.name.starts_with("Locals"))
+            .context("missing actual locals scope")?;
+        let Output::Variables { items: locals, .. } = client
+            .inspect(
+                &token,
+                Query::Variables {
+                    reference: scope.reference,
+                    start: 0,
+                    indexed: false,
+                },
+                &root,
+            )
+            .await?
+        else {
+            anyhow::bail!("missing locals");
+        };
+        anyhow::ensure!(
+            locals
+                .iter()
+                .any(|value| value.name == "value" && value.value == "42"),
+            "missing actual local alongside the box argument"
+        );
+        let box_value = locals
+            .iter()
+            .find(|value| value.name == "box")
+            .context("missing actual box local")?;
+        let Output::Variables {
+            items: children, ..
+        } = client
+            .inspect(
+                &token,
+                Query::Variables {
+                    reference: box_value.reference,
+                    start: 0,
+                    indexed: false,
+                },
+                &root,
+            )
+            .await?
+        else {
+            anyhow::bail!("missing nested values");
+        };
+        anyhow::ensure!(
+            children
+                .iter()
+                .any(|value| value.name == "N" && value.value == "41"),
+            "actual nested N value missing: {children:?}"
+        );
+        let values = children
+            .iter()
+            .find(|value| value.name == "Values")
+            .context("missing actual slice")?;
+        anyhow::ensure!(
+            values.indexed_variables == Some(3),
+            "unexpected actual slice size"
+        );
+        let Output::Variables {
+            items: elements, ..
+        } = client
+            .inspect(
+                &token,
+                Query::Variables {
+                    reference: values.reference,
+                    start: 0,
+                    indexed: true,
+                },
+                &root,
+            )
+            .await?
+        else {
+            anyhow::bail!("missing slice values");
+        };
+        anyhow::ensure!(
+            elements
+                .iter()
+                .map(|value| value.value.as_str())
+                .collect::<Vec<_>>()
+                == vec!["1", "2", "3"],
+            "wrong actual slice values"
+        );
+        client.continue_thread(thread).await?;
+        anyhow::ensure!(
+            client
+                .inspect(&token, Query::Scopes { frame_id }, &root)
+                .await
+                .is_err(),
+            "obsolete stop retained frame access"
+        );
         client.disconnect().await?;
         Ok(())
     }

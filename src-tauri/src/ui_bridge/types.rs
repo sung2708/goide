@@ -2,6 +2,9 @@ pub use crate::integration::code_actions::{
     Action as LanguageCodeActionDto, PreviewRequest as LanguageCodeActionPreviewDto,
     QueryRequest as LanguageCodeActionQueryDto,
 };
+pub use crate::integration::delve::inspection::{
+    Output as DebuggerInspectionOutputDto, Request as DebuggerInspectionRequestDto,
+};
 pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
 pub use crate::integration::go_project::actions::{
     Output as GoModuleOutputDto, Request as GoModuleRequestDto,
@@ -243,6 +246,8 @@ pub struct DebuggerBreakpointDto {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerStateDto {
+    pub stop_token: Option<String>,
+    pub selected_thread_id: Option<i64>,
     pub session_active: bool,
     pub cleanup_pending: bool,
     pub paused: bool,
