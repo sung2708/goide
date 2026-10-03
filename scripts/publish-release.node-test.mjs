@@ -16,8 +16,10 @@ globalThis.fetch = async (url,options={}) => {
   if (parsed.hostname === 'uploads.github.com') return json({state:'uploaded',size:options.body.length,digest:'sha256:'+createHash('sha256').update(options.body).digest('hex')});
   if (parsed.hostname === 'github.com') { if(process.env.FAIL_PUBLIC==='1') return new Response('',{status:503}); return new Response(path.endsWith('.sig') ? 'signature' : path.endsWith('SHA256SUMS.txt') ? process.env.FIXTURE_SUMS : 'artifact'); }
   if (parsed.hostname !== 'api.github.com') throw new Error('Unexpected test request');
-  const prefix='/repos/fixture/public/'; const route=path.slice(prefix.length);
-  if (!route) return json({private:process.env.PRIVATE_REPO==='1',visibility:process.env.PRIVATE_REPO==='1'?'private':'public'});
+  const root='/repos/fixture/public';
+  if (path===root) return json({private:process.env.PRIVATE_REPO==='1',visibility:process.env.PRIVATE_REPO==='1'?'private':'public'});
+  if (path===root+'/') return json({},404);
+  const prefix=root+'/'; const route=path.slice(prefix.length);
   if(route.startsWith('releases/tags/')) return json({},process.env.REUSED_VERSION==='1'?200:404);
   if(route==='git/ref/heads/gh-pages') return json({object:{sha:'original'}});
   if(route==='git/commits/original') return json({tree:{sha:'tree'}});
@@ -48,6 +50,7 @@ function fixture(overrides = {}) {
 }
 test("publisher verifies every public asset before atomically advancing eligible pointers", () => {
   const {result,requests}=fixture(); assert.equal(result.status,0,result.stderr);
+  assert.equal(requests[0].path,"/repos/fixture/public");
   const published=requests.findIndex(row=>row.method==="PATCH"&&row.path.endsWith("releases/1"));
   const publicRead=requests.findIndex(row=>row.path.includes("/releases/download/"));
   const metadata=requests.findIndex(row=>row.method==="POST"&&row.path.endsWith("git/trees"));
