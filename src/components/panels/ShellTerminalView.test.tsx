@@ -515,6 +515,7 @@ describe("ShellTerminalView", () => {
     expect(await screen.findByText("reader is still stopping")).toBeInTheDocument();
     expect(ensureShellSessionMock).toHaveBeenCalledTimes(1);
     expect(disposeShellSessionMock).toHaveBeenLastCalledWith({ shellSessionId: "session-abc" });
+    ensureShellSessionMock.mockResolvedValue({ ok: true, data: { shellSessionId: "session-after-cleanup", reused: false } });
     await user.click(screen.getByRole("button", { name: /retry shell session/i }));
     await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("terminal-surface")).toBeInTheDocument();
@@ -627,6 +628,36 @@ describe("ShellTerminalView", () => {
   });
 
   // ---- workspace-level disposal ----
+  it.each(["exit", "degraded"] as const)("retains an early %s event until pending setup returns and never reconnects silently", async health => {
+    let resolve!: (value: unknown) => void;
+    ensureShellSessionMock.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    const view = render(<ShellTerminalView workspacePath="/project" surfaceKey="terminal" />);
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledOnce());
+    act(() => { shellExitListener?.({ payload: { shellSessionId: "early-session", shellHealth: health } }); });
+    await act(async () => { resolve({ ok: true, data: { shellSessionId: "early-session", reused: false } }); });
+    expect(screen.getByRole("button", { name: /retry shell session/i })).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-surface")).not.toBeInTheDocument();
+    expect(ensureShellSessionMock).toHaveBeenCalledOnce();
+    view.unmount();
+    await act(async () => { await Promise.resolve(); });
+    if (health === "degraded") expect(disposeShellSessionMock).toHaveBeenCalledWith({ shellSessionId: "early-session" });
+    else expect(disposeShellSessionMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps a retry disconnected when its new session exits before the acknowledgement", async () => {
+    ensureShellSessionMock.mockResolvedValueOnce({ ok: false, error: { code: "failed", message: "Start failed" } });
+    let resolve!: (value: unknown) => void;
+    ensureShellSessionMock.mockImplementationOnce(() => new Promise(done => { resolve = done; }));
+    render(<ShellTerminalView workspacePath="/project" surfaceKey="terminal" />);
+    await userEvent.setup().click(await screen.findByRole("button", { name: /retry shell session/i }));
+    await waitFor(() => expect(ensureShellSessionMock).toHaveBeenCalledTimes(2));
+    act(() => { shellExitListener?.({ payload: { shellSessionId: "retry-ended", shellHealth: "exit" } }); });
+    await act(async () => { resolve({ ok: true, data: { shellSessionId: "retry-ended", reused: false } }); });
+    expect(screen.getByText("Shell session ended unexpectedly.")).toBeInTheDocument();
+    expect(screen.queryByTestId("terminal-surface")).not.toBeInTheDocument();
+    expect(ensureShellSessionMock).toHaveBeenCalledTimes(2);
+  });
+
   it("forgets a successfully exited inactive session without disconnecting the active surface", async () => {
     const view = render(<ShellTerminalView workspacePath="/old" surfaceKey="first" />);
     await waitFor(() => expect(screen.getByTestId("terminal-surface")).toHaveAttribute("data-readonly", "false"));
