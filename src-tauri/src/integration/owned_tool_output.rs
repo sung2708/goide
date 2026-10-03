@@ -39,7 +39,16 @@ pub fn wait_for_shutdown() -> Result<(), String> {
     }
 }
 
-fn capture(mut pipe: impl Read) -> io::Result<Vec<u8>> {
+pub(crate) type Observer = Arc<dyn Fn(&'static str, &[u8]) + Send + Sync>;
+#[cfg(test)]
+fn capture(pipe: impl Read) -> io::Result<Vec<u8>> {
+    capture_observed(pipe, "stdout", None)
+}
+fn capture_observed(
+    mut pipe: impl Read,
+    stream: &'static str,
+    observer: Option<&Observer>,
+) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     let mut buffer = [0; 8192];
     let mut limited = false;
@@ -49,7 +58,13 @@ fn capture(mut pipe: impl Read) -> io::Result<Vec<u8>> {
             break;
         }
         let remaining = OUTPUT_LIMIT.saturating_sub(bytes.len());
-        bytes.extend_from_slice(&buffer[..count.min(remaining)]);
+        let retained = count.min(remaining);
+        bytes.extend_from_slice(&buffer[..retained]);
+        if retained > 0 {
+            if let Some(observer) = observer {
+                observer(stream, &buffer[..retained]);
+            }
+        }
         limited |= count > remaining;
     }
     if limited {
@@ -88,10 +103,25 @@ pub fn output(command: &mut Command, input: Option<&str>) -> io::Result<Output> 
 pub(crate) fn output_with_timeout(command: &mut Command, timeout: Duration) -> io::Result<Output> {
     bounded_output(command, None, timeout)
 }
+pub(crate) fn output_with_observer(
+    command: &mut Command,
+    timeout: Duration,
+    observer: Observer,
+) -> io::Result<Output> {
+    bounded_output_observed(command, None, timeout, Some(observer))
+}
 fn bounded_output(
     command: &mut Command,
     input: Option<&str>,
     timeout: Duration,
+) -> io::Result<Output> {
+    bounded_output_observed(command, input, timeout, None)
+}
+fn bounded_output_observed(
+    command: &mut Command,
+    input: Option<&str>,
+    timeout: Duration,
+    observer: Option<Observer>,
 ) -> io::Result<Output> {
     if input.is_some_and(|input| input.len() > 4 * 1024 * 1024) {
         return Err(io::Error::other(
@@ -124,8 +154,13 @@ fn bounded_output(
         .stderr
         .take()
         .ok_or_else(|| io::Error::other("Native tool stderr unavailable"))?;
-    let out = worker(lease.clone(), move || capture(stdout))?;
-    let err = worker(lease.clone(), move || capture(stderr))?;
+    let out_observer = observer.clone();
+    let out = worker(lease.clone(), move || {
+        capture_observed(stdout, "stdout", out_observer.as_ref())
+    })?;
+    let err = worker(lease.clone(), move || {
+        capture_observed(stderr, "stderr", observer.as_ref())
+    })?;
     let writer = if let Some(input) = input {
         let input = input.to_owned();
         let mut stdin = child

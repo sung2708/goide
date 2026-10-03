@@ -451,3 +451,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: native Run and Debug main resolve the selected saved file through Go's actual module/go.work context and active package file list. Library packages, files excluded by build constraints and targets outside the workspace are rejected before launch; an invalid replacement does not stop an existing owned Run.
 - Delivered: package build and runtime use the actual selected package directory, including nested modules under a workspace without a root go.mod. Run and Delve receive the same scoped Go environment; the production debugger no longer scans source lines for package main. Legacy lexical target fixtures remain test-only.
 - Remaining: live test streaming, cancellable native build/startup preparation, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.
+
+## Live test output checkpoint (2026-10-03)
+
+- Delivered: package identities and actual stdout/stderr bytes stream from owned native test pipes before command completion, tagged with workspace, request UUID and an ordered sequence. Native stream/output bounds, cancellation, deadlines, descendants and retained pipe cleanup remain in the existing ownership path.
+- Delivered: the frontend registers its listener before execution, incrementally decodes UTF-8, bounds/throttles previews and rejects foreign, replayed, retired and obsolete-workspace packets. Workspace generations also prevent an old result reappearing after changing away and back. Tool preference changes and cancellation during event registration block startup.
+- Delivered: live test rows show actual events; the native command reply supplies final success/exit status. Gaps/truncation and unfinished outcomes are explicit, partial output survives cancellation/transport failure, and listeners/timers retire after confirmed completion/cleanup.
+- Remaining: cancellable native Run/Debug startup/build preparation and startup acknowledgement ownership, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.

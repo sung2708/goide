@@ -25,7 +25,7 @@ pub struct Request {
     pub target: Target,
     pub test_name: Option<String>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Package {
     pub import_path: String,
@@ -268,7 +268,23 @@ pub(crate) fn debug_target(
     })
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub(crate) enum Progress {
+    Packages {
+        packages: Vec<Package>,
+    },
+    Output {
+        stream: &'static str,
+        bytes: Vec<u8>,
+    },
+}
+pub(crate) type Observer = std::sync::Arc<dyn Fn(Progress) + Send + Sync>;
+#[cfg(test)]
 pub fn run(request: Request) -> Result<Output> {
+    run_observed(request, None)
+}
+pub(crate) fn run_observed(request: Request, observer: Option<Observer>) -> Result<Output> {
     let root = normalize_platform_pathbuf(Path::new(&request.workspace_root).canonicalize()?);
     let directory = go_project::directory(&root, &request.relative_directory)?;
     let filter = test_filter(request.test_name.as_deref())?;
@@ -359,6 +375,11 @@ pub fn run(request: Request) -> Result<Output> {
     if packages.is_empty() {
         return Err(anyhow!("No Go packages match this test target."));
     }
+    if let Some(observer) = &observer {
+        observer(Progress::Packages {
+            packages: packages.clone(),
+        });
+    }
     let mut child = command::std_command("go");
     child
         .current_dir(&plan.directory)
@@ -369,7 +390,20 @@ pub fn run(request: Request) -> Result<Output> {
     if let Some(filter) = filter {
         child.args(["-run", &filter]);
     }
-    let output = owned_tool_output::output_with_timeout(&mut child, Duration::from_secs(180))?;
+    let output = if let Some(observer) = observer {
+        owned_tool_output::output_with_observer(
+            &mut child,
+            Duration::from_secs(180),
+            std::sync::Arc::new(move |stream, bytes| {
+                observer(Progress::Output {
+                    stream,
+                    bytes: bytes.to_vec(),
+                })
+            }),
+        )?
+    } else {
+        owned_tool_output::output_with_timeout(&mut child, Duration::from_secs(180))?
+    };
     if let Some(name) = request.test_name.as_deref() {
         if output.status.success()
             && !String::from_utf8_lossy(&output.stdout)
@@ -392,6 +426,63 @@ pub fn run(request: Request) -> Result<Output> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    #[ignore = "requires installed Go; validates real incremental test output"]
+    fn actual_test_output_streams_before_native_completion() {
+        let root = std::env::temp_dir().join(format!("goide-test-stream-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join("go.mod"),
+            "module example.com/stream\n\ngo 1.22\n",
+        )
+        .unwrap();
+        std::fs::write(root.join("slow_test.go"), "package stream\nimport (\"testing\"; \"time\"; \"os\")\nfunc TestSlow(t *testing.T) { t.Log(\"actual live output\"); time.Sleep(3*time.Second); if err := os.WriteFile(\"completed.marker\", []byte(\"done\"), 0600); err != nil { t.Fatal(err) } }\n").unwrap();
+        let chunks = std::sync::Arc::new(std::sync::Mutex::new((Vec::<u8>::new(), false, false)));
+        let observed = chunks.clone();
+        let observed_root = root.clone();
+        let observer: Observer = std::sync::Arc::new(move |event| {
+            let mut output = observed.lock().unwrap();
+            match event {
+                Progress::Packages { packages } => {
+                    assert_eq!(packages[0].import_path, "example.com/stream");
+                    output.2 = true;
+                }
+                Progress::Output {
+                    stream: "stdout",
+                    bytes,
+                } => {
+                    assert!(output.2, "output arrived before package identity");
+                    assert!(bytes.len() <= 8192);
+                    output.0.extend(bytes);
+                    if String::from_utf8_lossy(&output.0).contains("\"Action\":\"run\"")
+                        && !observed_root.join("completed.marker").exists()
+                    {
+                        output.1 = true;
+                    }
+                }
+                _ => {}
+            }
+        });
+        let result = run_observed(
+            Request {
+                workspace_root: root.to_string_lossy().into_owned(),
+                relative_directory: ".".into(),
+                request_id: uuid::Uuid::new_v4().to_string(),
+                target: Target::Package,
+                test_name: Some("TestSlow".into()),
+            },
+            Some(observer),
+        )
+        .unwrap();
+        assert!(result.success, "{result:?}");
+        let output = chunks.lock().unwrap();
+        assert!(output.1, "No actual test event before completion");
+        assert_eq!(String::from_utf8_lossy(&output.0), result.stdout);
+        assert!(root.join("completed.marker").exists());
+        drop(output);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     #[ignore = "requires installed Go; runs only local fixture tests without external dependencies"]
     fn actual_package_workspace_and_build_failure_results_are_scoped() {

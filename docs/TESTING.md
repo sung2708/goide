@@ -327,3 +327,11 @@ PASS: installed Go runs an isolated nested module through the production command
 PASS: 13 native debug checks with installed fixtures enabled; natural exit now runs a nested module main through the UI bridge, while selected Debug Test, session/stop identity and retained teardown continue passing. PASS: 26 Delve checks, including real breakpoint/inspection and test launch configuration. These filters overlap; they are not 39 unique tests. Native all-target Clippy passes.
 
 No frontend API changed in this slice. Native build/start cancellation, complete Git and Linux/macOS plus Windows spawn-assignment acceptance remain unfinished or NOT RUN; no release/tag is authorized.
+
+## Live native test output regression (2026-10-03)
+
+PASS: all four Go test runner checks with installed Go enabled. The new fixture receives a real TestSlow run event while its completion marker is still absent, then completes successfully; concatenated stream bytes exactly match the final stdout. Existing actual package/workspace success, failure and cancellation checks remain passing. PASS: four owned-tool checks cover truncation without false completion, scoped cancellation, deadlines leaving an unrelated process alive, and descendants keeping pipes open after their root exits. Native all-target Clippy passes.
+
+PASS: 44 frontend tests across test model/dialog/runner, EditorShell execution gates and typed IPC. A focused subsequent 15-test run covers the latest decoder EOF flush, packet ownership, workspace cycles, tool preference changes, prelaunch listener cancellation and disposal; these sets overlap. Incremental UTF-8 supports split codepoints and bounds previews; incomplete live output never supplies a successful command exit. TypeScript and final production build pass (259 modules).
+
+Native Run/Debug startup cancellation/acknowledgement ownership, complete Git and full platform/process acceptance remain unfinished or NOT RUN. No release/tag is authorized.

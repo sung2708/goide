@@ -9,7 +9,8 @@ const { open, read, write, native, cancel, mutation } = vi.hoisted(() => ({ open
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open }));
 vi.mock("../../lib/ipc/git", async () => ({ ...await vi.importActual("../../lib/ipc/git"), mutateGit: mutation }));
 vi.mock("../../lib/ipc/client", async () => ({
-  ...await vi.importActual("../../lib/ipc/client"), readWorkspaceFile: read, writeWorkspaceFile: write,
+  ...await vi.importActual("../../lib/ipc/client"),
+  subscribeGoTestOutput: async () => () => {}, readWorkspaceFile: read, writeWorkspaceFile: write,
   configureToolchainPaths: async () => ({ ok: true, data: {} }), cancelLanguageRequest: cancel, runGoTests: native,
   inspectGoProject: async () => ({ ok: true, data: { directory: "C:/workspace", mode: "module", workFile: null, workError: null, limited: false, environment: {}, modules: [{ directory: "C:/workspace", relativeDirectory: ".", modFile: "C:/workspace/go.mod", insideWorkspace: true, modulePath: "example.test/main", goVersion: "1.21", error: null }] } }),
 }));

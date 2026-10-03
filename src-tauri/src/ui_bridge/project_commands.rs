@@ -1,10 +1,43 @@
 use super::types::{ApiResponse, GoProjectInfoDto, GoProjectRequestDto};
 #[tauri::command]
-pub async fn run_go_tests(
+pub async fn run_go_tests<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     request: super::types::GoTestRequestDto,
 ) -> ApiResponse<super::types::GoTestOutputDto> {
-    match super::commands::with_idle_go_tools(move || crate::integration::go_tests::run(request))
-        .await
+    use tauri::Emitter;
+    #[derive(serde::Serialize, Clone)]
+    #[serde(rename_all = "camelCase")]
+    struct Event {
+        workspace_root: String,
+        request_id: String,
+        sequence: u64,
+        #[serde(flatten)]
+        progress: serde_json::Value,
+    }
+    let root = request.workspace_root.clone();
+    let id = request.request_id.clone();
+    let sequence = std::sync::Mutex::new(0_u64);
+    let observer: crate::integration::go_tests::Observer = std::sync::Arc::new(move |progress| {
+        // Serialize both pipe publishers so delivery order and cursor match.
+        if let Ok(mut sequence) = sequence.lock() {
+            *sequence += 1;
+            if let Ok(progress) = serde_json::to_value(progress) {
+                let _ = app.emit(
+                    "go-test-output",
+                    Event {
+                        workspace_root: root.clone(),
+                        request_id: id.clone(),
+                        sequence: *sequence,
+                        progress,
+                    },
+                );
+            }
+        }
+    });
+    match super::commands::with_idle_go_tools(move || {
+        crate::integration::go_tests::run_observed(request, Some(observer))
+    })
+    .await
     {
         Ok(output) => ApiResponse::ok(output),
         Err(error) => ApiResponse::err(
