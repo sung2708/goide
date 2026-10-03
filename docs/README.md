@@ -21,6 +21,7 @@ Welcome to the Goro engineering and product documentation. This directory provid
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): Solutions for common issues regarding gopls, Delve, terminal PTY, and MSVC toolchains.
 
 ### 4. Release Engineering & Operations
+- [UPDATES.md](UPDATES.md): Official updater, signing, public distribution, website contracts and first-release setup.
 - [VERSIONING.md](VERSIONING.md): Semantic Versioning policy, pre-1.0 guidelines, version synchronization mechanism, tag naming, and migration of historical prototype tags.
 - [RELEASE_READINESS.md](RELEASE_READINESS.md): Current evidence-based decision, focused Go IDE scope, blockers and native acceptance protocol.
 - [RELEASE.md](RELEASE.md): Step-by-step maintainer release runbook, tag-driven CI/CD release workflow, verification checklists, artifact naming, and rollback procedures.

@@ -4,6 +4,9 @@
   "mainBinaryName": "Goro",
   "version": "0.2.0-alpha.1",
   "identifier": "com.sungp.goide",
+  "plugins": {
+    "updater": { "pubkey": "", "requireSignedVersion": true, "allowDowngrades": false }
+  },
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",

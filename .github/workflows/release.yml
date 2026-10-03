@@ -1,12 +1,30 @@
 name: Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Candidate tag matching the canonical app version"
+        required: true
+        type: string
+      publish:
+        description: "Publish verified assets to the configured public distribution repository"
+        default: false
+        type: boolean
   push:
     tags:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
+concurrency:
+  group: goro-release-distribution
+  cancel-in-progress: false
+env:
+  GORO_UPDATER_PUBLIC_KEY: ${{ vars.GORO_UPDATER_PUBLIC_KEY }}
+  GORO_SIGNING_PUBLIC_KEY: ${{ vars.GORO_SIGNING_PUBLIC_KEY || vars.GORO_UPDATER_PUBLIC_KEY }}
+  GORO_RELEASE_BASE_URL: ${{ vars.GORO_RELEASE_BASE_URL }}
+  GORO_RELEASE_REPOSITORY: ${{ vars.GORO_RELEASE_REPOSITORY }}
 
 jobs:
   validate-and-plan:
@@ -36,8 +54,10 @@ jobs:
 
       - name: Parse tag and validate version synchronization
         id: parse_tag
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="$RELEASE_TAG"
           echo "Tag: $TAG"
           
           # Validate tag format vX.Y.Z[-prerelease]
@@ -71,6 +91,7 @@ jobs:
           retention-days: 1
 
   build-artifacts:
+    environment: release-signing
     name: Build (${{ matrix.platform.platform_id }}-${{ matrix.platform.arch_id }})
     needs: validate-and-plan
     runs-on: ${{ matrix.platform.os }}
@@ -126,6 +147,17 @@ jobs:
 
       - name: Install npm dependencies
         run: npm ci
+      - name: Require secure distribution configuration
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: node scripts/validate-update-config.mjs
+      - name: Generate public Tauri updater build configuration
+        run: node scripts/update-build-config.mjs
+      - name: Verify versions and documentation
+        run: |
+          npm run version:check
+          npm run docs:check
+          node --test scripts/*.node-test.mjs
 
       - name: Run verification tests
         run: npm test
@@ -141,12 +173,18 @@ jobs:
 
       - name: Build Tauri Application
         if: runner.os != 'Windows'
-        run: npm run tauri -- build --target ${{ matrix.platform.target }} --ci
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: npm run tauri -- build --target ${{ matrix.platform.target }} --config .tmp/goro-updater-build.json --ci
 
       - name: Build Tauri Application (MSVC)
         if: runner.os == 'Windows'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         shell: cmd
-        run: scripts\tauri_build_msvc.cmd --target ${{ matrix.platform.target }} --ci
+        run: scripts\tauri_build_msvc.cmd --target ${{ matrix.platform.target }} --config .tmp/goro-updater-build.json --ci
 
       - name: Package and normalize release artifacts
         shell: bash
@@ -155,6 +193,7 @@ jobs:
             --tag "${{ needs.validate-and-plan.outputs.tag }}" \
             --platform "${{ matrix.platform.platform_id }}" \
             --arch "${{ matrix.platform.arch_id }}" \
+            --bundle-dir "src-tauri/target/${{ matrix.platform.target }}/release/bundle" \
             --output-dir "dist-release"
 
       - name: Upload platform artifacts
@@ -165,7 +204,8 @@ jobs:
           retention-days: 2
 
   publish:
-    name: Publish GitHub Release
+    environment: release-distribution
+    name: Verify Release Metadata and Optional Public Distribution
     needs: [validate-and-plan, build-artifacts]
     runs-on: ubuntu-latest
     steps:
@@ -176,6 +216,12 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Install metadata dependencies
+        run: npm ci
+      - name: Setup Rust signature verifier
+        uses: dtolnay/rust-toolchain@stable
+      - name: Build signature verifier
+        run: cargo build --locked --release --manifest-path tools/update-verifier/Cargo.toml
 
       - name: Download release notes
         uses: actions/download-artifact@v4
@@ -190,12 +236,15 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - name: Aggregate checksums
+      - name: Generate both metadata contracts from verified signed artifacts
         run: |
-          cd release-assets
-          cat *.sha256 | sort -u -k2 > SHA256SUMS.txt
-          rm -f *.sha256
-          cd ..
+          node scripts/release-metadata.mjs \
+            --tag "${{ needs.validate-and-plan.outputs.tag }}" \
+            --repository "$GORO_RELEASE_REPOSITORY" \
+            --assets-dir release-assets --output-dir release-metadata \
+            --notes release-notes.md \
+            --verifier tools/update-verifier/target/release/goro-update-verifier \
+            --published-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
       - name: Validate all release assets before publishing
         run: |
@@ -221,14 +270,13 @@ jobs:
           ```
           EOF
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+      - name: Upload verified candidate contracts
+        uses: actions/upload-artifact@v4
         with:
-          tag_name: ${{ needs.validate-and-plan.outputs.tag }}
-          name: Goro ${{ needs.validate-and-plan.outputs.tag }}
-          body_path: release-notes.md
-          prerelease: ${{ needs.validate-and-plan.outputs.is_prerelease == 'true' }}
-          draft: false
-          files: release-assets/*
+          name: verified-release-contracts
+          path: release-metadata/*
+      - name: Publish to public distribution repository with metadata last
+        if: github.event_name == 'push' || inputs.publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORO_RELEASE_TOKEN: ${{ secrets.GORO_RELEASE_TOKEN }}
+        run: node scripts/publish-release.mjs --assets-dir release-assets --metadata-dir release-metadata --notes release-notes.md

@@ -74,3 +74,12 @@ Remote network access from the webview is prohibited; network communication is r
 ### 5. Binary Artifact Integrity
 - Every release artifact published on GitHub Releases is accompanied by cryptographic SHA-256 checksums in `SHA256SUMS.txt`.
 - Users and package maintainers should verify binary hashes against the published checksum manifest prior to installation.
+
+### 6. Automatic Update Boundary
+- Native Tauri updater signatures and signed-version binding are mandatory;
+  SHA-256 alone does not authorize automatic installation.
+- Application/website clients use public distribution metadata and contain no
+  repository access token. Production private signing keys remain in protected CI.
+- Installation requires explicit draft preservation/discard and acknowledged
+  process cleanup. See [secure updates](docs/UPDATES.md) for contracts, key rotation,
+  publication ordering and remaining platform acceptance requirements.

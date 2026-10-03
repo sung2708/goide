@@ -20,6 +20,7 @@ mod windows {
     };
     #[derive(Debug)]
     pub struct Job(Arc<OwnedHandle>);
+    static APP_JOB: OnceLock<Result<Job, String>> = OnceLock::new();
     impl Job {
         pub fn new() -> Result<Self, String> {
             // An unnamed, non-inheritable handle; descendants inherit membership, not the handle.
@@ -84,7 +85,7 @@ mod windows {
             }
             Ok(())
         }
-        pub fn is_empty(&self) -> Result<bool, String> {
+        pub fn active_count(&self) -> Result<u32, String> {
             use windows_sys::Win32::System::JobObjects::{
                 JobObjectBasicAccountingInformation, QueryInformationJobObject,
                 JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
@@ -104,11 +105,49 @@ mod windows {
             {
                 return Err(std::io::Error::last_os_error().to_string());
             }
-            Ok(accounting.ActiveProcesses == 0)
+            Ok(accounting.ActiveProcesses)
+        }
+        pub fn is_empty(&self) -> Result<bool, String> {
+            Ok(self.active_count()? == 0)
+        }
+        pub(super) fn installer_handoff(&self, enabled: bool) -> Result<(), String> {
+            use windows_sys::Win32::System::JobObjects::QueryInformationJobObject;
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            // SAFETY: Correctly sized output buffer and an owned, live job handle.
+            if unsafe {
+                QueryInformationJobObject(
+                    self.0.as_raw_handle() as HANDLE,
+                    JobObjectExtendedLimitInformation,
+                    &mut limits as *mut _ as *mut _,
+                    std::mem::size_of_val(&limits) as u32,
+                    std::ptr::null_mut(),
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            use windows_sys::Win32::System::JobObjects::JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+            if enabled {
+                limits.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+            } else {
+                limits.BasicLimitInformation.LimitFlags &= !JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+            }
+            // SAFETY: Initialized limits read from this exact job, retaining all other flags.
+            if unsafe {
+                SetInformationJobObject(
+                    self.0.as_raw_handle() as HANDLE,
+                    JobObjectExtendedLimitInformation,
+                    &limits as *const _ as *const _,
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            } == 0
+            {
+                return Err(std::io::Error::last_os_error().to_string());
+            }
+            Ok(())
         }
     }
     pub fn install() -> Result<(), String> {
-        static APP_JOB: OnceLock<Result<Job, String>> = OnceLock::new();
         APP_JOB
             .get_or_init(|| {
                 let job = Job::new()?;
@@ -120,9 +159,32 @@ mod windows {
             .map(|_| ())
             .map_err(Clone::clone)
     }
+    pub fn prepare_update_exit() -> Result<(), String> {
+        if !super::super::lifecycle::exit_approved()
+            || !super::super::lifecycle::gate().is_closing()
+        {
+            return Err("Workspace cleanup has not been acknowledged.".into());
+        }
+        let job = APP_JOB
+            .get()
+            .ok_or("App job is unavailable.")?
+            .as_ref()
+            .map_err(Clone::clone)?;
+        // Only new installer children escape. Existing WebView/tool descendants retain
+        // KILL_ON_JOB_CLOSE; the closed lifecycle gate rejects every new tool launch.
+        job.installer_handoff(true)
+    }
+    pub fn restore_update_exit() -> Result<(), String> {
+        APP_JOB
+            .get()
+            .ok_or("App job is unavailable.")?
+            .as_ref()
+            .map_err(Clone::clone)?
+            .installer_handoff(false)
+    }
 }
 #[cfg(windows)]
-pub use windows::{install, Job};
+pub use windows::{install, prepare_update_exit, restore_update_exit, Job};
 
 #[cfg(windows)]
 mod owned_async;
@@ -147,6 +209,14 @@ pub async fn retry_async_cleanup() -> Result<(), String> {
 
 #[cfg(not(windows))]
 pub fn install() -> Result<(), String> {
+    Ok(())
+}
+#[cfg(not(windows))]
+pub fn prepare_update_exit() -> Result<(), String> {
+    Ok(())
+}
+#[cfg(not(windows))]
+pub fn restore_update_exit() -> Result<(), String> {
     Ok(())
 }
 #[cfg(all(test, windows))]

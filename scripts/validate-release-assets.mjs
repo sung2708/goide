@@ -94,7 +94,10 @@ function main() {
     }
   }
 
-  const binaryFiles = files.filter((f) => f !== "SHA256SUMS.txt");
+  const binaryFiles = files.filter((f) => f !== "SHA256SUMS.txt" && !f.endsWith(".sig"));
+  for (const signature of files.filter(f => f.endsWith(".sig"))) {
+    if (!binaryFiles.includes(signature.slice(0, -4))) { console.error("[ERROR] Orphan signature:", signature); errors++; }
+  }
 
   if (binaryFiles.length === 0) {
     console.error("[ERROR] No distributable binary artifacts found alongside checksum manifest.");
@@ -121,7 +124,9 @@ function main() {
     }
 
     // Rule 3: Must contain exact tag
-    if (!file.includes(tag)) {
+    const versionMatch = file.match(CANONICAL_ARTIFACT_REGEX);
+    const artifactVersion = versionMatch ? `${versionMatch[1]}.${versionMatch[2]}.${versionMatch[3]}${versionMatch[4] ? `-${versionMatch[4]}` : ""}` : null;
+    if (artifactVersion !== tag.slice(1)) {
       console.error(
         `[ERROR] Asset filename "${file}" does not contain expected release tag "${tag}".`
       );

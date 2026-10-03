@@ -22,6 +22,7 @@ const docs = [
   "docs/ROADMAP.md",
   "docs/VERSIONING.md",
   "docs/RELEASE.md",
+  "docs/UPDATES.md",
   "docs/RELEASE_READINESS.md",
   "docs/NAVIGATION_SEARCH.md",
   "docs/TROUBLESHOOTING.md",

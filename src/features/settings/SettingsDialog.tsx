@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Dialog from "../../components/primitives/Dialog";
 import { SETTING_DEFINITIONS, type SettingKey, type Settings } from "./model";
 import { useSettings } from "./useSettings";
+import { UpdatePanel } from "../updates/UpdatePanel";
 
 function NumberPreference({
   value,
@@ -128,6 +129,7 @@ export default function SettingsDialog({
       </div>
 
       <div className="flex-1 overflow-y-auto px-6 py-3 scrollbar-thin">
+        {open && (!query.trim() || "about goro updates check version release".includes(query.toLowerCase().trim())) && <UpdatePanel />}
         {(error || toolchainError) && (
           <div role="alert" className="mb-4 rounded-none border border-[rgba(235,160,172,0.3)] bg-[rgba(235,160,172,0.08)] px-3 py-2 text-xs text-[var(--red)]">
             {[error, toolchainError].filter(Boolean).join("\n")}

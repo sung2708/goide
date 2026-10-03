@@ -14,6 +14,108 @@ use windows_sys::Win32::{
     },
 };
 struct TestChild(std::process::Child);
+struct HandoffChild(OwnedHandle);
+impl Drop for HandoffChild {
+    fn drop(&mut self) {
+        // SAFETY: This fixture owns the handle of only its explicitly created descendant.
+        unsafe {
+            windows_sys::Win32::System::Threading::TerminateProcess(
+                self.0.as_raw_handle() as HANDLE,
+                1,
+            );
+            WaitForSingleObject(self.0.as_raw_handle() as HANDLE, 5000);
+        }
+    }
+}
+
+#[test]
+fn installer_handoff_allows_new_child_to_survive_without_disabling_kill_on_close() {
+    use windows_sys::Win32::System::JobObjects::{
+        JobObjectExtendedLimitInformation, QueryInformationJobObject,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+    let root = std::env::temp_dir().join(format!("goro-handoff-test-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let script = root.join("parent.ps1");
+    let start = root.join("start");
+    let pid_file = root.join("pid");
+    std::fs::write(&script, r#"param([string]$StartPath, [string]$PidPath)
+while (-not (Test-Path -LiteralPath $StartPath)) { Start-Sleep -Milliseconds 10 }
+$FixtureChild = Start-Process ping.exe -ArgumentList @('-n','90','127.0.0.1') -WindowStyle Hidden -PassThru
+Set-Content -LiteralPath $PidPath -Value $FixtureChild.Id
+"#).unwrap();
+    let job = Job::new().unwrap();
+    let parent = std_command("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+        ])
+        .arg(&script)
+        .arg(&start)
+        .arg(&pid_file)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut parent = TestChild(parent);
+    job.assign(parent.as_raw_handle()).unwrap();
+    job.installer_handoff(true).unwrap();
+    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+    let handle = job.handle();
+    // SAFETY: Live job handle and initialized, correctly sized output structure.
+    assert_ne!(
+        unsafe {
+            QueryInformationJobObject(
+                handle.as_raw_handle() as HANDLE,
+                JobObjectExtendedLimitInformation,
+                &mut limits as *mut _ as *mut _,
+                std::mem::size_of_val(&limits) as u32,
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_ne!(
+        limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        0
+    );
+    assert_ne!(
+        limits.BasicLimitInformation.LimitFlags & JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+        0
+    );
+    std::fs::write(&start, b"start").unwrap();
+    assert!(parent.wait().unwrap().success());
+    let pid = std::fs::read_to_string(&pid_file)
+        .unwrap()
+        .trim()
+        .parse::<u32>()
+        .unwrap();
+    // SAFETY: PID was created by this isolated fixture; its handle is owned and reaped on Drop.
+    let raw = unsafe {
+        OpenProcess(
+            PROCESS_SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+            0,
+            pid,
+        )
+    };
+    assert!(!raw.is_null());
+    let descendant = HandoffChild(unsafe { OwnedHandle::from_raw_handle(raw) });
+    assert!(job.is_empty().unwrap());
+    job.installer_handoff(false).unwrap();
+    drop(handle);
+    drop(job);
+    assert_ne!(
+        unsafe { WaitForSingleObject(descendant.0.as_raw_handle() as HANDLE, 0) },
+        WAIT_OBJECT_0
+    );
+    drop(descendant);
+    assert!(root.starts_with(std::env::temp_dir()));
+    std::fs::remove_dir_all(root).unwrap();
+}
 impl std::ops::Deref for TestChild {
     type Target = std::process::Child;
     fn deref(&self) -> &Self::Target {
