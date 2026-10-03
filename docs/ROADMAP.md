@@ -401,3 +401,11 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: Windows synchronous and asynchronous children confirm empty owned jobs, natural Run completion checks descendant cleanup before retiring ownership, and module/test errors distinguish incomplete teardown from acknowledged failure.
 - Delivered: module/test document locks remain held for structured cleanup-pending replies as well as lost IPC transport. Global cleanup includes retained synchronous handles and pipe workers.
 - Remaining: complete Linux/macOS descendant/zombie/identity acceptance, Windows spawn-to-job assignment failure/gap coverage, PTY/platform acceptance and unfinished debugger/Git/addendum features. No release/tag is authorized.
+
+
+## Observed debugger state checkpoint (2026-10-03)
+
+- Delivered: native paused/thread state follows DAP stopped/continued events; Pause and Step acknowledgements do not invent stopped frames. Frame failures clear obsolete source coordinates.
+- Delivered: configurationDone follows breakpoint registration when supported; cold launch has a bounded 60-second budget, other requests a 5-second budget, with framing-safe shutdown interruption and transport poisoning after incomplete/mismatched responses.
+- Validated: installed Go/Delve actually stops on the requested breakpoint; frontend control tests retain observed-state behavior.
+- Remaining: failed debugger teardown retention, debugger variables/stack/goroutines, remaining Git/addendum workflows and full platform acceptance. No release/tag is authorized.

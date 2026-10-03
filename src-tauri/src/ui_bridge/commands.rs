@@ -695,13 +695,13 @@ async fn start_debug_session_internal(
     let mut client = match DapClient::connect(dap_process.listen_addr).await {
         Ok(client) => client,
         Err(error) => {
-            let _ = dap_process.child.kill().await;
+            let _ = dap_process.child.stop().await;
             return ApiResponse::err("deep_trace_runtime_unavailable", &error.to_string());
         }
     };
 
     if let Err(error) = client.initialize().await {
-        let _ = dap_process.child.kill().await;
+        let _ = dap_process.child.stop().await;
         return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
     }
 
@@ -710,7 +710,7 @@ async fn start_debug_session_internal(
         .await
     {
         let _ = client.disconnect().await;
-        let _ = dap_process.child.kill().await;
+        let _ = dap_process.child.stop().await;
         return ApiResponse::err("deep_trace_runtime_unavailable", &format!("{error:#}"));
     }
 
@@ -734,9 +734,15 @@ async fn start_debug_session_internal(
         let resolved_path = workspace_root.join(relative_path);
         if let Err(error) = client.set_breakpoints(&resolved_path, lines).await {
             let _ = client.disconnect().await;
-            let _ = dap_process.child.kill().await;
+            let _ = dap_process.child.stop().await;
             return ApiResponse::err("debugger_breakpoint_failed", &format!("{error:#}"));
         }
+    }
+
+    if let Err(error) = client.configuration_done().await {
+        let _ = client.disconnect().await;
+        let _ = dap_process.child.stop().await;
+        return ApiResponse::err("debugger_configuration_failed", &format!("{error:#}"));
     }
 
     let (stop_tx, mut stop_rx) = oneshot::channel::<()>();
@@ -790,21 +796,12 @@ async fn start_debug_session_internal(
                                 .ok_or_else(|| "no active thread to continue".to_string())?;
                                 client.continue_thread(thread_id).await.map_err(|error| error.to_string())?;
                                 let mut store = signals_handle.lock().await;
-                                store.paused = false;
-                                store.active_thread_id = Some(thread_id);
                                 refresh_debugger_location(&mut client, &mut store).await;
                             }
                             DebuggerControlKind::Pause => {
-                                let threads = client.threads().await.map_err(|error| error.to_string())?;
-                                let thread_id = {
-                                    let store = signals_handle.lock().await;
-                                    select_debug_thread_id(&store, &threads)
-                                }
-                                .ok_or_else(|| "no active thread to pause".to_string())?;
-                                client.pause_thread(thread_id).await.map_err(|error| error.to_string())?;
+                                // Delve pauses the entire target; threadId is ignored by its pause handler.
+                                client.pause_thread(0).await.map_err(|error| error.to_string())?;
                                 let mut store = signals_handle.lock().await;
-                                store.paused = true;
-                                store.active_thread_id = Some(thread_id);
                                 refresh_debugger_location(&mut client, &mut store).await;
                             }
                             DebuggerControlKind::StepOver => {
@@ -816,8 +813,6 @@ async fn start_debug_session_internal(
                                 .ok_or_else(|| "no active thread to step over".to_string())?;
                                 client.next(thread_id).await.map_err(|error| error.to_string())?;
                                 let mut store = signals_handle.lock().await;
-                                store.paused = true;
-                                store.active_thread_id = Some(thread_id);
                                 refresh_debugger_location(&mut client, &mut store).await;
                             }
                             DebuggerControlKind::StepInto => {
@@ -829,8 +824,6 @@ async fn start_debug_session_internal(
                                 .ok_or_else(|| "no active thread to step into".to_string())?;
                                 client.step_in(thread_id).await.map_err(|error| error.to_string())?;
                                 let mut store = signals_handle.lock().await;
-                                store.paused = true;
-                                store.active_thread_id = Some(thread_id);
                                 refresh_debugger_location(&mut client, &mut store).await;
                             }
                             DebuggerControlKind::StepOut => {
@@ -842,8 +835,6 @@ async fn start_debug_session_internal(
                                 .ok_or_else(|| "no active thread to step out".to_string())?;
                                 client.step_out(thread_id).await.map_err(|error| error.to_string())?;
                                 let mut store = signals_handle.lock().await;
-                                store.paused = true;
-                                store.active_thread_id = Some(thread_id);
                                 refresh_debugger_location(&mut client, &mut store).await;
                             }
                             DebuggerControlKind::ToggleBreakpoint { relative_path, line } => {
@@ -891,9 +882,13 @@ async fn start_debug_session_internal(
                             let mut store = signals_handle.lock().await;
                             store.signals = correlated;
                             store.healthy = true;
-                            if !store.paused {
-                                store.active_thread_id = threads.first().map(|thread| thread.id);
-                            }
+                            refresh_debugger_location(&mut client, &mut store).await;
+                        }
+                        Err(_) if !client.is_poisoned() => {
+                            // Adapter errors while running are not transport failures. Events
+                            // consumed before the response still carry execution state.
+                            let mut store = signals_handle.lock().await;
+                            refresh_debugger_location(&mut client, &mut store).await;
                         }
                         Err(_) => {
                             let _ = client.disconnect().await;
@@ -1032,7 +1027,7 @@ pub(crate) async fn start_debug_session_internal_for_test(
         Ok(mut dap_process) => {
             // Minimal cleanup – kill the process immediately; we only care about
             // whether Delve could be launched at all in this test helper.
-            let _ = dap_process.child.kill().await;
+            let _ = dap_process.child.stop().await;
             ApiResponse::ok(ActivateDeepTraceResponseDto {
                 mode: "deep-trace".to_string(),
                 scope_key: None,
@@ -1150,7 +1145,11 @@ pub(super) async fn with_idle_go_tools<T: Send + 'static>(
         Ok(result) => result.map_err(|error| format!("{error:#}")),
         Err(error) => Err(error.to_string()),
     };
-    match tauri::async_runtime::spawn_blocking(crate::integration::owned_tool_output::wait_for_shutdown).await {
+    match tauri::async_runtime::spawn_blocking(
+        crate::integration::owned_tool_output::wait_for_shutdown,
+    )
+    .await
+    {
         Ok(Ok(())) => result,
         Ok(Err(error)) => Err(format!("owned_go_cleanup_pending: {error}")),
         Err(error) => Err(format!("owned_go_cleanup_pending: {error}")),
@@ -1387,13 +1386,25 @@ fn select_debug_thread_id(store: &RuntimeSignalStore, threads: &[delve::DapThrea
 }
 
 async fn refresh_debugger_location(client: &mut DapClient, store: &mut RuntimeSignalStore) {
+    store.paused = client.observed_pause() == Some(true);
+    store.active_thread_id = client.observed_thread();
+    // Always clear coordinates first: failed requests must not retain an old frame.
+    store.active_relative_path = None;
+    store.active_line = None;
+    store.active_column = None;
     if !store.paused {
         store.active_relative_path = None;
         store.active_line = None;
         store.active_column = None;
         return;
     }
-    let Ok(threads) = client.threads().await else {
+    let threads = client.threads().await;
+    store.paused = client.observed_pause() == Some(true);
+    store.active_thread_id = client.observed_thread();
+    if !store.paused {
+        return;
+    }
+    let Ok(threads) = threads else {
         return;
     };
     let Some(thread_id) = select_debug_thread_id(store, &threads) else {
@@ -1401,6 +1412,11 @@ async fn refresh_debugger_location(client: &mut DapClient, store: &mut RuntimeSi
     };
     store.active_thread_id = Some(thread_id);
     if let Ok(Some(frame)) = client.stack_trace(thread_id).await {
+        store.paused = client.observed_pause() == Some(true);
+        store.active_thread_id = client.observed_thread();
+        if !store.paused || store.active_thread_id.is_some_and(|id| id != thread_id) {
+            return;
+        }
         store.active_relative_path = Some(frame.relative_path);
         store.active_line = Some(frame.line);
         store.active_column = Some(frame.column);

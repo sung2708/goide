@@ -265,3 +265,12 @@ PASS: four frontend suites pass 20 tests for module/test cleanup, including stru
 Linux/macOS execution is NOT RUN on this Windows host. Unix synchronous cleanup now uses checked process-group signals and probes, avoids re-sending numeric group signals during retained retries, and retains uncertain handles. This is not certification of every Unix identity, zombie, descendant or PTY case. The full release/platform gate remains incomplete.
 
 Final ownership filter PASS: 15 native tests, with one installed-Go module fixture ignored by this filter (previously run separately). Coverage includes Git-hook cancellation, synchronous trees/retention, async Run jobs, PTY ownership/readers/reaping, tool configuration ownership and native module cleanup. Cargo Clippy --all-targets passes without the retired Windows fallback warning.
+
+
+## Observed DAP regression (2026-10-03)
+
+PASS: 15 native Delve checks, explicitly including the installed Go/Delve fixture. The fixture launches a real module, registers line 4, completes configuration, observes a stopped event and reads an actual frame at line 4 before disconnect/owned cleanup. Protocol checks cover configuration capability negotiation, fast breakpoint events preceding acknowledgements, mismatched-response stream poisoning, partial-frame deadlines and bounded framing.
+
+PASS: 22 tests across EditorShell.debug and DebugFailureDialog, including waiting for observed pause state, start/stop guards and stop-error recovery. Native all-target Clippy passes without warnings.
+
+These checks do not establish complete debugger inspection, failed-stop retention or Linux/macOS acceptance; the release gate remains closed.
