@@ -52,7 +52,8 @@ pub(crate) async fn stop_all_runs(handle: &ProcessHandle) -> Result<(), String> 
         child.stop().await?;
     }
     *guard = None;
-    Ok(())
+    drop(guard);
+    crate::integration::process_job::retry_async_cleanup().await
 }
 
 pub(crate) async fn stop_owned_run(
@@ -97,6 +98,7 @@ pub(crate) async fn stop_owned_run(
     }
     *guard = None;
     drop(guard);
+    crate::integration::process_job::retry_async_cleanup().await?;
     // SDK discovery also owns child jobs and pipe workers; cancellation is not an acknowledgement.
     tokio::task::spawn_blocking(crate::integration::owned_tool_output::wait_for_shutdown)
         .await
@@ -306,12 +308,10 @@ async fn start_go_run(
     let package_root = Path::new(&cwd);
     let normalized_target = crate::integration::gopls::normalize_platform_pathbuf(target);
     let args = build_go_run_args(package_root, &normalized_target, mode);
-    let child = build_go_run_command(package_root, work.as_deref(), &args)
-        .spawn()
-        .with_context(|| "failed to spawn `go run` — is `go` in PATH?")?;
-    let mut child = OwnedChild::new(child)
+    let mut command = build_go_run_command(package_root, work.as_deref(), &args);
+    let mut child = OwnedChild::spawn(&mut command, || startup.check())
         .await
-        .map_err(|error| anyhow!(error))?;
+        .with_context(|| "failed to start owned `go run`")?;
 
     let stdout = child.stdout.take().ok_or_else(|| anyhow!("no stdout"))?;
     let stderr = child.stderr.take().ok_or_else(|| anyhow!("no stderr"))?;

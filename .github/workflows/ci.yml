@@ -102,9 +102,11 @@ jobs:
 
       - name: Cargo test
         if: runner.os != 'Windows'
-        run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+        # Native fixtures represent one app and share its process/tool registries.
+        # Their explicit concurrency tests still exercise real overlapping requests.
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1
 
       - name: Cargo test (MSVC)
         if: runner.os == 'Windows'
         shell: cmd
-        run: scripts\cargo_test_msvc.cmd --locked
+        run: scripts\cargo_test_msvc.cmd --locked -- --test-threads=1

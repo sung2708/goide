@@ -121,69 +121,62 @@ mod windows {
 #[cfg(windows)]
 pub use windows::{install, Job};
 
+#[cfg(windows)]
+mod owned_async;
+#[cfg(windows)]
+pub use owned_async::OwnedChild;
+pub fn async_cleanup_pending() -> bool {
+    #[cfg(windows)]
+    {
+        owned_async::is_pending()
+    }
+    #[cfg(not(windows))]
+    {
+        false
+    }
+}
+pub async fn retry_async_cleanup() -> Result<(), String> {
+    #[cfg(windows)]
+    {
+        owned_async::retry_cleanup().await
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(())
+    }
+}
+
+#[cfg(not(windows))]
 #[derive(Debug)]
 pub struct OwnedChild {
     identity: uuid::Uuid,
     child: tokio::process::Child,
-    #[cfg(windows)]
-    tree: Job,
     #[cfg(unix)]
     process_group: u32,
 }
+#[cfg(not(windows))]
 impl OwnedChild {
-    #[allow(unused_mut)] // Windows registration failure must terminate/reap the child.
-    pub async fn new(mut child: tokio::process::Child) -> Result<Self, String> {
-        #[cfg(windows)]
-        let tree = match Job::new().and_then(|job| {
-            job.assign(
-                child
-                    .raw_handle()
-                    .ok_or("Owned child has no process handle")?,
-            )?;
-            Ok(job)
-        }) {
-            Ok(job) => job,
-            Err(error) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
-                return Err(format!("Unable to own process tree: {error}"));
-            }
-        };
-        #[cfg(unix)]
+    pub async fn spawn(
+        command: &mut tokio::process::Command,
+        before_resume: impl FnOnce() -> anyhow::Result<()>,
+    ) -> anyhow::Result<Self> {
+        before_resume()?;
+        command.process_group(0);
+        let child = command.spawn()?;
+        Self::new(child)
+            .await
+            .map_err(|error| anyhow::anyhow!(error))
+    }
+
+    pub async fn new(child: tokio::process::Child) -> Result<Self, String> {
         let process_group = child.id().ok_or("Owned child has no process group")?;
         Ok(Self {
             identity: uuid::Uuid::new_v4(),
             child,
-            #[cfg(windows)]
-            tree,
-            #[cfg(unix)]
             process_group,
         })
     }
     pub async fn stop(&mut self) -> Result<(), String> {
-        #[cfg(windows)]
-        {
-            self.tree.terminate()?;
-            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(2);
-            tokio::time::timeout_at(deadline, self.child.wait())
-                .await
-                .map_err(|_| {
-                    "Owned process is still stopping; retain its handle and retry cleanup."
-                        .to_string()
-                })?
-                .map_err(|error| error.to_string())?;
-            while !self.tree.is_empty()? {
-                if tokio::time::Instant::now() >= deadline {
-                    return Err(
-                        "Owned descendants are still stopping; retain their job and retry cleanup."
-                            .into(),
-                    );
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            }
-            Ok(())
-        }
-        #[cfg(not(windows))]
         crate::integration::process::kill_process_group(&mut self.child)
             .await
             .map_err(|e| e.to_string())
@@ -192,12 +185,14 @@ impl OwnedChild {
         self.identity
     }
 }
+#[cfg(not(windows))]
 impl std::ops::Deref for OwnedChild {
     type Target = tokio::process::Child;
     fn deref(&self) -> &Self::Target {
         &self.child
     }
 }
+#[cfg(not(windows))]
 impl std::ops::DerefMut for OwnedChild {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.child

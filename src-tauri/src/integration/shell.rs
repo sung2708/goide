@@ -3,7 +3,9 @@ use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::OnceLock;
 use tauri::Emitter;
 use tokio::sync::Mutex;
 

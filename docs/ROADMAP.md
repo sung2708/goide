@@ -484,3 +484,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: synchronous Go/gopls/tool children are created suspended with an owned job already allocated. Registration and cancellation checks precede resuming the pinned initial thread; missing/ambiguous thread identity and registration failure fail closed. Failure cleanup retains the existing process/job retry authority.
 - Delivered: typed cancellation/deadline causes survive the process I/O boundary without treating unrelated I/O errors as cancellation.
 - Remaining: asynchronous Run/Delve and PTY spawn registration, Unix process-group identity/platform acceptance and unfinished Git/addendum requirements. This checkpoint covers synchronous SDK tools only. Native window/platform manual acceptance is NOT RUN; no release/tag is authorized.
+
+
+## Suspended async Run/Delve startup checkpoint (2026-10-03)
+
+- Delivered on Windows: Run and Delve allocate owned jobs before spawning suspended children. Registration and captured startup cancellation checks precede resumption of the pinned initial thread. Async failure or cancellation retains the original UUID, process handle and job in a retry pool until both root and descendants are confirmed retired.
+- Delivered: Stop/shutdown/debugger retry includes abandoned async owners; a cancelled cleanup future returns authority to that pool. SDK tools fail closed while async cleanup is unconfirmed. Existing Unix behavior is unchanged.
+- Remaining: atomic PTY registration, Unix process-group identity/platform acceptance, recent workspaces/session restore, remaining P0 reliability and complete Git/addendum requirements. Native window/installer/manual performance acceptance is NOT RUN; no release/tag is authorized.

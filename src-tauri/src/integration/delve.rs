@@ -584,6 +584,7 @@ async fn read_response_until<R: AsyncBufRead + Unpin>(
     }
 }
 
+#[cfg(test)]
 pub async fn spawn_dlv_dap(workspace_root: &Path) -> Result<DapProcess> {
     spawn_dlv_dap_with("dlv", &["dap", "--listen=127.0.0.1:0"], workspace_root).await
 }
@@ -689,10 +690,39 @@ fn ensure_success(command: &str, response: &Value) -> Result<()> {
     Err(anyhow!("DAP command `{command}` failed: {combined}"))
 }
 
+#[cfg(test)]
 pub(crate) async fn spawn_dlv_dap_with(
     command: &str,
     args: &[&str],
     workspace_root: &Path,
+) -> Result<DapProcess> {
+    spawn_dlv_dap_with_checked(
+        command,
+        args,
+        workspace_root,
+        crate::integration::language_requests::check,
+    )
+    .await
+}
+
+pub async fn spawn_dlv_dap_checked(
+    workspace_root: &Path,
+    before_resume: impl FnOnce() -> Result<()>,
+) -> Result<DapProcess> {
+    spawn_dlv_dap_with_checked(
+        "dlv",
+        &["dap", "--listen=127.0.0.1:0"],
+        workspace_root,
+        before_resume,
+    )
+    .await
+}
+
+async fn spawn_dlv_dap_with_checked(
+    command: &str,
+    args: &[&str],
+    workspace_root: &Path,
+    before_resume: impl FnOnce() -> Result<()>,
 ) -> Result<DapProcess> {
     let canonical_root = workspace_root.canonicalize().with_context(|| {
         format!(
@@ -708,17 +738,15 @@ pub(crate) async fn spawn_dlv_dap_with(
     let mut dap_command = tokio_command(command);
     #[cfg(unix)]
     dap_command.process_group(0);
-    let child = dap_command
+    dap_command
         .args(args)
         .current_dir(&canonical_root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .with_context(|| format!("failed to spawn `{command}` — is it installed and on PATH?"))?;
-    let mut child = OwnedChild::new(child)
+        .kill_on_drop(true);
+    let mut child = OwnedChild::spawn(&mut dap_command, before_resume)
         .await
-        .map_err(|error| anyhow!(error))?;
+        .with_context(|| format!("failed to start owned `{command}`"))?;
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
@@ -961,7 +989,8 @@ mod tests {
         fs::create_dir_all(&package_dir).expect("create package dir");
         let main_go = package_dir.join("main.go");
         fs::write(&main_go, "package main\nfunc main(){}\n").expect("write go file");
-        let expected_program = main_go.to_string_lossy().to_string();
+        let expected_program =
+            serialize_dap_path(&main_go.canonicalize().expect("canonical test source"));
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");
@@ -1052,7 +1081,8 @@ mod tests {
         let test_file = package_dir.join("worker_test.go");
         fs::write(&test_file, "package workers\nfunc TestX(t *testing.T){}\n")
             .expect("write go test file");
-        let expected_program = test_file.to_string_lossy().to_string();
+        let expected_program =
+            serialize_dap_path(&test_file.canonicalize().expect("canonical test source"));
 
         let server_task = tokio::spawn(async move {
             let (mut socket, _) = listener.accept().await.expect("accept client");

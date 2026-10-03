@@ -734,7 +734,8 @@ async fn start_debug_session_internal(
 
     let target_file = workspace_root.join(&request.relative_path);
 
-    let dap_process = match delve::spawn_dlv_dap(&workspace_root).await {
+    let dap_process = match delve::spawn_dlv_dap_checked(&workspace_root, || startup.check()).await
+    {
         Ok(process) => process,
         Err(error) => {
             let failure = map_debug_failure("debug_session_start_failed", &error.to_string());
@@ -3189,6 +3190,8 @@ mod tests {
 
     fn init_bare_git_repo(dir: &std::path::PathBuf) {
         git(dir, &["init", "--bare"]);
+        // Fixtures own their branch identity; do not inherit a runner's default branch setting.
+        git(dir, &["symbolic-ref", "HEAD", "refs/heads/main"]);
     }
 
     fn clone_git_repo(remote: &std::path::Path, local: &std::path::PathBuf) {
