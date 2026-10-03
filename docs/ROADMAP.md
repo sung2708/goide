@@ -387,3 +387,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: native go mod tidy/download with fixed arguments, canonical scoped manifests, selected-workspace revalidation, explicit GOFLAGS handling and bounded owned output.
 - Delivered: Save All/conflict-draft preservation, Run/Debug exclusion, cancellation, stale-root protection and confirmed cleanup before releasing document mutation ownership, including failed IPC transport.
 - Remaining: structured Go test execution, debugger inspection, session restore, remaining Git features and the complete platform/process ownership acceptance matrix. No release/tag is authorized.
+
+## Structured test execution checkpoint (2026-10-03)
+
+- Delivered: explicit package/workspace Go test execution, actual package discovery, correct cwd for nested modules, scoped multi-module workspace patterns, fixed flags and bounded native ownership.
+- Delivered: real JSON results/status/duration, scoped test/compiler failure navigation, Save All and merge-result preservation, toolchain preflight, cancellation and IPC cleanup recovery.
+- Delivered: exact top-level test selection through typed native IPC with rejection of missing selections; semantic editor actions are not yet wired.
+- Remaining: live streaming, semantic Test/Main CodeLens, Debug Test, debugger variables/stack/goroutines, remaining session/Git features and the complete platform ownership matrix. No release/tag is authorized.

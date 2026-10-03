@@ -120,3 +120,11 @@ Refresh after saved module/workspace changes. Cancel, context changes and closin
 Open **Go: Inspect Project and Environment** to select a scoped module, save all open documents and run **Tidy Module** or **Download Dependencies**. Tidy targets the selected module; download follows Go's selected module/workspace. These commands clear custom GOFLAGS, show real exit status/output and refresh project/files/Git after completion or partial failure.
 
 Document preservation must succeed before execution. Stop Run/Debug first. Cancel retains the mutation lock until native cleanup is acknowledged; transport failures require native cleanup confirmation and offer **Retry module cleanup**. Workspace members outside the opened root are rejected before download writes.
+
+## Structured Go test runner
+
+Use **Go: Test Current Package**, **Go: Test Workspace** or **Go: Open Test Runner** from the command palette. Save All and retained conflict preservation must succeed first; Run/Debug ownership blocks startup. Go discovers actual package identities, selects the proper module directory and includes scoped go.work members for workspace tests. Custom GOFLAGS are cleared and the selected GOWORK is pinned for execution.
+
+The runner shows package/test states, durations and bounded real output after completion. Located test failures and confirmed compiler failures offer source navigation. Cancel retains document ownership until native completion; lost IPC transport requires cleanup confirmation with an explicit retry. Commands have a 180-second native budget and a 120-second Go test timeout. Tests execute project code only after the explicit action.
+
+Live incremental results, semantic test CodeLens, Debug Test and the richer Test Explorer are still pending. The terminal remains available for additional testing flags and unsupported workflows.

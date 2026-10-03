@@ -245,3 +245,13 @@ PASS: module hook/panel/IPC/document integration checks cover Save All failure, 
 NOT RUN: complete desktop/platform acceptance, external concurrent manifest replacement/hard-link races and the remaining addendum/Git feature matrix. These checkpoints do not authorize release tags.
 
 Full frontend regression PASS: 94 files and 666 tests. TypeScript, production build (248 modules), version synchronization and documentation links also pass. This verifies the current regression suite, not the unrun desktop/platform release matrix.
+
+## Structured Go test regression (2026-10-03)
+
+PASS: native fixture checks actual scoped package execution from a parent without go.mod, exact selection, skipped/failed tests, two go.work modules and build failure output. Unit checks reject invalid test filters and pre-cancelled requests before launching Go. Additional checks cover missing test selections, empty package directories and cancellation after a running test binary writes its start marker.
+
+PASS: parser/hook/dialog and IPC checks cover interleaved native events, old/new Go build failures, safe package-relative locations, malformed/unrelated output, bounded output disclosure, actual exit results, native-only execution, configuration failure/cancellation, stale workspace outcomes and held locks through failed transport cleanup. The editor test suite preserves dirty buffers and merge drafts after failed Save All and prevents editing/close until native cancellation completion. The adjacent module/debug regression suites pass (33 checks before the final preflight assertions); final hook/IPC checks pass (14 tests). TypeScript and the production build pass (251 modules).
+
+The preceding full frontend baseline passed 94 files and 666 tests before this test-runner slice. Live streaming, CodeLens/Debug Test and complete platform acceptance remain NOT RUN. Existing cross-platform process ownership limitations and concurrent filesystem races are not certified by these focused checks; release remains gated.
+
+Native test-runner fixture/unit rerun PASS (3 checks, including live binary cancellation and missing/empty selections). Cargo Clippy --all-targets also passes for this slice.

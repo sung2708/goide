@@ -22,6 +22,8 @@ import { useSettings } from "../../features/settings/useSettings";
 import SettingsDialog from "../../features/settings/SettingsDialog";
 import ToolchainDialog from "../../features/settings/ToolchainDialog";
 import GoProjectDialog from "../../features/goProject/GoProjectDialog";
+import GoTestsDialog from "../../features/goTests/GoTestsDialog";
+import { useGoTests } from "../../features/goTests/useGoTests";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useLensSignals } from "../../features/concurrency/useLensSignals";
@@ -1982,6 +1984,9 @@ function EditorShell() {
     canChangeFiles: () => runStatus !== "running" && !isDebugSessionBusy,
   });
 
+  const [isGoTestsOpen, setIsGoTestsOpen] = useState(false);
+  const testDirectory = activeFilePath?.replace(/\\/g, "/").includes("/") ? activeFilePath.replace(/\\/g, "/").split("/").slice(0, -1).join("/") : ".";
+  const goTests = useGoTests({ root: workspacePath, transaction: moduleDocumentTransaction, cancelPreparation: savePreparation.cancel, onChanged: root => { if (workspacePathRef.current === root) { setExplorerRevision(current => current + 1); void reloadGitState(root); } } });
   const editorTitle = useMemo(() => {
     if (!activeFilePath) {
       return "Editor";
@@ -2047,6 +2052,9 @@ function EditorShell() {
     { id: "language.imports", title: "Organize Imports", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.organizeImports },
     { id: "language.quickFix", title: "Quick Fix / Code Actions", shortcut: "Mod+.", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: codeActions.open },
     { id: "language.rename", title: "Rename Symbol", shortcut: "F2", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || cursorOffset === null || commandBusy ? "Place the cursor in a writable Go document and wait for document operations." : undefined, run: languageEdits.beginRename },
+    { id: "go.tests", title: "Go: Open Test Runner", disabled: !workspacePath ? "Open a Go workspace first." : undefined, run: () => setIsGoTestsOpen(true) },
+    { id: "go.testPackage", title: "Go: Test Current Package", disabled: !workspacePath || !isGoFile(activeFilePath) || commandBusy || runStatus === "running" || isDebugSessionBusy ? "Open a Go file and finish document/Run/Debug operations." : undefined, run: () => { setIsGoTestsOpen(true); void goTests.run("package", testDirectory); } },
+    { id: "go.testWorkspace", title: "Go: Test Workspace", disabled: !workspacePath || commandBusy || runStatus === "running" || isDebugSessionBusy ? "Open a workspace and finish document/Run/Debug operations." : undefined, run: () => { setIsGoTestsOpen(true); void goTests.run("workspace", testDirectory); } },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
     { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => setIsBottomPanelOpen(value => !value) },
@@ -2072,6 +2080,7 @@ function EditorShell() {
         {savePreparation.isPreparing && <button type="button" onClick={savePreparation.cancel} className="px-2 text-xs">Cancel save preparation</button>}
         <SettingsDialog open={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} toolchainError={[settings.values["go.executablePath"], settings.values["go.goplsPath"], settings.values["debug.delvePath"]].some(Boolean) ? toolchain.error : null} />
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
+        <GoTestsDialog open={isGoTestsOpen} close={() => setIsGoTestsOpen(false)} runner={goTests} directory={testDirectory} navigate={(path, line, column) => { const root = workspacePathRef.current; void handleOpenFile(path).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === path) requestJump(line, column); }); }} />
         <GoProjectDialog open={isGoProjectOpen} onClose={() => setIsGoProjectOpen(false)} root={workspacePath} activePath={activeFilePath} transaction={moduleDocumentTransaction} cancelPreparation={savePreparation.cancel} onChanged={root => { if (workspacePathRef.current === root) { setExplorerRevision(current => current + 1); void reloadGitState(root); } }} />
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
