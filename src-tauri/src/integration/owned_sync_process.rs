@@ -120,6 +120,11 @@ pub struct OwnedSyncChild {
 }
 impl OwnedSyncChild {
     pub fn spawn(command: &mut Command) -> std::io::Result<Self> {
+        if crate::integration::process_job::async_cleanup_pending() {
+            return Err(std::io::Error::other(
+                "Owned asynchronous cleanup remains pending; retry Stop before starting SDK tools.",
+            ));
+        }
         retry_pending_cleanup()?;
         crate::integration::language_requests::check()
             .map_err(crate::integration::language_requests::into_io_error)?;
