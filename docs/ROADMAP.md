@@ -509,10 +509,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 
 ## Workspace navigation persistence checkpoint (2026-10-03)
 
-- Implemented under branch verification: bounded recent workspaces, disk-backed tab/active-view restoration, explicit removal/retry, no failed-root automatic loop, and Close Workspace through the existing preservation/owned-process transition. Runtime handles/diagnostics and unsaved text are excluded from persisted metadata.
-- Validation: 46 relevant frontend checks pass, including cancelled/stale restoration and explicit dirty-workspace close. Hosted regression CI and native manual acceptance remain required. Unix interactive PTY/session containment and full Git/addendum completion remain unfinished; no release/tag is authorized.
+- Delivered: bounded recent workspaces, disk-backed tab/active-view restoration, explicit removal/retry, no failed-root automatic loop, and Close Workspace through the existing preservation/owned-process transition. Runtime handles/diagnostics and unsaved text are excluded from persisted metadata.
+- Validation: 46 relevant frontend checks pass, including cancelled/stale restoration and explicit dirty-workspace close. Hosted frontend and Windows/Linux/macOS CI pass at 3f9e288. Native manual acceptance, Unix interactive PTY/session containment and full Git/addendum completion remain unfinished; no release/tag is authorized.
 
 ## Git command ownership checkpoint (2026-10-03)
 
-- Implemented under branch verification: Git shares SDK tools' bounded output/process owner, atomically suspended Windows registration and pinned Unix leader authority. Existing mutation cancellation is checked before launch/resume and throughout execution. Descendants retaining pipes after a fast root exit retire through the same owner; cleanup failure retains authority and blocks unsafe retry.
-- Validation: 31 real Git/SDK/output checks and all-target MSVC Clippy pass locally. Hosted platform CI is required before integration. Cancellation after external root deletion/retargeting, Unix interactive PTY containment and complete Git/addendum acceptance remain unfinished; no release/tag is authorized.
+- Delivered: Git shares SDK tools' bounded output/process owner, atomically suspended Windows registration and pinned Unix leader authority. Existing mutation cancellation is checked before launch/resume and throughout execution. Descendants retaining pipes after a fast root exit retire through the same owner; cleanup failure retains authority and blocks unsafe retry.
+- Validation: 31 real Git/SDK/output checks and all-target MSVC Clippy pass locally; hosted frontend and Windows/Linux/macOS CI pass at 3f9e288. Cancellation after external root deletion/retargeting, Unix interactive PTY containment and complete Git/addendum acceptance remain unfinished; no release/tag is authorized.
