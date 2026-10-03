@@ -245,11 +245,11 @@ export async function startDebugSession(
   });
 }
 
-export async function deactivateDeepTrace(): Promise<ApiResponse<void>> {
+export async function deactivateDeepTrace(request: import("./types").DebuggerStopContext = { sessionId: null }): Promise<ApiResponse<void>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger teardown requires the desktop app." } };
   }
-  return invoke<ApiResponse<void>>("deactivate_deep_trace");
+  return invoke<ApiResponse<void>>("deactivate_deep_trace", { request });
 }
 
 export async function createWorkspaceFile(
@@ -385,56 +385,46 @@ export async function getDebuggerState(): Promise<ApiResponse<DebuggerState>> {
   return invoke<ApiResponse<DebuggerState>>("get_debugger_state");
 }
 
-export async function debuggerContinue(): Promise<ApiResponse<void>> {
+export async function debuggerContinue(request: import("./types").DebuggerControlContext): Promise<ApiResponse<import("./types").DebuggerControlObservation>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger control requires the desktop app and an observed session." } };
   }
-  return invoke<ApiResponse<void>>("debugger_continue");
+  return invoke<ApiResponse<import("./types").DebuggerControlObservation>>("debugger_continue", { request });
 }
 
-export async function debuggerPause(): Promise<ApiResponse<void>> {
+export async function debuggerPause(request: import("./types").DebuggerControlContext): Promise<ApiResponse<import("./types").DebuggerControlObservation>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger control requires the desktop app and an observed session." } };
   }
-  return invoke<ApiResponse<void>>("debugger_pause");
+  return invoke<ApiResponse<import("./types").DebuggerControlObservation>>("debugger_pause", { request });
 }
 
-export async function debuggerStepOver(): Promise<ApiResponse<void>> {
+export async function debuggerStepOver(request: import("./types").DebuggerControlContext): Promise<ApiResponse<import("./types").DebuggerControlObservation>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger control requires the desktop app and an observed session." } };
   }
-  return invoke<ApiResponse<void>>("debugger_step_over");
+  return invoke<ApiResponse<import("./types").DebuggerControlObservation>>("debugger_step_over", { request });
 }
 
-export async function debuggerStepInto(): Promise<ApiResponse<void>> {
+export async function debuggerStepInto(request: import("./types").DebuggerControlContext): Promise<ApiResponse<import("./types").DebuggerControlObservation>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger control requires the desktop app and an observed session." } };
   }
-  return invoke<ApiResponse<void>>("debugger_step_into");
+  return invoke<ApiResponse<import("./types").DebuggerControlObservation>>("debugger_step_into", { request });
 }
 
-export async function debuggerStepOut(): Promise<ApiResponse<void>> {
+export async function debuggerStepOut(request: import("./types").DebuggerControlContext): Promise<ApiResponse<import("./types").DebuggerControlObservation>> {
   if (!hasTauriInternals()) {
-    return { ok: true };
+    return { ok: false, error: { code: "debugger_native_required", message: "Debugger control requires the desktop app and an observed session." } };
   }
-  return invoke<ApiResponse<void>>("debugger_step_out");
+  return invoke<ApiResponse<import("./types").DebuggerControlObservation>>("debugger_step_out", { request });
 }
 
 export async function debuggerToggleBreakpoint(
   request: ToggleBreakpointRequest
 ): Promise<ApiResponse<DebuggerState>> {
   if (!hasTauriInternals()) {
-    return {
-      ok: true,
-      data: {
-        sessionActive: false,
-        paused: false,
-        activeRelativePath: null,
-        activeLine: null,
-        activeColumn: null,
-        breakpoints: [],
-      },
-    };
+    return { ok: false, error: { code: "debugger_native_required", message: "Breakpoint registration requires the desktop app." } };
   }
   return invoke<ApiResponse<DebuggerState>>("debugger_toggle_breakpoint", {
     request,

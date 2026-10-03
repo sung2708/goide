@@ -6,7 +6,7 @@ import type { ApiResponse, DebuggerInspectionOutput, DebuggerInspectionRequest, 
 vi.mock("../../lib/ipc/client", () => ({ queryDebuggerInspection: vi.fn() }));
 const query = vi.mocked(queryDebuggerInspection);
 const navigate = vi.fn();
-const state: DebuggerState = { sessionActive: true, paused: true, stopToken: "adapter:1", selectedThreadId: 1, breakpoints: [] };
+const state: DebuggerState = { workspaceRoot: "D:/workspace", sessionActive: true, paused: true, stopToken: "adapter:1", selectedThreadId: 1, breakpoints: [] };
 
 function result(request: DebuggerInspectionRequest): ApiResponse<DebuggerInspectionOutput> {
   const common = { stopToken: request.stopToken, limited: false };
@@ -20,6 +20,12 @@ function result(request: DebuggerInspectionRequest): ApiResponse<DebuggerInspect
 beforeEach(() => { vi.clearAllMocks(); query.mockImplementation(async request => result(request)); });
 
 describe("actual debugger inspection UI", () => {
+  it("does not inspect a debugger owned by another workspace", () => {
+    render(<DebuggerInspector root="E:/other" state={state} navigate={navigate} />);
+    expect(query).not.toHaveBeenCalled();
+    expect(screen.queryByText("Locals")).toBeNull();
+  });
+
   it("loads only requested nested values and changes variable context on frame selection", async () => {
     render(<DebuggerInspector root="D:/workspace" state={state} navigate={navigate} />);
     await screen.findByText("Locals");
@@ -38,11 +44,11 @@ describe("actual debugger inspection UI", () => {
   it("discards late variable values after the workspace and stop token change", async () => {
     let resolve!: (value: ApiResponse<DebuggerInspectionOutput>) => void;
     query.mockImplementation(async request => request.query.kind === "variables" ? new Promise(response => { resolve = response; }) : result(request));
-    const rendered = render(<DebuggerInspector root="D:/first" state={state} navigate={navigate} />);
+    const rendered = render(<DebuggerInspector root="D:/first" state={{ ...state, workspaceRoot: "D:/first" }} navigate={navigate} />);
     await screen.findByText("Locals");
     fireEvent.click(screen.getByRole("button", { name: "Expand values" }));
     await waitFor(() => expect(resolve).toBeDefined());
-    rendered.rerender(<DebuggerInspector root="E:/second" state={{ ...state, stopToken: "adapter:2" }} navigate={navigate} />);
+    rendered.rerender(<DebuggerInspector root="E:/second" state={{ ...state, workspaceRoot: "E:/second", stopToken: "adapter:2" }} navigate={navigate} />);
     await screen.findByText("Locals");
     await act(async () => resolve({ ok: true, data: { kind: "variables", stopToken: "adapter:1", limited: false, nextStart: null, items: [{ name: "obsolete", value: "old workspace value", variableType: null, reference: 0, indexedVariables: null, namedVariables: null, truncated: false }] } }));
     expect(screen.queryByText("obsolete")).toBeNull();

@@ -31,7 +31,7 @@ async fn an_actual_program_exit_retires_the_debugger_and_its_stop_token() {
             break;
         }
         if tokio::time::Instant::now() >= deadline {
-            let stopped = deactivate_deep_trace().await;
+            let stopped = deactivate_deep_trace(crate::ui_bridge::types::DebuggerStopContextDto { session_id: get_debugger_state().await.data.and_then(|state| state.session_id) }).await;
             panic!(
                 "natural exit was not observed; explicit cleanup: {:?}",
                 stopped.error

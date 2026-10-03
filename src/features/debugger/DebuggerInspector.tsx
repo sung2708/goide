@@ -2,9 +2,10 @@ import { useMemo } from "react";
 import type { DebuggerFrame, DebuggerState } from "../../lib/ipc/types";
 import { contextKey, useDebuggerInspector } from "./useDebuggerInspector";
 import VariablesTree from "./VariablesTree";
+import { ownsDebuggerWorkspace } from "./workspace";
 type Props = { root: string | null; state: DebuggerState | null; navigate: (frame: DebuggerFrame) => void };
 export default function DebuggerInspector({ root, state, navigate }: Props) {
-  const context = root && state?.sessionActive && state.paused && !state.cleanupPending && state.stopToken ? { root, token: state.stopToken } : null;
+  const context = root && ownsDebuggerWorkspace(root, state) && state?.sessionActive && state.paused && !state.cleanupPending && state.stopToken ? { root, token: state.stopToken } : null;
   const inspection = useDebuggerInspector(context, navigate);
   const budget = useMemo(() => ({ remaining: 2000 }), [contextKey(context), inspection.frame, inspection.scopes]);
   if (!context) return <p className="text-[11px] text-[var(--subtext0)]">Pause at an observed Delve stop to inspect goroutines, frames and variables.</p>;

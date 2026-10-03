@@ -156,6 +156,7 @@ pub struct ActivateDeepTraceRequestDto {
 pub struct ActivateDeepTraceResponseDto {
     pub mode: String,
     pub scope_key: Option<String>,
+    pub debugger_state: Option<DebuggerStateDto>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -246,6 +247,8 @@ pub struct DebuggerBreakpointDto {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct DebuggerStateDto {
+    pub workspace_root: Option<String>,
+    pub session_id: Option<String>,
     pub stop_token: Option<String>,
     pub selected_thread_id: Option<i64>,
     pub session_active: bool,
@@ -255,6 +258,27 @@ pub struct DebuggerStateDto {
     pub active_line: Option<usize>,
     pub active_column: Option<usize>,
     pub breakpoints: Vec<DebuggerBreakpointDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebuggerControlContextDto {
+    pub workspace_root: String,
+    pub session_id: String,
+    pub stop_token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebuggerStopContextDto {
+    pub session_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DebuggerControlObservationDto {
+    pub session_id: String,
+    pub stop_token: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -281,6 +305,8 @@ pub struct DebugSessionSnapshotDto {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ToggleBreakpointRequestDto {
+    pub workspace_root: String,
+    pub session_id: Option<String>,
     pub relative_path: String,
     pub line: usize,
 }
