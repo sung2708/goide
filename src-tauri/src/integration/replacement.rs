@@ -84,21 +84,49 @@ pub fn preview(request: ReplacementRequest) -> Result<Vec<ReplacementPlan>, Stri
                 ));
             }
             let ending = &line[text.len()..];
+            let requested: std::collections::HashSet<_> = matched
+                .ranges
+                .iter()
+                .map(|range| (range.from, range.to))
+                .collect();
+            if requested.len() != matched.ranges.len() || requested.len() > 2000 {
+                return Err("Invalid or duplicate replacement ranges.".into());
+            }
             let limit = if request.single { 1 } else { usize::MAX };
             let mut replaced = String::new();
             let mut last = 0;
             let mut count = 0;
-            for found in matcher.find_iter(text).take(limit) {
+            for capture in matcher.captures_iter(text) {
+                let found = capture.get(0).ok_or("Missing replacement match")?;
+                if !requested.is_empty()
+                    && !requested.contains(&(
+                        text[..found.start()].encode_utf16().count(),
+                        text[..found.end()].encode_utf16().count(),
+                    ))
+                {
+                    continue;
+                }
                 replaced.push_str(&text[last..found.start()]);
-                replaced.push_str(&request.replacement);
+                if request.options.use_regex {
+                    // Regex replacement uses Rust regex capture syntax: $1, ${name}, $$.
+                    capture.expand(&request.replacement, &mut replaced);
+                } else {
+                    replaced.push_str(&request.replacement);
+                }
                 last = found.end();
                 count += 1;
                 if replaced.len() > 512 * 1024 {
                     return Err("Expanded replacement exceeds the safety limit.".into());
                 }
+                if count >= limit {
+                    break;
+                }
             }
             if count == 0 {
                 return Err("Search pattern no longer matches the selected line.".into());
+            }
+            if !request.single && !requested.is_empty() && count != requested.len() {
+                return Err("Search match ranges are stale. Search again before replacing.".into());
             }
             replaced.push_str(&text[last..]);
             replaced.push_str(ending);

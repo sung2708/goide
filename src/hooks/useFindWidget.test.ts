@@ -2,6 +2,8 @@ import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MutableRefObject } from "react";
 
+vi.mock("../features/search/findDecorations", () => ({ setFindRanges: { of: vi.fn().mockReturnValue({ type: "find-ranges" }) } }));
+
 vi.mock("@codemirror/view", () => ({
   EditorView: {
     scrollIntoView: vi.fn().mockReturnValue({ type: "scroll-effect" }),
@@ -42,6 +44,12 @@ function makeViewRef(overrides?: object) {
     },
     ...overrides,
   };
+  view.dispatch.mockImplementation((transaction: { selection?: { anchor: number; head: number } }) => {
+    if (transaction.selection) {
+      const { anchor, head } = transaction.selection;
+      Object.assign(view.state.selection.main, { from: Math.min(anchor, head), to: Math.max(anchor, head), head, empty: anchor === head });
+    }
+  });
   return { current: view as unknown as EditorView };
 }
 
@@ -219,4 +227,23 @@ describe("useFindWidget", () => {
     // After replace, the scan re-runs - the effect dispatches setSearchQuery
     expect(viewRef.current.dispatch).toHaveBeenCalled();
   });
+});
+
+it("cannot replace cached ranges after the document changed or the query became empty", () => {
+  const ref = makeViewRef(); const { result } = renderHook(() => useFindWidget(ref));
+  act(() => result.current.open()); act(() => result.current.setQuery("hello"));
+  vi.mocked(ref.current.dispatch).mockClear();
+  Object.defineProperty(ref.current, "state", { value: { ...ref.current.state, doc: { ...ref.current.state.doc } }, writable: true });
+  act(() => result.current.handleReplaceAll());
+  expect(vi.mocked(ref.current.dispatch).mock.calls.some(([spec]) => "changes" in spec)).toBe(false);
+  act(() => result.current.setQuery("")); vi.mocked(ref.current.dispatch).mockClear();
+  act(() => result.current.handleReplace()); act(() => result.current.handleReplaceAll());
+  expect(vi.mocked(ref.current.dispatch).mock.calls.some(([spec]) => "changes" in spec)).toBe(false);
+});
+it("does not replace another range when the cursor no longer selects the current match", () => {
+  const ref = makeViewRef(); const { result } = renderHook(() => useFindWidget(ref));
+  act(() => result.current.open()); act(() => result.current.setQuery("hello"));
+  Object.assign(ref.current.state.selection.main, { from: 0, to: 0 });
+  vi.mocked(ref.current.dispatch).mockClear(); act(() => result.current.handleReplace());
+  expect(vi.mocked(ref.current.dispatch).mock.calls.some(([spec]) => "changes" in spec)).toBe(false);
 });

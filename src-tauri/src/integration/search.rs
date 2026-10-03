@@ -1,5 +1,7 @@
 //! Bounded, cancellable workspace text search with one native matching engine.
-use crate::ui_bridge::types::{WorkspaceSearchFileDto, WorkspaceSearchMatchDto};
+use crate::ui_bridge::types::{
+    WorkspaceSearchFileDto, WorkspaceSearchMatchDto, WorkspaceSearchRangeDto,
+};
 use globset::{GlobBuilder, GlobSet, GlobSetBuilder};
 use ignore::WalkBuilder;
 use regex::RegexBuilder;
@@ -88,6 +90,16 @@ pub(super) fn globs(patterns: &[String]) -> Result<GlobSet, String> {
                 .build()
                 .map_err(|e| format!("Invalid glob: {e}"))?,
         );
+        // A basename filter such as *.go also applies in nested folders.
+        if !pattern.contains('/') {
+            builder.add(
+                GlobBuilder::new(&format!("**/{pattern}"))
+                    .literal_separator(true)
+                    .backslash_escape(true)
+                    .build()
+                    .map_err(|e| format!("Invalid glob: {e}"))?,
+            );
+        }
     }
     builder.build().map_err(|e| e.to_string())
 }
@@ -247,11 +259,20 @@ pub fn search(
                     );
                     continue;
                 }
+                let ranges: Vec<_> = matcher
+                    .find_iter(line)
+                    .take(2000 - matches_count)
+                    .map(|found| WorkspaceSearchRangeDto {
+                        from: line[..found.start()].encode_utf16().count(),
+                        to: line[..found.end()].encode_utf16().count(),
+                    })
+                    .collect();
+                matches_count += ranges.len();
                 matches.push(WorkspaceSearchMatchDto {
                     line: index + 1,
                     preview: line.into(),
+                    ranges,
                 });
-                matches_count += 1;
                 if matches_count >= 2000 {
                     report.limited = true;
                     report.reason =

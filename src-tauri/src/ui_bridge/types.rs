@@ -319,6 +319,15 @@ pub struct ToggleBreakpointRequestDto {
 pub struct WorkspaceSearchMatchDto {
     pub line: usize,
     pub preview: String,
+    #[serde(default)]
+    pub ranges: Vec<WorkspaceSearchRangeDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceSearchRangeDto {
+    pub from: usize,
+    pub to: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

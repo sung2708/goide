@@ -27,3 +27,15 @@ it("routes shortcuts through current command state, ignores dialogs/composition,
   fireEvent.keyDown(input, { key: "s", ctrlKey: true }); fireEvent.keyDown(document.body, { key: "s", ctrlKey: true, isComposing: true }); expect(run).toHaveBeenCalledOnce();
   dialog.remove(); view.unmount(); fireEvent.keyDown(document.body, { key: "s", ctrlKey: true }); expect(run).toHaveBeenCalledOnce();
 });
+
+it("preserves text/terminal input while allowing explicitly global pickers", async () => {
+  const find = vi.fn(), palette = vi.fn();
+  const hook = renderHook(() => useCommandRegistry([
+    { id: "find", title: "Find", shortcut: "Mod+f", run: find },
+    { id: "palette", title: "Commands", shortcut: "Mod+Shift+p", allowInInput: true, run: palette },
+  ], vi.fn()));
+  const input = document.createElement("input"); document.body.append(input);
+  fireEvent.keyDown(input, { key: "f", ctrlKey: true }); expect(find).not.toHaveBeenCalled();
+  fireEvent.keyDown(input, { key: "p", ctrlKey: true, shiftKey: true }); expect(palette).toHaveBeenCalledOnce();
+  input.remove(); hook.unmount(); await Promise.resolve();
+});

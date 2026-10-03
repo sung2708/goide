@@ -1,3 +1,5 @@
+import { findDecorations, setFindRanges } from "../../features/search/findDecorations";
+import type { EditorFindCommands } from "../../features/navigation/editorCommands";
 import { entryActionLenses, entryActionTheme } from "./entryActionLenses";
 import type { SemanticEntryAction } from "../../features/semantics/types";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -580,6 +582,7 @@ type CodeEditorProps = {
   sessionState?: EditorSessionState;
   onSessionDispose?: (state: EditorSessionState) => void;
   value: string;
+  onCommandsChange?: (commands: EditorFindCommands | null) => void;
   selectionContextKey?: string | null;
   hintLine?: number | null;
   executionLine?: number | null;
@@ -611,6 +614,7 @@ type CodeEditorProps = {
   onToggleBreakpoint?: (line: number) => void;
   suppressFindWidget?: boolean;
   externalSearchQuery?: string | null;
+  externalSearchTarget?: { line: number; from: number; to: number; preview: string } | null;
 };
 
 
@@ -619,6 +623,7 @@ function CodeEditor({
   sessionState,
   onSessionDispose,
   value,
+  onCommandsChange,
   selectionContextKey = null,
   hintLine = null,
   executionLine = null,
@@ -648,6 +653,7 @@ function CodeEditor({
   onToggleBreakpoint,
   suppressFindWidget = false,
   externalSearchQuery = null,
+  externalSearchTarget = null,
 }: CodeEditorProps) {
   const { values: settings } = useSettings();
   const [editorView, setEditorView] = useState<EditorView | null>(null);
@@ -657,6 +663,12 @@ function CodeEditor({
   const findWidget = useFindWidget(viewRef);
   const findWidgetRef = useRef(findWidget);
   findWidgetRef.current = findWidget;
+  useEffect(() => {
+    if (!editorView || !onCommandsChange) return;
+    onCommandsChange({ find: () => findWidgetRef.current.open(), replace: () => findWidgetRef.current.open(), next: () => findWidgetRef.current.handleFindNext(), previous: () => findWidgetRef.current.handleFindPrev() });
+    return () => onCommandsChange(null);
+  }, [editorView, onCommandsChange]);
+
 
   const entryContextRef = useRef({ key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction });
   entryContextRef.current = { key: selectionContextKey ?? filePath ?? "", path: filePath ?? null, enabled: executionActionsEnabled, execute: onEntryAction };
@@ -1134,6 +1146,7 @@ function CodeEditor({
   const signatureEnabled = Boolean(onRequestSignature);
   const signatureExtensions = useMemo(() => signatureEnabled ? signatureHelp((request) => onRequestSignatureRef.current!(request)) : [], [signatureEnabled]);
   const extensions = useMemo(() => [
+    findDecorations,
     ...hoverExtensions,
     ...signatureExtensions,
     ...goideEditorExtensions,
@@ -1254,6 +1267,7 @@ function CodeEditor({
     ])),
     preserveExternalSelection,
     EditorView.updateListener.of((update) => {
+      if (update.docChanged && findWidgetRef.current.isOpen) findWidgetRef.current.documentChanged();
       if (suppressFindWidgetRef.current && searchPanelOpen(update.state)) {
         closeSearchPanel(update.view);
       }
@@ -1330,10 +1344,17 @@ function CodeEditor({
 
   useEffect(() => {
     const view = viewRef.current;
-    const query = externalSearchQuery?.trim() ?? "";
-    if (!view || !query) {
-      return;
+    const query = externalSearchQuery ?? "";
+    if (!view || findWidgetRef.current.isOpen) return;
+    if (externalSearchTarget) {
+      const target = externalSearchTarget;
+      if (target.line < 1 || target.line > view.state.doc.lines) return;
+      const line = view.state.doc.line(target.line);
+      const valid = line.text === target.preview && target.from >= 0 && target.to >= target.from && target.to <= line.length;
+      view.dispatch({ effects: [setSearchQuery.of(new SearchQuery({ search: "" })), setFindRanges.of(valid ? [{ from: line.from + target.from, to: line.from + target.to }] : [])] });
+      return () => { if (viewRef.current === view && !findWidgetRef.current.isOpen) view.dispatch({ effects: setFindRanges.of([]) }); };
     }
+    if (!query) { view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) }); return; }
     try {
       const searchObj = new SearchQuery({
         search: query,
@@ -1345,7 +1366,8 @@ function CodeEditor({
     } catch {
       // Ignore invalid externally provided search patterns.
     }
-  }, [externalSearchQuery, editorView, value]);
+    return () => { if (viewRef.current === view && !findWidgetRef.current.isOpen) view.dispatch({ effects: setSearchQuery.of(new SearchQuery({ search: "" })) }); };
+  }, [externalSearchQuery, externalSearchTarget, editorView, value]);
   const getLineElement = (view: EditorView, lineNumber: number) => {
     if (lineNumber < 1 || lineNumber > view.state.doc.lines) {
       return null;
@@ -1789,6 +1811,7 @@ function CodeEditor({
     >
       {!suppressFindWidget && findWidget.isOpen && (
         <FindWidget
+          error={findWidget.error}
           query={findWidget.query}
           replaceText={findWidget.replaceText}
           matchCase={findWidget.matchCase}
