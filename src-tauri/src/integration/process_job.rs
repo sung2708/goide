@@ -128,87 +128,23 @@ pub use windows::{install, Job};
 mod owned_async;
 #[cfg(windows)]
 pub use owned_async::OwnedChild;
+#[cfg(unix)]
+mod owned_unix;
+#[cfg(unix)]
+pub use owned_unix::OwnedChild;
 pub fn async_cleanup_pending() -> bool {
     #[cfg(windows)]
-    {
-        owned_async::is_pending()
-    }
-    #[cfg(not(windows))]
-    {
-        false
-    }
+    return owned_async::is_pending();
+    #[cfg(unix)]
+    owned_unix::is_pending()
 }
 pub async fn retry_async_cleanup() -> Result<(), String> {
     #[cfg(windows)]
-    {
-        owned_async::retry_cleanup().await
-    }
-    #[cfg(not(windows))]
-    {
-        Ok(())
-    }
-}
-
-#[cfg(not(windows))]
-#[derive(Debug)]
-pub struct OwnedChild {
-    identity: uuid::Uuid,
-    child: tokio::process::Child,
+    return owned_async::retry_cleanup().await;
     #[cfg(unix)]
-    process_group: u32,
+    owned_unix::retry_cleanup().await
 }
-#[cfg(not(windows))]
-impl OwnedChild {
-    pub async fn spawn(
-        command: &mut tokio::process::Command,
-        before_resume: impl FnOnce() -> anyhow::Result<()>,
-    ) -> anyhow::Result<Self> {
-        before_resume()?;
-        command.process_group(0);
-        let child = command.spawn()?;
-        Self::new(child)
-            .await
-            .map_err(|error| anyhow::anyhow!(error))
-    }
 
-    pub async fn new(child: tokio::process::Child) -> Result<Self, String> {
-        let process_group = child.id().ok_or("Owned child has no process group")?;
-        Ok(Self {
-            identity: uuid::Uuid::new_v4(),
-            child,
-            process_group,
-        })
-    }
-    pub async fn stop(&mut self) -> Result<(), String> {
-        crate::integration::process::kill_process_group(&mut self.child)
-            .await
-            .map_err(|e| e.to_string())
-    }
-    pub fn identity(&self) -> uuid::Uuid {
-        self.identity
-    }
-}
-#[cfg(not(windows))]
-impl std::ops::Deref for OwnedChild {
-    type Target = tokio::process::Child;
-    fn deref(&self) -> &Self::Target {
-        &self.child
-    }
-}
-#[cfg(not(windows))]
-impl std::ops::DerefMut for OwnedChild {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.child
-    }
-}
-#[cfg(unix)]
-impl Drop for OwnedChild {
-    fn drop(&mut self) {
-        let _ = crate::integration::command::std_command("kill")
-            .args(["-KILL", "--", &format!("-{}", self.process_group)])
-            .output();
-    }
-}
 #[cfg(not(windows))]
 pub fn install() -> Result<(), String> {
     Ok(())
