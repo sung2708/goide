@@ -14,7 +14,7 @@ export const semanticAnalysisField = StateField.define<SemanticAnalysisResult | 
         return effect.value;
       }
     }
-    return value;
+    return transaction.docChanged ? null : value;
   },
 });
 

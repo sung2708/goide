@@ -165,6 +165,7 @@ export type ActivateDeepTraceResponse = {
 };
 
 export type StartDebugSessionRequest = {
+  testName?: string | null;
   workspaceRoot: string;
   relativePath: string;
 };

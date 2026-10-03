@@ -20,7 +20,16 @@ export type SemanticSelectionRange = {
   to: number;
 };
 
+export type SemanticEntryAction = {
+  kind: "main" | "test";
+  name: string;
+  range: SemanticRange;
+};
+
 export type SemanticAnalysisResult = {
+  entryActions?: SemanticEntryAction[];
+  /** Added by the client from the exact synced version, never inferred from a later buffer. */
+  sourceText?: string;
   filePath: string;
   version: number;
   symbols: SemanticSymbol[];

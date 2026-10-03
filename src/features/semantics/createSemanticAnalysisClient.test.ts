@@ -112,6 +112,7 @@ describe("createSemanticAnalysisClient", () => {
     expect(listener).toHaveBeenCalledTimes(1);
     expect(listener).toHaveBeenCalledWith({
       filePath: "main.go",
+      sourceText: "package main\nfunc main() {}\n",
       version: 2,
       symbols: [
         {

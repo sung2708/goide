@@ -162,6 +162,7 @@ pub struct ActivateDeepTraceResponseDto {
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartDebugSessionRequestDto {
+    pub test_name: Option<String>,
     pub workspace_root: String,
     pub relative_path: String,
 }
