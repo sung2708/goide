@@ -168,8 +168,9 @@ pub(crate) fn debug_target(
     name: Option<&str>,
 ) -> Result<super::delve::LaunchMode> {
     let root = normalize_platform_pathbuf(root.canonicalize()?);
-    if !relative_path.ends_with("_test.go") {
-        return Err(anyhow!("Debug Test requires a saved _test.go file."));
+    let is_test = relative_path.ends_with("_test.go");
+    if name.is_some() && !is_test {
+        return Err(anyhow!("A selected test requires a saved _test.go file."));
     }
     let file = scoped(&root, &root.join(relative_path))?;
     if !file.is_file() {
@@ -207,7 +208,12 @@ pub(crate) fn debug_target(
         .file_name()
         .context("No test filename")?
         .to_string_lossy();
-    if !["TestGoFiles", "XTestGoFiles"].iter().any(|key| {
+    let file_fields = if is_test {
+        ["TestGoFiles", "XTestGoFiles"]
+    } else {
+        ["GoFiles", "CgoFiles"]
+    };
+    if !file_fields.iter().any(|key| {
         package[*key].as_array().is_some_and(|files| {
             files
                 .iter()
@@ -215,8 +221,20 @@ pub(crate) fn debug_target(
         })
     }) {
         return Err(anyhow!(
-            "Selected test file is excluded from Go's current package/build constraints."
+            "Selected Go file is excluded from Go's current package/build constraints."
         ));
+    }
+    if !is_test {
+        if package["Name"].as_str() != Some("main") {
+            return Err(anyhow!(
+                "Selected directory is not a runnable Go package (package main required)."
+            ));
+        }
+        return Ok(super::delve::LaunchMode::Package {
+            package: ".".into(),
+            cwd: directory.to_string_lossy().into_owned(),
+            work: plan.work.map(|path| path.to_string_lossy().into_owned()),
+        });
     }
     if let (Some(name), Some(filter)) = (name, filter.as_deref()) {
         let output = owned_tool_output::output(
