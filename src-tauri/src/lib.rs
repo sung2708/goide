@@ -38,6 +38,7 @@ pub fn run() {
             ui_bridge::language_commands::organize_workspace_imports,
             ui_bridge::language_commands::preview_workspace_rename,
             ui_bridge::commands::shutdown_owned_resources,
+            ui_bridge::commands::configure_toolchain_paths,
             ui_bridge::commands::list_workspace_entries,
             ui_bridge::commands::read_workspace_file,
             ui_bridge::commands::write_workspace_file,

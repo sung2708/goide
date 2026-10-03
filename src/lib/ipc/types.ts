@@ -174,6 +174,7 @@ export type ToolchainStatus = {
   gopls: ToolAvailability;
   delve: ToolAvailability;
 };
+export type ToolPaths = { go: string; gopls: string; dlv: string };
 
 export type RuntimeSignal = {
   threadId: number;

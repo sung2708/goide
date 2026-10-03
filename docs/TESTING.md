@@ -209,3 +209,11 @@ The previously passing full frontend suite contained 612 tests across 81 files; 
 ## Toolchain information validation checkpoint (2026-10-03)
 
 Explicit installed-Go/gopls/Delve probes verify actual absolute executable paths and version output, including the separate Delve Version line. The default native suite passed 199 tests with 11 tool-dependent checks ignored; three installed-tool checks and eight real-gopls query/edit/cancellation checks also pass separately. Thirty-four affected frontend tests, Clippy with warnings denied, type checking and production build pass. Native tests distinguish missing executables from launch failures. Frontend checks cover returned paths/status/errors, refresh after genuine rejection, obsolete responses and unmount, dialog pending/errors, status-bar and command-registry routing, and browser-native-required IPC. The production frontend build passes. Executable-resolution changes are also checked against native process, Git, watcher and filesystem regression coverage; the desktop/platform matrix and executable configuration remain outstanding.
+
+## Executable preferences checkpoint (2026-10-03)
+
+PASS: native path validation rejects relative paths, directories and NUL input; installed Go configuration selects the exact executable and supplies its directory to child tools. Real Go/gopls/Delve probes preserve concrete paths/version output and distinguish missing from failed executables. A real owned running child blocks profile replacement and is explicitly stopped/reaped by the test. Six selected native checks (including the installed-Go check) and Clippy with all targets pass.
+
+PASS: affected frontend tests cover committing path drafts, persisted Debug/Git preferences, initial Source Control view, failed native configuration, serialized application, obsolete queued preferences, retry after failed IPC and tool-inspection request invalidation. TypeScript and production build pass.
+
+NOT RUN: complete desktop/platform/tool-version matrix, interactive executable switching during debugger sessions, cross-window configuration contention and the full release acceptance suite. These results do not establish release readiness.

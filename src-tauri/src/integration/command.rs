@@ -31,6 +31,15 @@ fn candidate(directory: &Path, program: &str) -> Option<PathBuf> {
 /// Resolve tool probes and launches through the same concrete executable.
 /// PATH takes precedence; Go-installed tool directories are explicit fallbacks.
 pub fn resolved_program(program: &str) -> PathBuf {
+    resolved_program_from(program, &crate::integration::toolchain::paths::current())
+}
+fn resolved_program_from(
+    program: &str,
+    tools: &crate::integration::toolchain::paths::ToolPaths,
+) -> PathBuf {
+    if let Some(path) = tools.executable(program) {
+        return path;
+    }
     let path = Path::new(program);
     if path.is_absolute() || path.components().count() > 1 {
         return path.canonicalize().unwrap_or_else(|_| path.into());
@@ -67,8 +76,12 @@ pub fn resolved_program(program: &str) -> PathBuf {
 }
 
 pub fn std_command(program: &str) -> std::process::Command {
+    let tools = crate::integration::toolchain::paths::current();
     #[allow(unused_mut)]
-    let mut command = std::process::Command::new(resolved_program(program));
+    let mut command = std::process::Command::new(resolved_program_from(program, &tools));
+    selected_go_environment(&tools, |name, value| {
+        command.env(name, value);
+    });
     #[cfg(windows)]
     {
         command.creation_flags(CREATE_NO_WINDOW);
@@ -77,11 +90,30 @@ pub fn std_command(program: &str) -> std::process::Command {
 }
 
 pub fn tokio_command(program: &str) -> tokio::process::Command {
+    let tools = crate::integration::toolchain::paths::current();
     #[allow(unused_mut)]
-    let mut command = tokio::process::Command::new(resolved_program(program));
+    let mut command = tokio::process::Command::new(resolved_program_from(program, &tools));
+    selected_go_environment(&tools, |name, value| {
+        command.env(name, value);
+    });
     #[cfg(windows)]
     {
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
+}
+
+fn selected_go_environment(
+    tools: &crate::integration::toolchain::paths::ToolPaths,
+    mut apply: impl FnMut(&str, std::ffi::OsString),
+) {
+    if let Some(go) = tools.executable("go") {
+        if let Some(directory) = go.parent() {
+            let mut paths = vec![directory.to_path_buf()];
+            paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+            if let Ok(path) = env::join_paths(paths) {
+                apply("PATH", path);
+            }
+        }
+    }
 }

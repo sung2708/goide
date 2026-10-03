@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor, within } from "@testing-librar
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import SourceControlPanel from "./SourceControlPanel";
 import type { GitRepositoryStatus } from "../../lib/ipc/git";
+import { settingsStore } from "../settings/SettingsStore";
 const { status, diff, mutate, history, cancel, search, stashes } = vi.hoisted(() => ({ status: vi.fn(), diff: vi.fn(), mutate: vi.fn(), history: vi.fn(), cancel: vi.fn(), search: vi.fn(), stashes: vi.fn() }));
 vi.mock("../../lib/ipc/git", () => ({ getGitRepositoryStatus: status, getGitFileDiff: diff, mutateGit: mutate, getGitHistoryPage: history, cancelGit: cancel, searchGitHistory: search, getGitStashList: stashes, getGitStashPreview: diff }));
 const data: GitRepositoryStatus = {
@@ -42,6 +43,12 @@ describe("Source Control vertical slice", () => {
     expect(await screen.findByRole("list", { name: "Staged changes" })).toBeInTheDocument();
     view.rerender(<SourceControlPanel {...props} requestedView={{ view: "stashes", id: 2 }} />);
     expect(await screen.findByRole("button", { name: "Drop stash@{0}" })).toBeInTheDocument();
+  });
+  it("uses the configured default Source Control view on opening", async () => {
+    settingsStore.update("git.defaultView", "stashes");
+    const view = render(<SourceControlPanel {...props} />);
+    try { expect(await screen.findByRole("button", { name: "Drop stash@{0}" })).toBeInTheDocument(); }
+    finally { view.unmount(); settingsStore.reset(); }
   });
   it("routes stash file mutations through save/run guards and refreshes partially changed state on failure", async () => {
     vi.spyOn(window, "confirm").mockReturnValue(true);

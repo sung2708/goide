@@ -355,3 +355,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: shared concrete executable resolution, bounded actual version output, typed readiness states and visible native probe errors.
 - Delivered: status-bar/command inspection, retry/loading, stale-response rejection and an honest desktop-only browser response.
 - Remaining: configurable Go/gopls/Delve paths, project environment/module detection/actions, explicit probe cancellation and complete platform/tool-version acceptance. This checkpoint is not release certification.
+
+## Executable configuration checkpoint (2026-10-03)
+
+- Delivered: persisted typed Go/gopls/Delve paths, native absolute-file validation, canonical path acceptance, concrete command resolution and selected-Go child environment.
+- Delivered: serialized preference application, obsolete queued-request rejection, visible retryable errors, native Run/Debug ownership guards and retirement of the previous gopls session.
+- Delivered: meaningful Debug executable and Git initial-view settings, with explicit command navigation taking precedence over the default view.
+- Remaining: project module/environment inspection and explicit tidy/download workflows, probe cancellation, complete platform/tool-version acceptance, and the other unfinished Git/addendum gates. No release/tag is authorized.

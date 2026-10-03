@@ -316,6 +316,10 @@ export async function getToolchainStatus(): Promise<ApiResponse<ToolchainStatus>
   }
   return invoke<ApiResponse<ToolchainStatus>>("get_toolchain_status");
 }
+export async function configureToolchainPaths(paths: import("./types").ToolPaths): Promise<ApiResponse<import("./types").ToolPaths>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "toolchain_native_required", message: "Executable configuration requires the desktop app." } };
+  return invoke<ApiResponse<import("./types").ToolPaths>>("configure_toolchain_paths", { paths });
+}
 
 export async function getRuntimeSignals(): Promise<ApiResponse<RuntimeSignal[]>> {
   return invoke<ApiResponse<RuntimeSignal[]>>("get_runtime_signals");
