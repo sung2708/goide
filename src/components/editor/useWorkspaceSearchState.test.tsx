@@ -45,3 +45,22 @@ it("rejects old workspace responses even without starting a new search", async (
   await act(async () => { finish({ ok: true, data: [{ relativePath: "old.go", matches: [] }] }); });
   await waitFor(() => expect(result.current.workspaceSearchResults).toEqual([]));
 });
+
+it("keeps significant whitespace and writes only files included in review", async () => {
+  search.mockResolvedValue({ ok: true, data: ["a.go", "b.go"].map(relativePath => ({ relativePath, matches: [{ line: 1, preview: " needle " }] })) });
+  preview.mockResolvedValue({ ok: true, data: ["a.go", "b.go"].map(path => ({ path, before: " needle ", after: "x", occurrences: 1 })) });
+  const review = vi.fn(async (plans) => [plans[1]]);
+  const { result } = renderHook(() => useWorkspaceSearchState("repo", { transaction, review }));
+  await act(async () => { await result.current.handleWorkspaceSearch(" needle "); });
+  expect(search).toHaveBeenCalledWith("repo", " needle ", expect.anything(), expect.any(String));
+  await act(async () => { await result.current.replaceAllMatches(" needle ", "x"); });
+  expect(write).toHaveBeenCalledTimes(1); expect(write).toHaveBeenCalledWith("repo", "b.go", "x", " needle ");
+});
+
+it("rejects dirty editor authority before preview or any disk replacement", async () => {
+  const { result } = renderHook(() => useWorkspaceSearchState("repo", { transaction, isDirty: path => path === "a.go" }));
+  await act(async () => { await result.current.handleWorkspaceSearch("needle"); });
+  await act(async () => { await result.current.replaceAllMatches("needle", "x"); });
+  expect(preview).not.toHaveBeenCalled(); expect(write).not.toHaveBeenCalled();
+  expect(result.current.searchError).toContain("unsaved editor changes");
+});

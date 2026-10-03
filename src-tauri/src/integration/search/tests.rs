@@ -186,3 +186,34 @@ fn cancellation_before_worker_registration_does_not_start_a_late_search() {
     );
     assert!(result.unwrap_err().contains("cancelled before execution"));
 }
+
+#[test]
+fn ranges_use_utf16_and_basename_filters_include_nested_unicode_paths() {
+    let workspace = Workspace::new();
+    workspace.write("src/Việt Nam.go", "😀 tên tên\r\n".as_bytes());
+    let report = workspace
+        .search(
+            "tên",
+            SearchOptions {
+                include: vec!["*.go".into()],
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(
+        report.files[0].matches[0].ranges,
+        vec![
+            WorkspaceSearchRangeDto { from: 3, to: 6 },
+            WorkspaceSearchRangeDto { from: 7, to: 10 }
+        ]
+    );
+    assert_eq!(
+        workspace
+            .search(" tên ", SearchOptions::default())
+            .unwrap()
+            .files
+            .len(),
+        1
+    );
+}

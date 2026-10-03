@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { searchWorkspaceText, writeWorkspaceFile, cancelWorkspaceSearch, previewWorkspaceReplacement } from "../../lib/ipc/client";
 import type { WorkspaceSearchFile, WorkspaceSearchOptions, WorkspaceReplacementPlan } from "../../lib/ipc/types";
 
-type Safety = { transaction?: (operation: () => Promise<void>) => Promise<boolean>; onChanged?: () => void; review?: (plans: WorkspaceReplacementPlan[]) => Promise<boolean> };
+export type ReplacementDecision = boolean | WorkspaceReplacementPlan[];
+type Safety = { transaction?: (operation: () => Promise<void>) => Promise<boolean>; isDirty?: (path: string) => boolean; onChanged?: () => void; review?: (plans: WorkspaceReplacementPlan[]) => Promise<ReplacementDecision> };
 const defaults: WorkspaceSearchOptions = { matchCase: false, wholeWord: false, useRegex: false, include: [], exclude: [] };
 export function useWorkspaceSearchState(workspacePath: string | null, safety: Safety = {}) {
   const [searchLoading, setSearchLoading] = useState(false);
@@ -27,12 +28,12 @@ export function useWorkspaceSearchState(workspacePath: string | null, safety: Sa
     const request = ++searchRequestIdRef.current;
     if (nativeId.current) void cancelWorkspaceSearch(nativeId.current).catch(() => undefined);
     const requestId = crypto.randomUUID(); nativeId.current = requestId;
-    submittedQuery.current = query.trim();
+    submittedQuery.current = query;
     submittedOptions.current = options;
-    if (!workspacePath || !query.trim()) { setWorkspaceSearchResults([]); setSearchLoading(false); return; }
+    if (!workspacePath || !query) { setWorkspaceSearchResults([]); setSearchLoading(false); return; }
     setSearchLoading(true); setSearchError(null); setSearchWarning(null); setWorkspaceSearchResults([]);
     try {
-      const response = await searchWorkspaceText(workspacePath, query.trim(), options, requestId);
+      const response = await searchWorkspaceText(workspacePath, query, options, requestId);
       if (request !== searchRequestIdRef.current || currentRoot.current !== workspacePath) return;
       if (!response.ok || !response.data) throw new Error(response.error?.message ?? "Workspace search failed.");
       setWorkspaceSearchResults(response.data);
@@ -51,16 +52,21 @@ export function useWorkspaceSearchState(workspacePath: string | null, safety: Sa
     const options = submittedOptions.current;
     try {
       const allowed = await latestSafety.current.transaction(async () => {
+        const dirty = files.find(file => latestSafety.current.isDirty?.(file.relativePath));
+        if (dirty) throw new Error(`${dirty.relativePath} has unsaved editor changes. Save it and search again before replacing; no replacement was written.`);
         const response = await previewWorkspaceReplacement({ workspaceRoot: workspacePath, query: searchText, replacement, options, files, single });
         if (!response.ok || !response.data) throw new Error(response.error?.message ?? "Cannot prepare replacement preview.");
         const plans = response.data;
         if (currentRoot.current !== workspacePath) throw new Error("Workspace changed; replacement stopped.");
         const preview = plans.map((plan) => `${plan.path}: ${plan.occurrences} occurrence(s)\n${plan.before.slice(0, 300)}\n→\n${plan.after.slice(0, 300)}`).join("\n\n");
-        const accepted = latestSafety.current.review ? await latestSafety.current.review(plans) : window.confirm(`Save these ${single ? "selected" : "displayed"} replacements to disk? Unlisted lines are retained. Replacement text is literal, including $ characters.\n\n${preview.slice(0, 12000)}`);
+        const accepted = latestSafety.current.review ? await latestSafety.current.review(plans) : window.confirm(`Save these ${single ? "selected" : "displayed"} replacements to disk? Unlisted lines are retained. Literal search keeps replacement text literal; regex uses $1, $\{name} and $$ captures.\n\n${preview.slice(0, 12000)}`);
         if (!accepted) return;
+        const selected = Array.isArray(accepted) ? accepted : plans;
+        if (new Set(selected).size !== selected.length || selected.some(plan => !plans.includes(plan))) throw new Error("Replacement review returned an invalid file selection.");
         if (searchText !== submittedQuery.current || submittedOptions.current !== options) throw new Error("Search scope changed during review. Prepare a new replacement preview.");
-        for (const plan of plans) {
+        for (const plan of selected) {
           if (currentRoot.current !== workspacePath) throw new Error("Workspace changed; remaining replacements stopped.");
+          if (latestSafety.current.isDirty?.(plan.path)) throw new Error(`${plan.path} changed in the editor; remaining replacements stopped.`);
           const response = await writeWorkspaceFile(workspacePath, plan.path, plan.after, plan.before);
           if (!response.ok) throw new Error(response.error?.message ?? `Cannot save ${plan.path}.`);
           completed++;

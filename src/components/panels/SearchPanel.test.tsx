@@ -195,7 +195,7 @@ describe("SearchPanel", () => {
 
     fireEvent.keyDown(input, { key: "Enter" });
 
-    expect(onSearch).toHaveBeenCalledWith("mutex", expect.objectContaining({ matchCase: false }));
+    expect(onSearch).toHaveBeenCalledWith("  mutex  ", expect.objectContaining({ matchCase: false }));
     expect(onParentKeyDown).not.toHaveBeenCalled();
   });
 
@@ -287,7 +287,7 @@ describe("SearchPanel", () => {
     expect(onOpenResult).toHaveBeenCalledWith("main.go", 8, expect.any(String));
   });
 
-  it("auto-opens and highlights the first match while typing without Enter", async () => {
+  it("keeps search input focus and does not open files merely while typing", async () => {
     const user = userEvent.setup();
     const onOpenResult = vi.fn();
 
@@ -310,7 +310,17 @@ describe("SearchPanel", () => {
 
     await user.type(screen.getByPlaceholderText(/^search$/i), "mu.Lock");
 
-    expect(onOpenResult).toHaveBeenCalledWith("main.go", 5, expect.any(String));
+    expect(onOpenResult).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText(/^search$/i)).toHaveFocus();
+  });
+
+  it("highlights native UTF-16 ranges and navigates the exact matched column", async () => {
+    const user = userEvent.setup(), onOpenResult = vi.fn();
+    render(<SearchPanel results={[{ relativePath: "Việt Nam.go", matches: [{ line: 1, preview: "😀 tên tên", ranges: [{ from: 3, to: 6 }, { from: 7, to: 10 }] }] }]} onSearch={vi.fn()} onOpenResult={onOpenResult} />);
+    await user.type(screen.getByPlaceholderText(/^search$/i), "(tên)");
+    expect([...document.querySelectorAll("mark")].map(node => node.textContent)).toEqual(["tên", "tên"]);
+    fireEvent.click(screen.getByRole("button", { name: /😀/ }));
+    expect(onOpenResult).toHaveBeenCalledWith("Việt Nam.go", 1, expect.any(String), 4, { from: 3, to: 6, preview: "😀 tên tên" });
   });
 
 });

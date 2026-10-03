@@ -1,3 +1,5 @@
+import { useGoToLine } from "../../features/navigation/goToLine";
+import type { EditorFindCommands } from "../../features/navigation/editorCommands";
 import { useWorkspaceHistory } from "../../features/workspaces/useWorkspaceHistory";
 import { DebuggerStartup } from "../../features/debugger/startup";
 import { RunOwnership } from "./runOwnership";
@@ -8,8 +10,8 @@ import { useInspectionGate } from "../../features/debugger/useInspectionGate";
 import DebuggerInspector from "../../features/debugger/DebuggerInspector";
 import { open } from "@tauri-apps/plugin-dialog";
 import WelcomeScreen from "./WelcomeScreen";
+import QuickOpenPicker from "../../features/navigation/QuickOpenPicker";
 import { useQuickOpenIndex } from "../../features/navigation/useQuickOpenIndex";
-import Dialog from "../primitives/Dialog";
 import CommandPalette from "../command-palette/CommandPalette";
 import { useCommandRegistry } from "../../features/commands/useCommandRegistry";
 import type { Command } from "../../features/commands/registry";
@@ -387,11 +389,11 @@ function EditorShell() {
     setRequestedGitView(current => ({ view, id: (current?.id ?? 0) + 1 }));
   };
   const [searchFocusTrigger, setSearchFocusTrigger] = useState(0);
+  const editorFindCommands = useRef<EditorFindCommands | null>(null);
+  const onEditorCommands = useCallback((commands: EditorFindCommands | null) => { editorFindCommands.current = commands; }, []);
   const [isQuickOpenOpen, setIsQuickOpenOpen] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
   const [quickOpenQuery, setQuickOpenQuery] = useState("");
-  const [quickOpenSelectedIndex, setQuickOpenSelectedIndex] = useState(0);
-  const quickOpenInputRef = useRef<HTMLInputElement | null>(null);
   const [breakpoints, setBreakpoints] = useState<number[]>([]);
   const replacementReview = useReplacementReview(workspacePath);
   const {
@@ -406,7 +408,8 @@ function EditorShell() {
     replaceAllMatches: handleReplaceAllMatches,
   } = useWorkspaceSearchState(workspacePath, {
     review: replacementReview.review,
-    transaction: (operation) => gitDocumentTransaction(operation, true, true),
+    transaction: (operation) => gitDocumentTransaction(operation, false, true),
+    isDirty: (path) => documents.snapshot().documents.some(document => pathsReferToSameFile(document.path, path) && document.text !== document.baseline),
     onChanged: () => setExplorerRevision((revision) => revision + 1),
   });
   const [analysisRevision, setAnalysisRevision] = useState(0);
@@ -419,6 +422,12 @@ function EditorShell() {
   const [selectedLine, setSelectedLine] = useState<number | null>(null);
   const [jumpRequest, setJumpRequest] = useState<JumpRequest | null>(null);
   const [editorHighlightQuery, setEditorHighlightQuery] = useState<string | null>(null);
+  const [editorSearchTarget, setEditorSearchTarget] = useState<{ file: string; line: number; from: number; to: number; preview: string } | null>(null);
+  const searchNavigation = useRef(0);
+  useEffect(() => { searchNavigation.current++; setEditorSearchTarget(null); setEditorHighlightQuery(null); }, [workspacePath]);
+  const submitWorkspaceSearch = useCallback((query: string, options: import("../../lib/ipc/types").WorkspaceSearchOptions) => {
+    searchNavigation.current++; setEditorSearchTarget(null); setEditorHighlightQuery(null); return handleWorkspaceSearch(query, options);
+  }, [handleWorkspaceSearch]);
   const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
@@ -590,20 +599,7 @@ function EditorShell() {
     };
   }, []);
 
-  useEffect(() => {
-    if (isQuickOpenOpen) {
-      queueMicrotask(() => quickOpenInputRef.current?.focus());
-    }
-  }, [isQuickOpenOpen]);
-
   const { files: quickOpenFilteredFiles, loading: quickOpenLoading, error: quickOpenError, notice: quickOpenNotice, remember: rememberOpenedFile } = useQuickOpenIndex(workspacePath, explorerRevision, isQuickOpenOpen, quickOpenQuery);
-
-  useEffect(() => {
-    setQuickOpenSelectedIndex((current) => {
-      if (quickOpenFilteredFiles.length === 0) return 0;
-      return Math.min(current, quickOpenFilteredFiles.length - 1);
-    });
-  }, [quickOpenFilteredFiles]);
 
   const { detectedConstructs, counterpartMappings } = useLensSignals({
     workspacePath,
@@ -2013,7 +2009,7 @@ function EditorShell() {
     (relativePath: string) => {
       setIsQuickOpenOpen(false);
       setQuickOpenQuery("");
-      setQuickOpenSelectedIndex(0);
+
       void handleOpenFile(relativePath);
     },
     [handleOpenFile]
@@ -2080,6 +2076,7 @@ function EditorShell() {
   const surfaceKey = workspacePath ? "workspace-shell" : null;
 
   const commandBusy = documentTransitionRef.current || branchMutationRef.current || runStopInFlightRef.current;
+  const goToLine = useGoToLine(`${workspacePath}\u0000${activeFilePath}`, activeFileContent ?? "", selectedLine ?? 1, !!activeFilePath && !commandBusy, requestJump);
   const problems = useMemo(() => [
     ...Object.entries(knownDiagnostics)
       .filter(([file]) => !documentSnapshot.documents.some(document => document.path === file && document.text !== document.baseline))
@@ -2110,8 +2107,11 @@ function EditorShell() {
     }
   }, [workspacePath, activeFilePath, commandBusy, runStatus, isDebugSessionBusy, goTests.run, testDirectory, handleStartDebug, handleRunFileStandard]);
   const commands: Command[] = [
-    { id: "workbench.commands", title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
-    { id: "preferences.open", title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
+    { id: "editor.goToLine", title: "Go to Line", category: "Editor", shortcut: "Mod+g", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: goToLine.open },
+    ...(["find", "replace", "next", "previous"] as const).map(kind => ({ id: `editor.${kind}`, title: kind === "find" ? "Find in File" : kind === "replace" ? "Replace in File" : kind === "next" ? "Find Next" : "Find Previous", category: "Editor", shortcut: kind === "find" ? "Mod+f" : kind === "replace" ? "Mod+h" : kind === "next" ? "F3" : "Shift+F3", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: () => { if (!editorFindCommands.current) throw new Error("Editor is not ready."); if (kind === "find" || kind === "replace") { setActiveTab("explorer"); setEditorSearchTarget(null); setEditorHighlightQuery(null); } editorFindCommands.current[kind](); } })),
+    { id: "workspace.replace", allowInInput: true, title: "Replace in Files", category: "Search", shortcut: "Mod+Shift+h", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workbench.commands", allowInInput: true, title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
+    { id: "preferences.open", allowInInput: true, title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
     { id: "go.toolchain", title: "Go: Inspect Toolchain", run: () => setIsToolchainOpen(true) },
     { id: "go.project", title: "Go: Inspect Project and Environment", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => setIsGoProjectOpen(true) },
     { id: "git.openSourceControl", title: "Git: Open Source Control", shortcut: "Mod+Shift+g", run: () => openGitView("changes") },
@@ -2119,12 +2119,12 @@ function EditorShell() {
     { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
     { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: () => handleOpenWorkspace() },
     { id: "workspace.close", title: "Close Workspace", shortcut: "Mod+Shift+w", disabled: !workspacePath || commandBusy ? "Open a workspace and finish document operations." : undefined, run: () => handleOpenWorkspace(null) },
-    { id: "file.quickOpen", title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); } },
+    { id: "file.quickOpen", allowInInput: true, title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setIsQuickOpenOpen(true); } },
     { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || documents.active?.readOnly || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
     { id: "file.cancelSavePreparation", title: "Cancel Save Preparation", disabled: !savePreparation.isPreparing ? "No Go save preparation is running." : undefined, run: savePreparation.cancel },
     { id: "file.saveAll", title: "Save All Files", shortcut: "Ctrl+Alt+s", disabled: !workspacePath || commandBusy || isSavingRef.current ? "Open a workspace and wait for document operations." : undefined, run: preserveAllDocuments },
     { id: "file.close", title: "Close Active Editor Tab", shortcut: "Mod+w", disabled: documentSnapshot.activeId === null || commandBusy || isSavingRef.current ? "Open a file and wait for document operations." : undefined, run: () => documentSnapshot.activeId !== null ? closeDocument(documentSnapshot.activeId) : undefined },
-    { id: "workspace.search", title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workspace.search", allowInInput: true, title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
     { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
     ...(["definition", "references", "hover"] as const).map(kind => ({ id: `language.${kind}`, title: kind === "definition" ? "Go to Definition" : kind === "references" ? "Find References" : "Show Symbol Information", shortcut: kind === "definition" ? "F12" : kind === "references" ? "Shift+F12" : undefined, disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => language.query(kind) })),
     { id: "language.signature", title: "Show Signature Help", shortcut: "Mod+Shift+Space", disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => setSignatureRequestTrigger(value => value + 1) },
@@ -2297,11 +2297,16 @@ function EditorShell() {
                   error={searchError}
                   warning={searchWarning}
                   onCancel={() => void cancelSearch()}
-                  onSearch={handleWorkspaceSearch}
-                  onOpenResult={(file, line, query) => {
-                    setEditorHighlightQuery(query);
+                  onSearch={submitWorkspaceSearch}
+                  onOpenResult={(file, line, query, column, target) => {
+                    const root = workspacePathRef.current;
+                    const navigation = ++searchNavigation.current;
                     void handleOpenFile(file).then(() => {
-                      requestJump(line);
+                      if (navigation !== searchNavigation.current || workspacePathRef.current !== root || activeFilePathRef.current !== file) return;
+                      if (target && latestEditorContentRef.current?.split("\n")[line - 1]?.replace(/\r$/, "") !== target.preview) { setFileError("Search result changed in the editor or on disk. Search again before navigating."); return; }
+                      setEditorHighlightQuery(target ? null : query);
+                      setEditorSearchTarget(target ? { file, line, ...target } : null);
+                      requestJump(line, column ?? 1);
                     });
                   }}
                   autoFocus
@@ -2640,7 +2645,7 @@ function EditorShell() {
                     recentWorkspaces={workspaceHistory.recent}
                     onReopenWorkspace={workspaceHistory.reopen}
                     onForgetWorkspace={workspaceHistory.forget}
-                    onQuickOpen={() => { setQuickOpenQuery(""); setQuickOpenSelectedIndex(0); setIsQuickOpenOpen(true); }}
+                    onQuickOpen={() => { setQuickOpenQuery(""); setIsQuickOpenOpen(true); }}
                     onSearch={() => { setActiveTab("search"); setSearchFocusTrigger((n) => n + 1); }}
                     onTerminal={() => { setBottomPanelTab("shell"); setIsBottomPanelOpen(true); }}
                     error={fileError}
@@ -2722,6 +2727,7 @@ function EditorShell() {
                           <CodeEditor
                             key={documentSnapshot.activeId}
                             sessionState={documentSnapshot.activeId !== null ? documents.editor(documentSnapshot.activeId) : undefined}
+                            onCommandsChange={onEditorCommands}
                             onSessionDispose={state => { if (documentSnapshot.activeId !== null) documents.retainEditor(documentSnapshot.activeId, state); }}
                             editable={!documents.active?.readOnly && !isBranchMutationInProgress && !gitOperationBusy && !explorerOperationBusy}
                             value={activeFileContent}
@@ -2747,7 +2753,8 @@ function EditorShell() {
                             onRequestHover={requestEditorHover}
                             onRequestSignature={requestEditorSignature}
                             signatureRequestTrigger={signatureRequestTrigger}
-                            externalSearchQuery={editorHighlightQuery}
+                            externalSearchQuery={activeTab === "search" ? editorHighlightQuery : null}
+                            externalSearchTarget={activeTab === "search" && editorSearchTarget?.file === activeFilePath ? editorSearchTarget : null}
                             executionActionsEnabled={!documents.active?.readOnly && !commandBusy && runStatus !== "running" && !isDebugSessionBusy}
                             onEntryAction={handleEntryAction}
                             onDocumentSymbolsChange={(symbols) => {
@@ -2790,80 +2797,10 @@ function EditorShell() {
       </div>
 
       {isCommandPaletteOpen && <CommandPalette commands={commands} execute={executeCommand} onClose={() => setIsCommandPaletteOpen(false)} />}
+      {goToLine.dialog}
       {documentDecision.dialog}
-      {isQuickOpenOpen && (
-        <Dialog open={true} onOpenChange={setIsQuickOpenOpen} ariaLabel="Quick Open" className="fixed inset-0 z-50 m-0 flex h-dvh w-full items-center justify-center bg-black/45 backdrop-blur-[8px] p-4" panelClassName="w-full max-w-xl">
-          <div className="pointer-events-auto w-full max-w-xl">
-            <div className="overflow-hidden rounded-none border border-[var(--surface-glass-border)] bg-[var(--surface-glass)] shadow-[0_20px_40px_-15px_rgba(0,0,0,0.7),inset_0_1px_0_0_rgba(255,255,255,0.08)] backdrop-blur-[var(--blur-elevated)]">
-              <input
-                ref={quickOpenInputRef}
-                type="text"
-                maxLength={256}
-                placeholder="Find file..."
-                value={quickOpenQuery}
-                onChange={(event) => {
-                  setQuickOpenQuery(event.target.value);
-                  setQuickOpenSelectedIndex(0);
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Escape") {
-                    event.preventDefault();
-                    setIsQuickOpenOpen(false);
-                    return;
-                  }
-                  if (event.key === "ArrowDown") {
-                    event.preventDefault();
-                    setQuickOpenSelectedIndex((current) =>
-                      Math.min(current + 1, Math.max(0, quickOpenFilteredFiles.length - 1))
-                    );
-                    return;
-                  }
-                  if (event.key === "ArrowUp") {
-                    event.preventDefault();
-                    setQuickOpenSelectedIndex((current) => Math.max(0, current - 1));
-                    return;
-                  }
-                  if (event.key === "Enter") {
-                    event.preventDefault();
-                    const selected = quickOpenFilteredFiles[quickOpenSelectedIndex];
-                    if (selected) {
-                      handleQuickOpenSelect(selected);
-                    }
-                  }
-                }}
-                className="w-full border-b border-[var(--border-structural)] bg-transparent px-3.5 py-2.5 text-[13px] text-[var(--text)] placeholder-[var(--overlay1)] outline-none"
-                aria-label="Quick open file"
-              />
-              <div className="max-h-80 overflow-y-auto p-1.5 scrollbar-thin">
-                {quickOpenError && <p role="alert" className="px-3 py-2 text-xs text-(--red)">{quickOpenError}</p>}
-                {quickOpenNotice && <p role="status" className="px-3 py-2 text-xs text-(--yellow)">{quickOpenNotice}</p>}
-                {quickOpenLoading && (
-                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">Indexing files...</p>
-                )}
-                {!quickOpenLoading && !quickOpenError && quickOpenFilteredFiles.length === 0 && (
-                  <p className="px-3 py-2 text-xs text-[var(--overlay1)]">No files found.</p>
-                )}
-                {!quickOpenLoading &&
-                  quickOpenFilteredFiles.map((path, index) => (
-                    <button
-                      key={path}
-                      type="button"
-                      onClick={() => handleQuickOpenSelect(path)}
-                      className={`group flex w-full items-center justify-between gap-3 rounded-none px-3 py-2 text-left text-[12px] transition-colors duration-75 ${
-                        index === quickOpenSelectedIndex
-                          ? "bg-[var(--selection-bg)] text-[var(--text)]"
-                          : "text-[var(--subtext1)] hover:bg-[var(--bg-hover)]"
-                      }`}
-                      title={path}
-                    >
-                      {path}
-                    </button>
-                  ))}
-              </div>
-            </div>
-          </div>
-        </Dialog>
-      )}
+      {isQuickOpenOpen && <QuickOpenPicker query={quickOpenQuery} onQuery={setQuickOpenQuery} files={quickOpenFilteredFiles}
+        loading={quickOpenLoading} error={quickOpenError} notice={quickOpenNotice} onClose={() => setIsQuickOpenOpen(false)} onChoose={handleQuickOpenSelect} />}
 
       {isBranchPickerOpen && branchSnapshot && (
         <BranchPicker

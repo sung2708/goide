@@ -1,5 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { indexWorkspace, rankFiles, type FileIndex } from "./quickOpen";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useRankedFiles } from "./useRankedFiles";
+const emptyIndex: string[] = [];
+import { indexWorkspace, type FileIndex } from "./quickOpen";
 
 type Cache = FileIndex & { root: string; revision: number };
 export function useQuickOpenIndex(root: string | null, revision: number, open: boolean, query: string) {
@@ -33,6 +35,16 @@ export function useQuickOpenIndex(root: string | null, revision: number, open: b
     }).finally(() => { if (epoch.current === request) setLoading(false); });
     return () => { if (epoch.current === request) ++epoch.current; };
   }, [root, revision, open]);
+  useEffect(() => {
+    if (!root || index.root !== root || index.notice) return;
+    const valid = new Set(index.files);
+    setRecent(previous => {
+      const next = previous.filter(path => valid.has(path));
+      if (next.length === previous.length) return previous;
+      try { localStorage.setItem(`goide.recentFiles:${root}`, JSON.stringify(next)); } catch { /* Optional bounded history. */ }
+      return next;
+    });
+  }, [root, index]);
   const remember = useCallback((path: string) => {
     setRecent(previous => {
       const next = [path, ...previous.filter(item => item !== path)].slice(0, 30);
@@ -40,6 +52,6 @@ export function useQuickOpenIndex(root: string | null, revision: number, open: b
       return next;
     });
   }, [root]);
-  const files = useMemo(() => root === index.root ? rankFiles(index.files, query, recent) : [], [root, index, query, recent]);
-  return { files, loading, error, notice: index.notice, remember };
+  const ranked = useRankedFiles(root === index.root ? index.files : emptyIndex, query, recent);
+  return { files: ranked.files, loading: loading || ranked.loading, error, notice: index.notice ?? ranked.notice, remember };
 }
