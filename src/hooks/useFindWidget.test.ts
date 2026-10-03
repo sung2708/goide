@@ -13,7 +13,7 @@ vi.mock("@codemirror/view", () => ({
 vi.mock("@codemirror/search", () => ({
   closeSearchPanel: vi.fn(),
   searchPanelOpen: vi.fn(() => false),
-  SearchQuery: vi.fn().mockImplementation(() => ({
+  SearchQuery: vi.fn().mockImplementation(function () { return ({
     valid: true,
     getCursor: vi.fn().mockImplementation(() => {
       let step = 0;
@@ -27,7 +27,7 @@ vi.mock("@codemirror/search", () => ({
         },
       };
     }),
-  })),
+  }); }),
   setSearchQuery: { of: vi.fn().mockReturnValue({ type: "effect" }) },
 }));
 

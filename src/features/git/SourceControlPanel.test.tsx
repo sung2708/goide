@@ -31,7 +31,7 @@ describe("Source Control vertical slice", () => {
     const changed = screen.getByRole("list", { name: "Changes" });
     expect(within(staged).getByText("both.go")).toBeInTheDocument(); expect(within(changed).getByText("both.go")).toBeInTheDocument();
     await act(async () => { fireEvent.click(within(staged).getByRole("button", { name: "Unstage both.go" })); });
-    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "unstage", paths: ["both.go"] });
+    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "unstage", paths: ["both.go"] }, expect.any(String));
     expect(transaction.mock.calls[0][1]).toBe(false);
     await act(async () => { fireEvent.click(within(changed).getByRole("button", { name: "Stage both.go" })); });
     expect(transaction.mock.calls[1][1]).toBe(true);
@@ -59,7 +59,7 @@ describe("Source Control vertical slice", () => {
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Pop stash@{0}" })); });
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), true, true);
     expect(changed).toHaveBeenCalledOnce(); expect(screen.getByRole("alert")).toHaveTextContent("stash retained");
-    expect(mutate).toHaveBeenCalledWith("C:/repo", expect.objectContaining({ kind: "stashPop", hash: "a".repeat(40) }));
+    expect(mutate).toHaveBeenCalledWith("C:/repo", expect.objectContaining({ kind: "stashPop", hash: "a".repeat(40) }), expect.any(String));
     transaction.mockClear(); mutate.mockResolvedValue({ ok: true });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Drop stash@{0}" })); });
     expect(transaction).toHaveBeenCalledWith(expect.any(Function), false, false);
@@ -72,9 +72,10 @@ describe("Source Control vertical slice", () => {
     mutate.mockResolvedValueOnce({ ok: false, error: { message: "hook rejected" } });
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" })); });
     expect(screen.getByRole("alert")).toHaveTextContent("hook rejected"); expect(message).toHaveValue("subject\n\nbody $(literal)");
-    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "commit", message: "subject\n\nbody $(literal)" });
+    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "commit", message: "subject\n\nbody $(literal)" }, expect.any(String));
     await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" })); });
     expect(message).toHaveValue("");
+    expect(mutate.mock.calls[1][2]).not.toBe(mutate.mock.calls[0][2]);
   });
   it("opens Git-generated staged/worktree diff with navigation without mutating the repository", async () => {
     render(<SourceControlPanel {...props} />);
@@ -116,7 +117,7 @@ describe("Source Control vertical slice", () => {
     fireEvent.click(screen.getByText("Create branch"));
     fireEvent.change(screen.getByLabelText("New branch name"), { target: { value: "feature/new" } });
     await act(async () => { fireEvent.click(screen.getByText("Create from HEAD (stay here)")); });
-    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "createBranch", name: "feature/new", start: null });
+    expect(mutate).toHaveBeenCalledWith("C:/repo", { kind: "createBranch", name: "feature/new", start: null }, expect.any(String));
     expect(transaction.mock.calls[0][1]).toBe(false);
   });
   it("requests cancellation without automatically retrying or clearing a rejected commit", async () => {
@@ -127,9 +128,31 @@ describe("Source Control vertical slice", () => {
     fireEvent.change(message, { target: { value: "valuable message" } });
     fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" }));
     fireEvent.click(await screen.findByRole("button", { name: "Cancel Git operation" }));
-    await waitFor(() => expect(cancel).toHaveBeenCalledWith("C:/repo"));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("C:/repo", mutate.mock.calls[0][2]));
     await act(async () => { finish({ ok: false, error: { message: "Git operation cancelled. Refresh before retrying." } }); });
     expect(message).toHaveValue("valuable message"); expect(mutate).toHaveBeenCalledTimes(1);
     expect(screen.getByRole("alert")).toHaveTextContent("Git operation cancelled");
+  });
+  it("does not apply an old cancellation error to the next operation", async () => {
+    let finishFirst!: (value: unknown) => void;
+    let finishSecond!: (value: unknown) => void;
+    let finishCancel!: (value: unknown) => void;
+    mutate.mockImplementationOnce(() => new Promise(resolve => { finishFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishSecond = resolve; }));
+    cancel.mockImplementationOnce(() => new Promise(resolve => { finishCancel = resolve; }));
+    render(<SourceControlPanel {...props} />);
+    const message = await screen.findByLabelText("Commit message");
+    fireEvent.change(message, { target: { value: "preserve message" } });
+    fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Cancel Git operation" }));
+    await waitFor(() => expect(cancel).toHaveBeenCalledWith("C:/repo", mutate.mock.calls[0][2]));
+    await act(async () => { finishFirst({ ok: false, error: { message: "First operation stopped" } }); });
+    fireEvent.click(screen.getByRole("button", { name: "Commit staged (1)" }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(2));
+    expect(mutate.mock.calls[1][2]).not.toBe(mutate.mock.calls[0][2]);
+    await act(async () => { finishCancel({ ok: false, error: { message: "Old cancellation failure" } }); });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(message).toHaveValue("preserve message");
+    await act(async () => { finishSecond({ ok: true }); });
   });
 });

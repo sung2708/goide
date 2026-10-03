@@ -17,6 +17,7 @@ export function useSourceControl(root: string | null, revision: number, transact
   const diffGeneration = useRef(0);
   const mutationPending = useRef(false);
   const cancellationRequested = useRef(false);
+  const operationId = useRef<string | null>(null);
   const epoch = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -69,6 +70,7 @@ export function useSourceControl(root: string | null, revision: number, transact
   const mutate = useCallback(async (mutation: GitMutation) => {
     if (!root || mutationPending.current || !transaction) return false;
     mutationPending.current = true; cancellationRequested.current = false; setBusy(true); setOperationError(null);
+    const id = crypto.randomUUID(); operationId.current = id;
     const session = epoch.current;
     const changesFiles = ["pull", "discard", "deleteUntracked", "saveConflict", "stashPush", "stashApply", "stashPop"].includes(mutation.kind);
     let started = false;
@@ -77,7 +79,7 @@ export function useSourceControl(root: string | null, revision: number, transact
       await transaction(async () => {
         if (cancellationRequested.current) throw new Error("Git operation cancelled before execution. No Git mutation was started.");
         started = true;
-        const response = await mutateGit(root, mutation);
+        const response = await mutateGit(root, mutation, id);
         if (!response.ok) throw new Error(response.error?.message ?? "Git operation failed.");
         succeeded = true;
       }, mutation.kind === "stage" || changesFiles, changesFiles);
@@ -94,6 +96,7 @@ export function useSourceControl(root: string | null, revision: number, transact
       }
     } finally {
       mutationPending.current = false;
+      if (operationId.current === id) operationId.current = null;
       if (started && changesFiles && currentRoot.current === root && epoch.current === session) onChanged?.();
       if (currentRoot.current === root && epoch.current === session) { setBusy(false); await refresh(); }
     }
@@ -103,9 +106,13 @@ export function useSourceControl(root: string | null, revision: number, transact
   const cancel = async () => {
     if (!root || !busy) return;
     cancellationRequested.current = true;
-    try { const response = await cancelGit(root); if (!response.ok) throw new Error(response.error?.message ?? "Cancellation failed.");
+    const id = operationId.current;
+    if (!id) return;
+    const session = epoch.current;
+    try { const response = await cancelGit(root, id); if (!response.ok) throw new Error(response.error?.message ?? "Cancellation failed.");
+      if (currentRoot.current !== root || epoch.current !== session || operationId.current !== id) return;
       setOutput((lines) => [...lines.slice(-19), "Cancellation requested; waiting for Git to stop. Repository state will be refreshed."]);
-    } catch (error) { setOperationError(error instanceof Error ? error.message : String(error)); }
+    } catch (error) { if (currentRoot.current === root && epoch.current === session && operationId.current === id) setOperationError(error instanceof Error ? error.message : String(error)); }
   };
   return { status, error: operationError ?? error, loading, busy, diff, diffLoading, output, refresh, openDiff, mutate, cancel, closeDiff: () => { diffGeneration.current++; setDiff(null); setDiffLoading(false); } };
 }
