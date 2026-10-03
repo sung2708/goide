@@ -242,6 +242,8 @@ export type DebuggerBreakpoint = {
  */
 export type DebuggerState = {
   sessionActive: boolean;
+  stopToken?: string | null;
+  selectedThreadId?: number | null;
   cleanupPending?: boolean;
   paused: boolean;
   activeRelativePath?: string | null;
@@ -451,3 +453,19 @@ export type WorkspaceReplacementPlan = { path: string; before: string; after: st
 export type LanguageCodeAction = { title: string; kind: string | null; preferred: boolean; disabledReason: string | null };
 export type LanguageCodeActionQuery = { query: LanguageQuery; diagnostics: EditorDiagnostic[] };
 export type LanguageCodeActionPreview = { query: LanguageCodeActionQuery; action: LanguageCodeAction };
+
+export type DebuggerInspectionQuery =
+  | { kind: "threads" }
+  | { kind: "stack"; threadId: number }
+  | { kind: "scopes"; frameId: number }
+  | { kind: "variables"; reference: number; start?: number; indexed?: boolean };
+export type DebuggerInspectionRequest = { workspaceRoot: string; stopToken: string; query: DebuggerInspectionQuery };
+export type DebuggerThread = { id: number | null; name: string };
+export type DebuggerFrame = { id: number; name: string; source: string | null; relativePath: string | null; line: number | null; column: number | null };
+export type DebuggerScope = { name: string; reference: number; expensive: boolean };
+export type DebuggerVariable = { name: string; value: string; variableType: string | null; reference: number; indexedVariables: number | null; namedVariables: number | null; truncated: boolean };
+export type DebuggerInspectionOutput =
+  | { kind: "threads"; stopToken: string; items: DebuggerThread[]; selectedThreadId: number | null; limited: boolean }
+  | { kind: "stack"; stopToken: string; items: DebuggerFrame[]; totalFrames: number | null; limited: boolean }
+  | { kind: "scopes"; stopToken: string; items: DebuggerScope[]; limited: boolean }
+  | { kind: "variables"; stopToken: string; items: DebuggerVariable[]; nextStart: number | null; limited: boolean };
