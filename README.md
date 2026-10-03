@@ -59,10 +59,18 @@ Runtime inspection combines observations and heuristic analysis; it is not a com
 ### Experimental
 - **Deep Trace Mode**: Dynamic runtime signal correlation for active goroutines.
 
-### Planned for 1.0
-- Automated code formatting on save (`go fmt` / `goimports`).
-- In-editor Go test and benchmark runner with visual test result tree.
-- Stack frame switching and interactive variable watches in the debugger.
+### Implemented with acceptance still pending
+- Reviewed gopls Format Document, Organize Imports and optional save actions, plus validated cross-file symbol rename and edit-based Quick Fixes.
+- Structured package/workspace/single-test execution, semantic entry actions and Debug Test.
+- Actual Delve stack/goroutine/frame selection and lazy variable inspection.
+- Source Control staging, staged commits, remote actions, stash and commit/file history.
+
+### Remaining before a dependable release
+- Complete native data-preservation/process-ownership acceptance, real-tool compatibility tests and clean installation/upgrade validation.
+- Source-jump Back/Forward, semantic symbol pickers and remaining search/Problems ergonomics.
+- Save As/draft recovery, configured shell selection and measured desktop performance. Advanced watches, benchmarks and coverage can follow the focused core.
+
+See [Release Readiness](docs/RELEASE_READINESS.md) for the audited scope and blockers.
 
 ---
 
@@ -72,23 +80,23 @@ Goro integrates directly with tools installed in your local environment. Ensure 
 
 | Tool | Version | Purpose | Installation |
 |:---|:---|:---|:---|
-| **Go** | 1.21+ | Compiler and runtime execution | [go.dev/dl](https://go.dev/dl/) |
-| **gopls** | Latest | Language intelligence, diagnostics, completion | `go install golang.org/x/tools/gopls@latest` |
-| **dlv** | Latest | Delve debugger for runtime sessions | `go install github.com/go-delve/delve/cmd/dlv@latest` |
+| **Go** | Tested release matrix pending | Compiler and runtime execution | [go.dev/dl](https://go.dev/dl/) |
+| **gopls** | Compatible tested Go/tool pair | Language intelligence, diagnostics, completion | `go install golang.org/x/tools/gopls@latest` |
+| **dlv** | Compatible tested Go/tool pair | Delve debugger for runtime sessions | `go install github.com/go-delve/delve/cmd/dlv@latest` |
 
-Goro performs an automated toolchain preflight on launch and surfaces missing tools in the status bar.
+Goro performs toolchain inspection and surfaces missing tools in the status bar. Version detection does not certify compatibility. Installation commands above select current tools; release support must use the tested Go/gopls/Delve matrix described in [Release Readiness](docs/RELEASE_READINESS.md).
 
 ---
 
-## Supported Platforms
+## Release Build Targets
 
-Goro is developed and tested for 64-bit desktop environments:
+The release workflow targets these 64-bit environments. Source CI and installer acceptance are separate; clean installation/upgrade validation is still pending:
 
 | Operating System | Architecture | Package Format | Status |
 |:---|:---|:---|:---:|
-| **Windows** | x86_64 | `.exe` (NSIS), `.msi` | :white_check_mark: Supported |
-| **macOS** | Apple Silicon (`aarch64`), Intel (`x86_64`) | `.dmg`, `.app` | :white_check_mark: Supported |
-| **Linux** | x86_64 | `.AppImage`, `.deb` | :white_check_mark: Supported |
+| **Windows** | x86_64 | `.exe` (NSIS), `.msi` | Installer acceptance pending |
+| **macOS** | Apple Silicon (`aarch64`), Intel (`x86_64`) | `.dmg`, `.app` | Installer acceptance pending |
+| **Linux** | x86_64 | `.AppImage`, `.deb` | Installer acceptance pending |
 
 ---
 
