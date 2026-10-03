@@ -335,3 +335,13 @@ PASS: all four Go test runner checks with installed Go enabled. The new fixture 
 PASS: 44 frontend tests across test model/dialog/runner, EditorShell execution gates and typed IPC. A focused subsequent 15-test run covers the latest decoder EOF flush, packet ownership, workspace cycles, tool preference changes, prelaunch listener cancellation and disposal; these sets overlap. Incremental UTF-8 supports split codepoints and bounds previews; incomplete live output never supplies a successful command exit. TypeScript and final production build pass (259 modules).
 
 Native Run/Debug startup cancellation/acknowledgement ownership, complete Git and full platform/process acceptance remain unfinished or NOT RUN. No release/tag is authorized.
+
+## Run startup ownership regression (2026-10-03)
+
+PASS: 12 native process/Windows job checks with installed Go fixtures enabled. Actual Run returns its startup acknowledgement while the owned child remains alive; wrong workspace/UUID Stop and replacement requests preserve it, correct Stop retires it, and cancellation before registration prevents launch. A real owned startup tool emits output, then scoped Stop cancels it before acquiring registration and acknowledges only after the blocking worker releases ownership. Existing nested-module execution, descendant teardown, foreign-child preservation and completion identity checks continue passing.
+
+PASS: five language cancellation/deadline checks, including binding the same startup token to a blocking SDK thread, abandonment, duplicate/foreign identity rejection and shared deadlines. PASS: tool configuration remains blocked by an owned running process. Native all-target Clippy passes.
+
+PASS: the exact staged frontend, isolated from separate branding edits, passes 39 tests covering startup ownership/IPC, Run/Race/terminal wiring, lost startup reply cleanup retry, document locks, scoped workspace-transition failure and preserved buffers. TypeScript and production build pass (260 modules). A further 21 exact-staged debugger controller tests pass, covering session ownership, Stop failures and retained cleanup. Earlier working-checkout tests overlap with these sets.
+
+Debug/Deep Trace startup cancellation, complete Git/addendum work, Windows suspended-spawn acceptance and Linux/macOS/native window acceptance remain unfinished or NOT RUN; no release/tag is authorized.

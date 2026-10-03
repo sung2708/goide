@@ -205,8 +205,9 @@ export async function runWorkspaceFileWithRace(
   });
 }
 
-export async function stopCurrentRun(): Promise<ApiResponse<void>> {
-  return invoke<ApiResponse<void>>("stop_current_run");
+export async function stopCurrentRun(context: import("./types").RunContext): Promise<ApiResponse<void>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "run_native_required", message: "Run cleanup requires the desktop app." } };
+  return invoke<ApiResponse<void>>("stop_current_run", { context });
 }
 
 export async function fetchWorkspaceDiagnostics(

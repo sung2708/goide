@@ -98,15 +98,10 @@ impl Drop for Scope {
         }
     }
 }
-pub fn begin(root: &Path, id: Option<&str>) -> Result<Scope> {
-    begin_with_timeout(root, id, Duration::from_secs(45))
-}
-pub(crate) fn begin_with_timeout(
-    root: &Path,
-    id: Option<&str>,
-    timeout: Duration,
-) -> Result<Scope> {
-    check()?;
+fn register(root: &Path, id: Option<&str>, timeout: Duration) -> Result<(Uuid, Context)> {
+    if super::lifecycle::gate().is_closing() {
+        return Err(Stopped("App is shutting down.").into());
+    }
     let id = match id {
         Some(id) => {
             Uuid::parse_str(id).map_err(|_| anyhow!("Language request identity must be a UUID."))?
@@ -141,12 +136,79 @@ pub(crate) fn begin_with_timeout(
         .active
         .insert(id, (root.to_path_buf(), token.clone()));
     drop(requests);
-    let previous = CURRENT.with(|context| {
-        context.replace(Some(Context {
+    Ok((
+        id,
+        Context {
             cancelled: token,
             deadline: Instant::now() + timeout,
-        }))
-    });
+        },
+    ))
+}
+
+/// Async startup authority can bind its same cancellation/deadline to a blocking SDK thread.
+pub(crate) struct StartupRequest {
+    id: Uuid,
+    context: Context,
+}
+pub(crate) struct BoundContext {
+    previous: Option<Context>,
+    _thread: std::marker::PhantomData<std::rc::Rc<()>>,
+}
+impl Drop for BoundContext {
+    fn drop(&mut self) {
+        CURRENT.with(|current| {
+            current.replace(self.previous.take());
+        });
+    }
+}
+impl StartupRequest {
+    pub(crate) fn begin(root: &Path, id: &str, timeout: Duration) -> Result<Self> {
+        let (id, context) = register(root, Some(id), timeout)?;
+        let request = Self { id, context };
+        request.check()?;
+        Ok(request)
+    }
+    pub(crate) fn check(&self) -> Result<()> {
+        if super::lifecycle::gate().is_closing() {
+            return Err(Stopped("Startup cancelled for app shutdown.").into());
+        }
+        if self.context.cancelled.load(Ordering::Acquire) {
+            return Err(Stopped("Execution startup cancelled.").into());
+        }
+        if Instant::now() >= self.context.deadline {
+            return Err(Stopped("Execution startup exceeded its deadline.").into());
+        }
+        Ok(())
+    }
+    pub(crate) fn binder(&self) -> impl FnOnce() -> BoundContext + Send + 'static {
+        let context = self.context.clone();
+        move || BoundContext {
+            previous: CURRENT.with(|current| current.replace(Some(context))),
+            _thread: std::marker::PhantomData,
+        }
+    }
+}
+impl Drop for StartupRequest {
+    fn drop(&mut self) {
+        // Abandoned async callers cancel the still-owned blocking tool as well.
+        self.context.cancelled.store(true, Ordering::Release);
+        if let Ok(mut requests) = REQUESTS.get_or_init(Default::default).lock() {
+            requests.active.remove(&self.id);
+        }
+    }
+}
+
+pub fn begin(root: &Path, id: Option<&str>) -> Result<Scope> {
+    begin_with_timeout(root, id, Duration::from_secs(45))
+}
+pub(crate) fn begin_with_timeout(
+    root: &Path,
+    id: Option<&str>,
+    timeout: Duration,
+) -> Result<Scope> {
+    check()?;
+    let (id, context) = register(root, id, timeout)?;
+    let previous = CURRENT.with(|current| current.replace(Some(context)));
     Ok(Scope {
         id,
         previous,
@@ -202,6 +264,54 @@ pub fn cancel(root: &Path, id: &str) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn startup_identity_cancels_bound_sdk_thread_and_abandonment() {
+        let root = Path::new("startup-owner");
+        let id = Uuid::new_v4().to_string();
+        let startup = StartupRequest::begin(root, &id, Duration::from_secs(10)).unwrap();
+        let bind = startup.binder();
+        assert!(cancel(Path::new("foreign-root"), &id).is_err());
+        assert!(StartupRequest::begin(root, &id, Duration::from_secs(10)).is_err());
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let _context = bind();
+            assert!(check().is_ok());
+            ready_tx.send(()).unwrap();
+            let started = Instant::now();
+            loop {
+                if let Err(error) = check() {
+                    assert!(is_stopped(&error));
+                    break;
+                }
+                assert!(started.elapsed() < Duration::from_secs(2));
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        });
+        ready_rx.recv().unwrap();
+        drop(startup);
+        worker.join().unwrap();
+        let early = Uuid::new_v4().to_string();
+        cancel(root, &early).unwrap();
+        assert!(StartupRequest::begin(root, &early, Duration::from_secs(10)).is_err());
+    }
+    #[test]
+    fn startup_deadline_applies_on_async_and_bound_threads() {
+        let startup = StartupRequest::begin(
+            Path::new("startup-deadline"),
+            &Uuid::new_v4().to_string(),
+            Duration::from_millis(20),
+        )
+        .unwrap();
+        let bind = startup.binder();
+        std::thread::sleep(Duration::from_millis(30));
+        assert!(is_stopped(&startup.check().unwrap_err()));
+        std::thread::spawn(move || {
+            let _scope = bind();
+            assert!(is_stopped(&check().unwrap_err()));
+        })
+        .join()
+        .unwrap();
+    }
     #[test]
     fn cancellation_is_scoped_and_also_covers_requests_not_registered_yet() {
         let id = Uuid::new_v4().to_string();

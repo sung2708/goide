@@ -483,3 +483,5 @@ export type DebuggerInspectionOutput =
   | { kind: "stack"; stopToken: string; items: DebuggerFrame[]; totalFrames: number | null; limited: boolean }
   | { kind: "scopes"; stopToken: string; items: DebuggerScope[]; limited: boolean }
   | { kind: "variables"; stopToken: string; items: DebuggerVariable[]; nextStart: number | null; limited: boolean };
+
+export type RunContext = { workspaceRoot: string; runId: string };

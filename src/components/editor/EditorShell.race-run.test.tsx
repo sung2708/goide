@@ -174,10 +174,31 @@ describe("EditorShell race run", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(await screen.findByRole("button", { name: /^run active go file$/i }));
     stopCurrentRunMock.mockResolvedValue({ ok: false, error: { message: "Owned process could not be stopped" } });
-    await user.click(await screen.findByRole("button", { name: /^stop$/i }));
+    await user.click(screen.getByRole("button", { name: "Commands" }));
+    await user.click(await screen.findByRole("button", { name: /^Stop Run/ }));
     expect(await screen.findByText("Owned process could not be stopped")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /^stop$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^run active go file$/i })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Commands" }));
+    expect(await screen.findByRole("button", { name: /^Stop Run/ })).toBeEnabled();
+  });
+
+  it("retains the workspace and its document when scoped run cleanup blocks a root change", async () => {
+    const user = userEvent.setup(); render(<EditorShell />); await openWorkspaceAndShowExplorer(user);
+    await user.click(await screen.findByRole("button", { name: /open mock file/i }));
+    await user.click(screen.getByRole("button", { name: /^run active go file$/i }));
+    await waitFor(() => expect(runWorkspaceFileMock).toHaveBeenCalledTimes(1));
+    const id = runWorkspaceFileMock.mock.calls[0][2];
+    stopCurrentRunMock.mockResolvedValueOnce({ ok: false, error: { message: "workspace run cleanup failed" } }).mockResolvedValue({ ok: true });
+    openMock.mockResolvedValue("C:/workspace-2");
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+    expect(await screen.findByText("workspace run cleanup failed")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Close main.go" })).toBeInTheDocument();
+    expect(stopCurrentRunMock).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", runId: id });
+    await user.click(screen.getByRole("button", { name: /open workspace folder/i }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Close main.go" })).toBeNull());
+    await user.click(screen.getByRole("button", { name: /open mock file/i }));
+    await waitFor(() => expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace-2", "main.go"));
+    expect(stopCurrentRunMock).toHaveBeenCalledTimes(2);
   });
 
   it("runs go with race mode from the editor header and surfaces confirmed race signal", async () => {

@@ -458,3 +458,10 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 - Delivered: the frontend registers its listener before execution, incrementally decodes UTF-8, bounds/throttles previews and rejects foreign, replayed, retired and obsolete-workspace packets. Workspace generations also prevent an old result reappearing after changing away and back. Tool preference changes and cancellation during event registration block startup.
 - Delivered: live test rows show actual events; the native command reply supplies final success/exit status. Gaps/truncation and unfinished outcomes are explicit, partial output survives cancellation/transport failure, and listeners/timers retire after confirmed completion/cleanup.
 - Remaining: cancellable native Run/Debug startup/build preparation and startup acknowledgement ownership, recent workspaces/session restore, complete Git and platform/process acceptance. No release/tag is authorized.
+
+## Run startup ownership checkpoint (2026-10-03)
+
+- Delivered: Run/Race acknowledge only after the native Go child has an owner and output monitoring. Request UUIDs bind async startup to cancellable SDK package discovery; early Stop, abandoned startup and shutdown block late launches. New requests cannot replace an existing actor.
+- Delivered: Stop requires the captured workspace and UUID, cancels startup before waiting for registration, preserves foreign/replacement runs, retains failed job cleanup and waits for owned SDK tools/readers. Pipe/teardown errors do not invent an exited process.
+- Delivered: a lost startup reply or retained cleanup holds the document transaction until native Stop confirms cleanup. Startup has an immediate Stop/retry action. Workspace changes await owned Run and known debugger-session cleanup before discarding buffers or changing root; failure retains the workspace/documents and exposes the error.
+- Remaining: cancellable Debug/Deep Trace build/startup, Windows spawn-to-job assignment acceptance, Unix ownership/platform acceptance, recent workspaces/session restore and the remaining Git/addendum requirements. No release/tag is authorized.
