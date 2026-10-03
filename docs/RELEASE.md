@@ -2,15 +2,17 @@
 
 This document defines the complete operational procedure for preparing, validating, publishing, and verifying releases of Goro.
 
-Before executing this runbook, pass the selected maturity gate in [Release Readiness](RELEASE_READINESS.md). The current audit is NOT READY; this runbook is not authorization to create a tag or publish.
+For the maintainer-requested experimental alpha publication from main, follow [Release setup](RELEASE_SETUP.md) and the reviewed [alpha notes](releases/v0.2.0-alpha.1.md). The current native/stable acceptance audit remains NOT READY in [Release Readiness](RELEASE_READINESS.md); the alpha does not certify those missing checks.
 
 The secure updater/distribution contract is defined in [UPDATES.md](UPDATES.md).
-The release workflow now requires real version-bound signatures, a separate
-public distribution repository and protected signing/distribution configuration.
+The release workflow requires real version-bound signatures, an already public
+distribution repository and protected signing/distribution configuration. The
+current target is the existing public source repository sung2708/goide; no second
+repository is required. Only source reachable from main can release.
 It verifies artifacts before committing public Pages channel pointers. A manual
-workflow dispatch defaults to candidate-only validation. Source-repository releases
-are no longer the distribution mechanism; use the instructions below together
-with the public distribution contract.
+workflow dispatch defaults to candidate-only validation. Published installers are
+GitHub Release assets in the configured public repository; the current target
+is sung2708/goide. The updater/web pointers are deployed separately through Pages.
 
 The workflow initializes MSVC on Windows, runs Rust tests as well as frontend tests, explicitly builds each matrix target, and uses Bash for artifact packaging on every runner. The Intel macOS job uses `macos-15-intel`, replacing the retired `macos-13` image ([GitHub runner retirement notice](https://github.com/actions/runner-images/issues/13046)). These configuration checks and local Windows builds do not establish that hosted Linux/macOS builds, installation, signing, or publication have succeeded.
 

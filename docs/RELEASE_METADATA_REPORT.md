@@ -1,5 +1,11 @@
 # Goro Release Metadata Report
 
+Operational policy update: the maintainer subsequently requested an experimental
+alpha release from main using the existing public sung2708/goide repository.
+[Release setup](RELEASE_SETUP.md) supersedes the earlier separate-repository,
+develop-dispatch and token-permission assumptions below. Historical audit
+results and outstanding native acceptance are retained.
+
 Audit date: 2026-10-04. Implemented locally and validated without publishing a
 release. Production distribution remains **BLOCKED pending maintainer setup and
 signed platform acceptance**. Product release readiness remains NOT READY; see
