@@ -14,6 +14,7 @@ pub use crate::integration::rename_symbol::{
     RenamePlan as LanguageRenamePlanDto, RenameRequest as LanguageRenameRequestDto,
 };
 use serde::{Deserialize, Serialize};
+pub use crate::integration::go_tests::{Request as GoTestRequestDto, Output as GoTestOutputDto};
 pub use crate::integration::go_project::{ProjectInfo as GoProjectInfoDto, Request as GoProjectRequestDto};
 pub use crate::integration::go_project::actions::{Output as GoModuleOutputDto, Request as GoModuleRequestDto};
 
