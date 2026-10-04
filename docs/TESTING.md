@@ -2,6 +2,19 @@
 
 Goro maintains a comprehensive automated testing suite to prevent behavioral regressions across editor operations, runtime inspection, and IPC communication.
 
+Native source CI and the manual Managed Toolchain Acceptance workflow each cover
+Windows x64, Linux x64, macOS ARM64 (`macos-15`) and macOS Intel x64
+(`macos-15-intel`). Job names identify architecture, and each job checks its actual
+Node runner architecture before native tests. These are separate from the release
+artifact matrix and do not certify installer or manual native UI acceptance.
+
+Location-history UI tests wait for both the target buffer and the requested
+line/column after Back or Forward. File activation publishes a document snapshot
+before the awaited navigation callback sets the jump; observing the buffer alone
+does not establish completion of that navigation. Position assertions and existing
+timeouts remain unchanged.
+
+
 ---
 
 ## 1. Test Architecture & Coverage

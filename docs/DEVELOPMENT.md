@@ -28,6 +28,11 @@ Ensure the following tools are installed and present on your `PATH`:
 
 Development integrates on `develop`; all releases originate from `main`:
 
+Do not promote a candidate while required develop checks are pending or failing.
+The exact validated SHA is the unit of promotion. See
+[Release promotion](RELEASE_PROMOTION.md) for the full automatic promotion
+contract, required platform/acceptance gates and current release hold.
+
 ```
 feature/fix → develop → validated merge → main → release tag
                   ▲                         │
