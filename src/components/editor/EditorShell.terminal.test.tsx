@@ -6,7 +6,7 @@
  * panel should receive the correct surfaceKey (editor:<relativePath>).
  */
 
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { useEffect, type ReactNode } from "react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -195,8 +195,8 @@ describe("EditorShell terminal wiring", () => {
   const openWorkspaceAndShowExplorer = async (
     user: ReturnType<typeof userEvent.setup>
   ) => {
-    await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
-    await user.click(screen.getByRole("button", { name: /explorer/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: "Open workspace folder" }));
+    await user.click(within(screen.getByRole("navigation", { name: "Workspace views" })).getByRole("button", { name: /explorer/i }));
   };
 
   beforeEach(() => {
@@ -255,7 +255,7 @@ describe("EditorShell terminal wiring", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(capturedBottomPanelProps).not.toBeNull();
@@ -270,7 +270,7 @@ describe("EditorShell terminal wiring", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(capturedBottomPanelProps).not.toBeNull();
@@ -368,7 +368,7 @@ describe("EditorShell terminal wiring", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Trigger the bottom panel so we can observe the session key
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });
@@ -415,7 +415,7 @@ describe("EditorShell terminal wiring", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Open the panel via run (sets logs tab + opens panel)
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
@@ -472,7 +472,7 @@ describe("EditorShell terminal wiring", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Start a run so the bottom panel opens on logs tab
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
@@ -514,7 +514,7 @@ describe("EditorShell terminal wiring", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     const split = await screen.findByTestId("resizable-split");
     expect(split).toHaveAttribute("data-orientation", "vertical");
@@ -530,7 +530,7 @@ describe("EditorShell terminal wiring", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
@@ -555,7 +555,7 @@ describe("EditorShell terminal wiring", () => {
     render(<EditorShell />);
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
 
     await waitFor(() => {
       expect(screen.getByTestId("resizable-split")).toHaveAttribute("data-size", "456");
@@ -579,7 +579,7 @@ describe("EditorShell terminal wiring", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
     // Trigger run so the bottom panel renders
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });
@@ -618,7 +618,7 @@ describe("EditorShell terminal wiring", () => {
 
     // Open first file and trigger bottom panel
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click((await screen.findAllByRole("button", { name: /run active go file/i }))[0]);
+    await user.click((await within(screen.getByTestId("editor-workbench")).findAllByRole("button", { name: /run active go file/i }))[0]);
     await waitFor(() => {
       expect(screen.getByTestId("bottom-panel")).toBeInTheDocument();
     });

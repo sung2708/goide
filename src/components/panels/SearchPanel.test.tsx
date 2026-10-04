@@ -322,5 +322,15 @@ describe("SearchPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /😀/ }));
     expect(onOpenResult).toHaveBeenCalledWith("Việt Nam.go", 1, expect.any(String), 4, { from: 3, to: 6, preview: "😀 tên tên" });
   });
+  it("visits every occurrence on the same line forward and backward, preserving whitespace in the query", async () => {
+    const user = userEvent.setup(), onOpenResult = vi.fn();
+    render(<SearchPanel results={[{ relativePath: "main.go", matches: [{ line: 3, preview: " a  a ", ranges: [{ from: 0, to: 3 }, { from: 3, to: 6 }] }] }]} onSearch={vi.fn()} onOpenResult={onOpenResult} />);
+    const input = screen.getByPlaceholderText(/^search$/i);
+    await user.type(input, " a ");
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(onOpenResult).toHaveBeenLastCalledWith("main.go", 3, " a ", 4, { from: 3, to: 6, preview: " a  a " });
+    fireEvent.keyDown(input, { key: "Enter", shiftKey: true });
+    expect(onOpenResult).toHaveBeenLastCalledWith("main.go", 3, " a ", 1, { from: 0, to: 3, preview: " a  a " });
+  });
 
 });

@@ -169,7 +169,7 @@ describe("EditorShell debug controller", () => {
     getDebuggerStateMock.mockImplementation(async () => ({ ok: true, data: nativeState }));
     const rendered = render(<EditorShell />);
     await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     await user.click(await screen.findByRole("button", { name: /^stop debugging$/i }));
     expect(deactivateDeepTraceMock).toHaveBeenCalledWith({ sessionId: "started-owner" });
     deactivateDeepTraceMock.mockClear();
@@ -233,7 +233,7 @@ describe("EditorShell debug controller", () => {
   it("cancels a hung startup reply by its captured UUID before releasing document locks", async () => {
     const user = userEvent.setup(); render(<EditorShell />); await openWorkspaceOpenGoFileAndSwitchToDebugTab(user);
     vi.mocked(startDebugSession).mockImplementationOnce(() => new Promise(() => {}));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     await screen.findByRole("button", { name: "Cancel Debug startup" });
     expect(screen.getByRole("button", { name: "Close main.go" })).toBeDisabled();
     const calls = vi.mocked(startDebugSession).mock.calls; const request = calls[calls.length - 1][0];
@@ -241,7 +241,7 @@ describe("EditorShell debug controller", () => {
     expect(cancelDebuggerStartupMock).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", requestId: request.requestId });
     await waitFor(() => expect(screen.getByRole("button", { name: "Close main.go" })).toBeEnabled());
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
-    expect(screen.getByRole("button", { name: /debug active go file/i })).toBeEnabled();
+    expect(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i })).toBeEnabled();
   });
 
   it("shows a dedicated debug failure modal when debug start fails", async () => {
@@ -259,7 +259,7 @@ describe("EditorShell debug controller", () => {
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
 
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     expect(await screen.findByRole("dialog", { name: /unable to start debug session/i })).toBeInTheDocument();
     expect(screen.getByText(/Delve is not installed/i)).toBeInTheDocument();
@@ -273,7 +273,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     expect(
       await screen.findByRole("dialog", { name: /unable to start debug session/i })
@@ -295,7 +295,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     const dialog = await screen.findByRole("dialog", { name: /unable to start debug session/i });
     expect(dialog).toBeInTheDocument();
@@ -305,7 +305,7 @@ describe("EditorShell debug controller", () => {
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
 
     // The debug button should be re-enabled (not starting state)
-    expect(screen.getByRole("button", { name: /debug active go file/i })).not.toBeDisabled();
+    expect(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i })).not.toBeDisabled();
   });
 
   it("does not show the failure dialog when debug start succeeds", async () => {
@@ -319,7 +319,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
   });
@@ -331,7 +331,7 @@ describe("EditorShell debug controller", () => {
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await toggleMockBreakpointAtLine(12);
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     expect(startDebugSession).toHaveBeenCalled();
     expect(getDebuggerStateMockResult().breakpoints).toContainEqual({
@@ -362,7 +362,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
     await waitFor(() =>
       expect(screen.getByRole("button", { name: /^run active go file$/i })).toBeDisabled()
@@ -377,7 +377,7 @@ describe("EditorShell debug controller", () => {
     setMockDebuggerState({ sessionActive: true, paused: false, activeRelativePath: "main.go" });
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
     await user.click(await screen.findByRole("button", { name: /^pause debugging$/i }));
     await waitFor(() => expect(debuggerPause).toHaveBeenCalledWith({ workspaceRoot: "C:/workspace", sessionId: "actual-owner", stopToken: null }));
@@ -400,7 +400,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     // Navigate to the Debug sidebar tab to see session controls
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
@@ -425,7 +425,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     // Navigate to the Debug sidebar tab to see session controls
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
@@ -450,7 +450,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     // Navigate to the Debug sidebar tab to see session controls
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
 
@@ -476,7 +476,7 @@ describe("EditorShell debug controller", () => {
 
     await openWorkspaceAndShowExplorer(user);
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
-    await user.click(screen.getByRole("button", { name: /debug active go file/i }));
+    await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
     // Navigate to the Debug sidebar tab to see session controls
     await user.click(await screen.findByRole("button", { name: /^debug$/i }));
     await screen.findByRole("button", { name: /stop debugging/i });

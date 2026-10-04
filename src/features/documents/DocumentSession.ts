@@ -48,6 +48,24 @@ export class DocumentSession {
     this.publish({ ...this.state, activeId: id });
   }
   deactivate() { this.publish({ ...this.state, activeId: null }); }
+  restoreDrafts(drafts: readonly { path: string; text: string; baseline: string }[]) {
+    if (!this.state.root || this.saving) throw new Error("Open a workspace and wait for document saves before recovery.");
+    const unique = new Set<string>();
+    for (const draft of drafts) {
+      if (!draft.path || draft.path.includes("\\") || draft.path.includes("\0") || draft.path.startsWith("/") || /^[A-Za-z]:/.test(draft.path) || draft.path.split("/").some(part => !part || part === "." || part === "..") || unique.has(draft.path)) throw new Error("Invalid recovered draft path.");
+      unique.add(draft.path);
+      const open = this.state.documents.find(document => document.path === draft.path);
+      if (open && isDocumentDirty(open)) throw new Error(`Save or export the dirty open buffer before recovery: ${draft.path}`);
+    }
+    const additions = drafts.filter(draft => !this.state.documents.some(document => document.path === draft.path));
+    if (this.state.documents.length + additions.length > 100) throw new Error("Recovery exceeds the open document limit.");
+    const documents = this.state.documents.map(document => {
+      const draft = drafts.find(item => item.path === document.path);
+      return draft ? { ...document, text: draft.text, baseline: draft.baseline, version: document.version + 1 } : document;
+    });
+    for (const draft of additions) documents.push({ ...draft, id: ++this.nextId, version: 1, readOnly: false, view: { anchor: 0, head: 0, scrollTop: 0, scrollLeft: 0 } });
+    this.publish({ ...this.state, documents, activeId: documents.find(document => document.path === drafts[0]?.path)?.id ?? this.state.activeId });
+  }
   acknowledge(id: number, baseline: string) { this.update(id, document => ({ ...document, baseline })); }
   setReadOnly(id: number, readOnly: boolean) { this.update(id, document => ({ ...document, readOnly })); }
   private update(id: number, change: (document: OpenDocument) => OpenDocument) {

@@ -161,17 +161,17 @@ function SearchPanel({
     }
   }, [focusTrigger]);
 
-  const activeQuery = query.trim();
+  const activeQuery = query;
   const displayedResults = results;
   const flatDisplayedMatches = displayedResults.flatMap((file) =>
-    file.matches.map((match) => ({
+    file.matches.flatMap((match) => (match.ranges?.length ? match.ranges : [undefined]).map(range => ({
       file: file.relativePath,
       line: match.line,
-      column: match.ranges?.[0] ? match.ranges[0].from + 1 : undefined,
-      target: match.ranges?.[0] ? { ...match.ranges[0], preview: match.preview } : undefined,
+      column: range ? range.from + 1 : undefined,
+      target: range ? { ...range, preview: match.preview } : undefined,
       preview: match.preview,
-      key: `${file.relativePath}:${match.line}:${match.preview}`,
-    }))
+      key: `${file.relativePath}:${match.line}:${match.preview}:${range?.from ?? ""}:${range?.to ?? ""}`,
+    })))
   );
   const displayedResultCount = displayedResults.reduce(
     (total, file) => total + file.matches.reduce((count, match) => count + (match.ranges?.length ?? 1), 0),
@@ -476,13 +476,13 @@ function SearchPanel({
                             <button
                               type="button"
                               className={`flex min-w-0 flex-1 items-start gap-2 text-left ${
-                                activeMatchKey === `${file.relativePath}:${match.line}:${match.preview}`
+                                activeMatchKey?.startsWith(`${file.relativePath}:${match.line}:${match.preview}:`)
                                   ? "rounded bg-(--bg-hover)"
                                   : ""
                               }`}
                               onClick={() => {
                                 setActiveMatchKey(
-                                  `${file.relativePath}:${match.line}:${match.preview}`
+                                  `${file.relativePath}:${match.line}:${match.preview}:${match.ranges?.[0]?.from ?? ""}:${match.ranges?.[0]?.to ?? ""}`
                                 );
                                 if (match.ranges?.[0]) onOpenResult(file.relativePath, match.line, activeQuery, match.ranges[0].from + 1, { ...match.ranges[0], preview: match.preview }); else onOpenResult(file.relativePath, match.line, activeQuery);
                               }}

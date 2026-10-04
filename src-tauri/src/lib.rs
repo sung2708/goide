@@ -52,6 +52,7 @@ pub fn run() {
             ui_bridge::git_commands::git_commit_details,
             ui_bridge::git_commands::git_historical_diff,
             ui_bridge::document_commands::get_workspace_file_state,
+            ui_bridge::document_commands::export_document_copy,
             ui_bridge::document_commands::get_workspace_file_info,
             ui_bridge::language_commands::query_workspace_language,
             ui_bridge::language_commands::query_workspace_signature,

@@ -16,6 +16,9 @@ import CommandPalette from "../command-palette/CommandPalette";
 import { useCommandRegistry } from "../../features/commands/useCommandRegistry";
 import type { Command } from "../../features/commands/registry";
 import { useDocumentSession } from "../../features/documents/useDocumentSession";
+import { LocationHistory, type SourceLocation } from "../../features/navigation/LocationHistory";
+import { useDraftRecovery } from "../../features/documents/useDraftRecovery";
+import { exportDocumentCopy } from "../../features/documents/exportCopy";
 import { useOpenDocumentDiskSync } from "../../features/documents/useOpenDocumentDiskSync";
 import DocumentTabs from "../../features/documents/DocumentTabs";
 import { useSaveDecision } from "../../features/documents/useSaveDecision";
@@ -315,9 +318,14 @@ function EditorShell() {
   const [newProjectToOpen, setNewProjectToOpen] = useState<string | null>(null);
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const { session: documents, snapshot: documentSnapshot, workspacePath, setWorkspacePath, activeFilePath, setActiveFilePath, activeFileContent, setActiveFileContent, isDirty, activeFilePathRef, savedContentRef, latestEditorContentRef } = useDocumentSession();
+  const navigationHistory = useMemo(() => new LocationHistory(), [workspacePath]);
+  const sourceNavigationRef = useRef(0);
+  useEffect(() => { sourceNavigationRef.current++; }, [workspacePath]);
   const [isOpening, setIsOpening] = useState(false);
   const documentDecision = useSaveDecision(workspacePath);
   const [fileError, setFileError] = useState<string | null>(null);
+  const draftRecovery = useDraftRecovery(documents, documentSnapshot, setFileError, settings.values["files.draftRecovery"]);
+  const [isExportingDraft, setIsExportingDraft] = useState(false);
   const [fsSyncError, setFsSyncError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
@@ -439,6 +447,14 @@ function EditorShell() {
   const [documentSymbols, setDocumentSymbols] = useState<DocumentOutlineItem[]>([]);
   const [isSymbolsPending, setIsSymbolsPending] = useState(false);
   const [cursorOffset, setCursorOffset] = useState<number | null>(null);
+  const cursorOffsetRef = useRef(cursorOffset); cursorOffsetRef.current = cursorOffset;
+  const navigationOrigin = useCallback((): SourceLocation | null => {
+    const doc = documents.active;
+    if (!doc) return null;
+    const offset = Math.max(0, Math.min(cursorOffsetRef.current ?? doc.view.head, doc.text.length));
+    const preceding = doc.text.slice(0, offset);
+    return { file: doc.path, line: preceding.split("\n").length, column: offset - preceding.lastIndexOf("\n") };
+  }, [documents]);
   const savePreparation = useSavePreparation(documents, documentSnapshot, settings.values, setFileError);
   const language = useLanguageQueries(documentSnapshot, cursorOffset, setFileError);
   const requestEditorHover = useEditorHover(documentSnapshot, setFileError);
@@ -859,28 +875,20 @@ function EditorShell() {
     : toTraceBubbleConfidence(counterpartResolution?.confidence ?? effectiveHint?.confidence);
 
 
-  const requestJump = useCallback((targetLine: number | null, column = 1) => {
-    if (targetLine === null) {
-      return;
-    }
-    if (targetLine < 1 || !Number.isInteger(targetLine)) {
-      return;
-    }
-    if (latestEditorContentRef.current === null) {
-      return;
-    }
+  const requestJump = useCallback((targetLine: number | null, column = 1, record = true) => {
+    if (targetLine === null || targetLine < 1 || !Number.isInteger(targetLine) || latestEditorContentRef.current === null) return false;
     const maxLine = latestEditorContentRef.current.split("\n").length;
-    if (targetLine > maxLine) {
-      return;
-    }
-
+    if (targetLine > maxLine) return false;
     jumpRequestIdRef.current += 1;
+    if (record) sourceNavigationRef.current++;
+    if (record && activeFilePathRef.current) navigationHistory.visit(navigationOrigin(), { file: activeFilePathRef.current, line: targetLine, column });
     setJumpRequest({
       line: targetLine,
       column,
       requestId: jumpRequestIdRef.current,
     });
-  }, [latestEditorContentRef]);
+    return true;
+  }, [latestEditorContentRef, activeFilePathRef, navigationHistory, navigationOrigin]);
 
   const handleJump = useCallback(() => {
     requestJump(resolveCounterpartFromActiveHint()?.line ?? null);
@@ -1950,6 +1958,28 @@ function EditorShell() {
     if (workspacePath === newProjectToOpen) void handleOpenFile("main.go");
   }, [newProjectToOpen, workspacePath, isOpening, isNewGoProjectOpen, handleOpenFile]);
   const workspaceHistory = useWorkspaceHistory(documents, documentSnapshot, handleOpenWorkspace, setFileError);
+  const navigateSourceLocation = async (location: SourceLocation) => {
+    const generation = ++sourceNavigationRef.current;
+    const root = workspacePathRef.current, origin = navigationOrigin();
+    await handleOpenFile(location.file);
+    if (generation !== sourceNavigationRef.current || workspacePathRef.current !== root || activeFilePathRef.current !== location.file) return;
+    if (requestJump(location.line, location.column, false)) {
+      navigationHistory.visit(origin, location);
+      setEditorSearchTarget(null); setEditorHighlightQuery(null);
+    }
+  };
+  const navigateHistory = async (direction: -1 | 1) => {
+    const generation = ++sourceNavigationRef.current;
+    const target = navigationHistory.peek(direction), root = workspacePathRef.current;
+    if (!target) return;
+    await handleOpenFile(target.file);
+    if (generation !== sourceNavigationRef.current || workspacePathRef.current !== root || activeFilePathRef.current !== target.file || navigationHistory.peek(direction) !== target) return;
+    const lines = latestEditorContentRef.current?.split("\n") ?? [];
+    const line = Math.min(target.line, lines.length), column = Math.min(target.column, (lines[line - 1]?.length ?? 0) + 1);
+    if (requestJump(line, column, false)) {
+      navigationHistory.move(direction); setEditorSearchTarget(null); setEditorHighlightQuery(null);
+    }
+  };
 
   // Git has already preserved the buffer before entering this callback. Never
   // route reload through handleOpenFile: its save targets the *new* branch.
@@ -2101,8 +2131,7 @@ function EditorShell() {
   const selectedProblemRef = useRef<string | null>(null);
   const navigateProblem = (problem: Problem) => {
     selectedProblemRef.current = problem.id;
-    const root = workspacePath;
-    void handleOpenFile(problem.file).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === problem.file) requestJump(problem.line, problem.column); });
+    void navigateSourceLocation({ file: problem.file, line: problem.line, column: problem.column });
   };
   const navigateAdjacentProblem = (direction: number) => {
     if (problems.length === 0) return;
@@ -2122,6 +2151,8 @@ function EditorShell() {
     }
   }, [workspacePath, activeFilePath, commandBusy, runStatus, isDebugSessionBusy, goTests.run, testDirectory, handleStartDebug, handleRunFileStandard]);
   const commands: Command[] = [
+    { id: "editor.navigateBack", title: "Navigate Back", category: "Editor", shortcut: "Alt+ArrowLeft", allowInInput: true, disabled: commandBusy || !navigationHistory.peek(-1) ? "No previous source location." : undefined, run: () => navigateHistory(-1) },
+    { id: "editor.navigateForward", title: "Navigate Forward", category: "Editor", shortcut: "Alt+ArrowRight", allowInInput: true, disabled: commandBusy || !navigationHistory.peek(1) ? "No next source location." : undefined, run: () => navigateHistory(1) },
     { id: "view.focusMode", title: "Toggle Focus Mode", category: "View", shortcut: "Mod+Shift+Enter", run: () => setIsFocusMode(value => !value) },
     { id: "editor.goToLine", title: "Go to Line", category: "Editor", shortcut: "Mod+g", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: goToLine.open },
     ...(["find", "replace", "next", "previous"] as const).map(kind => ({ id: `editor.${kind}`, title: kind === "find" ? "Find in File" : kind === "replace" ? "Replace in File" : kind === "next" ? "Find Next" : "Find Previous", category: "Editor", shortcut: kind === "find" ? "Mod+f" : kind === "replace" ? "Mod+h" : kind === "next" ? "F3" : "Shift+F3", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: () => { if (!editorFindCommands.current) throw new Error("Editor is not ready."); if (kind === "find" || kind === "replace") { setActiveTab("explorer"); setEditorSearchTarget(null); setEditorHighlightQuery(null); } editorFindCommands.current[kind](); } })),
@@ -2142,6 +2173,14 @@ function EditorShell() {
     { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || documents.active?.readOnly || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
     { id: "file.cancelSavePreparation", title: "Cancel Save Preparation", disabled: !savePreparation.isPreparing ? "No Go save preparation is running." : undefined, run: savePreparation.cancel },
     { id: "file.saveAll", title: "Save All Files", shortcut: "Ctrl+Alt+s", disabled: !workspacePath || commandBusy || isSavingRef.current ? "Open a workspace and wait for document operations." : undefined, run: preserveAllDocuments },
+    { id: "file.exportCopy", title: "Save Copy of Active Document…", category: "File", shortcut: "Mod+Shift+s", disabled: !documents.active || commandBusy || isExportingDraft ? "Open a document and wait for document operations." : undefined, run: async () => {
+      const draft = documents.active;
+      if (!draft) return;
+      setIsExportingDraft(true);
+      try { await exportDocumentCopy(draft.path, draft.text); }
+      finally { setIsExportingDraft(false); }
+    } },
+    { id: "file.recoverDrafts", title: "Review Stored Drafts", category: "File", run: draftRecovery.open },
     { id: "file.close", title: "Close Active Editor Tab", shortcut: "Mod+w", disabled: documentSnapshot.activeId === null || commandBusy || isSavingRef.current ? "Open a file and wait for document operations." : undefined, run: () => documentSnapshot.activeId !== null ? closeDocument(documentSnapshot.activeId) : undefined },
     { id: "workspace.search", allowInInput: true, title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setIsFocusMode(false); setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
     { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsFocusMode(false); setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
@@ -2186,9 +2225,8 @@ function EditorShell() {
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
-          const root = workspacePath;
           language.close();
-          void handleOpenFile(location.path).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === location.path) requestJump(location.line, location.column); });
+          void navigateSourceLocation({ file: location.path, line: location.line, column: location.column });
         }} />
         <div className="flex items-center gap-2">
           <img src="/brand/icon.svg" alt="" className="size-4 shrink-0" aria-hidden="true" />
@@ -2323,13 +2361,15 @@ function EditorShell() {
                   onSearch={submitWorkspaceSearch}
                   onOpenResult={(file, line, query, column, target) => {
                     const root = workspacePathRef.current;
+                    const generation = ++sourceNavigationRef.current;
+                    const origin = navigationOrigin();
                     const navigation = ++searchNavigation.current;
                     void handleOpenFile(file).then(() => {
-                      if (navigation !== searchNavigation.current || workspacePathRef.current !== root || activeFilePathRef.current !== file) return;
+                      if (generation !== sourceNavigationRef.current || navigation !== searchNavigation.current || workspacePathRef.current !== root || activeFilePathRef.current !== file) return;
                       if (target && latestEditorContentRef.current?.split("\n")[line - 1]?.replace(/\r$/, "") !== target.preview) { setFileError("Search result changed in the editor or on disk. Search again before navigating."); return; }
                       setEditorHighlightQuery(target ? null : query);
                       setEditorSearchTarget(target ? { file, line, ...target } : null);
-                      requestJump(line, column ?? 1);
+                      if (requestJump(line, column ?? 1, false)) navigationHistory.visit(origin, { file, line, column: column ?? 1 });
                     });
                   }}
                   autoFocus
@@ -2546,6 +2586,7 @@ function EditorShell() {
               data-testid="editor-workbench"
               className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-(--crust)"
             >
+              {draftRecovery.banner}
               {documentSnapshot.documents.length > 0 && (
                 <>
                   <DocumentTabs snapshot={documentSnapshot} busy={isReading || explorerOperationBusy || gitOperationBusy || isBranchMutationInProgress} activate={path => void handleOpenFile(path)} close={id => void closeDocument(id)} />
@@ -2823,6 +2864,7 @@ function EditorShell() {
       {isCommandPaletteOpen && <CommandPalette commands={commands} execute={executeCommand} onClose={() => setIsCommandPaletteOpen(false)} />}
       {goToLine.dialog}
       {documentDecision.dialog}
+      {draftRecovery.dialog}
       {isQuickOpenOpen && <QuickOpenPicker query={quickOpenQuery} onQuery={setQuickOpenQuery} files={quickOpenFilteredFiles}
         loading={quickOpenLoading} error={quickOpenError} notice={quickOpenNotice} onClose={() => setIsQuickOpenOpen(false)} onChoose={handleQuickOpenSelect} />}
 

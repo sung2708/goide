@@ -19,6 +19,7 @@ Welcome to the Goro engineering and product documentation. This directory provid
 - [BUILDING.md](BUILDING.md): Detailed build instructions and prerequisites across Windows, macOS, and Linux, including MSVC toolchain configuration.
 - [TESTING.md](TESTING.md): Testing strategies, Vitest suites, Rust tests, and testing conventions.
 - [TOOLCHAIN_MANAGER.md](TOOLCHAIN_MANAGER.md): managed Go/gopls/Delve setup, integrity, activation and platform acceptance.
+- [DOCUMENT_RECOVERY.md](DOCUMENT_RECOVERY.md): native document copies, bounded local draft checkpoints, explicit recovery and installed-app acceptance.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): Solutions for common issues regarding gopls, Delve, terminal PTY, and MSVC toolchains.
 
 ### 4. Release Engineering & Operations

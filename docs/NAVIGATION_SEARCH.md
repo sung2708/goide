@@ -54,7 +54,9 @@ Existing document-symbol navigation is preserved. Dedicated gopls Document/Works
 
 ## Navigation History
 
-Recent files/workspace/tab restoration exists. Source-jump Back/Forward history is not complete and must not be confused with document Undo.
+Recent files/workspace/tab restoration and workspace-local source-jump Back/Forward
+exist. The current implementation and scope are described below; source history
+is separate from document Undo.
 
 ## Tests added
 
@@ -82,15 +84,38 @@ Local native execution is unavailable. The preceding navigation checkpoint a7323
 
 ## Linux Validation
 
-Local native execution is unavailable; hosted CI must validate this source revision. Previous source revisions passing Linux do not constitute validation of these changes.
+Local Ubuntu WSL is present, but lacks Rust, Go and the GTK/WebKit build
+dependencies required for this project's native acceptance. Hosted CI must
+validate this source revision. Previous source revisions passing Linux do not
+constitute validation of these changes.
 
 ## Remaining P0
 
-Complete central action migration; complete-match keyboard iteration and native navigation/focus acceptance; full workspace overlay/stale-result and partial-failure acceptance; replacement per-file outcomes/recovery UX; complete end-to-end large-workspace/desktop acceptance; hosted platform matrix for the current revision. P0 is not complete.
+Complete central action migration and native navigation/focus acceptance; full
+workspace overlay/stale-result and partial-failure acceptance; replacement per-file
+outcomes/recovery UX; complete end-to-end large-workspace/desktop acceptance;
+hosted platform matrix for the current revision. P0 is not complete.
+
+Develop now iterates each native match range on the same line with Enter and
+Shift+Enter, preserving significant query whitespace. Unreadable files/traversal
+failures retain usable matches and produce an explicit limited-result warning,
+with up to ten failure details. A Windows locked-file regression covers this path.
+Budgets, cancellation, encoding exclusions and exact replacement review still apply.
+
+Navigate Back/Forward (`Alt+Left` / `Alt+Right`) retain up to 100 workspace-local
+source locations for explicit editor jumps, language results, search and Problems.
+Changed workspaces clear history; a failed file open does not consume an entry.
+Restoring an older location clamps line/column to the current buffer. Async source
+jumps reject superseded requests and changed roots. These routes share history;
+ordinary tab activation is not recorded. Backend/project-wide symbol pickers and
+installed-app focus/keyboard acceptance remain separate open work.
 
 ## Remaining P1
 
-Dedicated gopls symbols; source-jump Back/Forward history; bounded search history; per-file replacement actions; match exclusions; Open to Side; shared text-diff preview; branch/theme/symbol Quick Pick migration. Recent commands/files and file exclusion are implemented but do not close all P1 work.
+Dedicated gopls symbols; bounded search history; per-file replacement actions;
+match exclusions; Open to Side; shared text-diff preview; branch/theme/symbol
+Quick Pick migration. Source-jump history, recent commands/files and file
+exclusion are implemented but do not close all P1 work.
 
 ## Remaining P2
 
