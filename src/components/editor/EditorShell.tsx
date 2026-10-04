@@ -321,6 +321,7 @@ function EditorShell() {
   const [fsSyncError, setFsSyncError] = useState<string | null>(null);
   const [isReading, setIsReading] = useState(false);
   const [isBottomPanelOpen, setIsBottomPanelOpen] = useState(false);
+  const [isFocusMode, setIsFocusMode] = useState(false);
   const [hasLoadedBottomPanel, setHasLoadedBottomPanel] = useState(false);
   const [bottomPanelTab, setBottomPanelTab] = useState<BottomPanelTab>("logs");
   const [mode, setMode] = useState<"quick-insight" | "deep-trace">(
@@ -2121,9 +2122,10 @@ function EditorShell() {
     }
   }, [workspacePath, activeFilePath, commandBusy, runStatus, isDebugSessionBusy, goTests.run, testDirectory, handleStartDebug, handleRunFileStandard]);
   const commands: Command[] = [
+    { id: "view.focusMode", title: "Toggle Focus Mode", category: "View", shortcut: "Mod+Shift+Enter", run: () => setIsFocusMode(value => !value) },
     { id: "editor.goToLine", title: "Go to Line", category: "Editor", shortcut: "Mod+g", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: goToLine.open },
     ...(["find", "replace", "next", "previous"] as const).map(kind => ({ id: `editor.${kind}`, title: kind === "find" ? "Find in File" : kind === "replace" ? "Replace in File" : kind === "next" ? "Find Next" : "Find Previous", category: "Editor", shortcut: kind === "find" ? "Mod+f" : kind === "replace" ? "Mod+h" : kind === "next" ? "F3" : "Shift+F3", disabled: !activeFilePath || commandBusy ? "Open a document and wait for document operations." : undefined, run: () => { if (!editorFindCommands.current) throw new Error("Editor is not ready."); if (kind === "find" || kind === "replace") { setActiveTab("explorer"); setEditorSearchTarget(null); setEditorHighlightQuery(null); } editorFindCommands.current[kind](); } })),
-    { id: "workspace.replace", allowInInput: true, title: "Replace in Files", category: "Search", shortcut: "Mod+Shift+h", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workspace.replace", allowInInput: true, title: "Replace in Files", category: "Search", shortcut: "Mod+Shift+h", run: () => { setIsFocusMode(false); setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
     { id: "workbench.commands", allowInInput: true, title: "Show Command Palette", shortcut: "Mod+Shift+p", run: () => setIsCommandPaletteOpen(true) },
     { id: "preferences.open", allowInInput: true, title: "Open Settings", shortcut: "Mod+,", run: () => setIsSettingsOpen(true) },
     { id: "go.toolchain", title: "Go: Inspect Toolchain", run: () => setIsToolchainOpen(true) },
@@ -2141,8 +2143,8 @@ function EditorShell() {
     { id: "file.cancelSavePreparation", title: "Cancel Save Preparation", disabled: !savePreparation.isPreparing ? "No Go save preparation is running." : undefined, run: savePreparation.cancel },
     { id: "file.saveAll", title: "Save All Files", shortcut: "Ctrl+Alt+s", disabled: !workspacePath || commandBusy || isSavingRef.current ? "Open a workspace and wait for document operations." : undefined, run: preserveAllDocuments },
     { id: "file.close", title: "Close Active Editor Tab", shortcut: "Mod+w", disabled: documentSnapshot.activeId === null || commandBusy || isSavingRef.current ? "Open a file and wait for document operations." : undefined, run: () => documentSnapshot.activeId !== null ? closeDocument(documentSnapshot.activeId) : undefined },
-    { id: "workspace.search", allowInInput: true, title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
-    { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
+    { id: "workspace.search", allowInInput: true, title: "Search Workspace", shortcut: "Mod+Shift+f", run: () => { setIsFocusMode(false); setActiveTab("search"); setSearchFocusTrigger(value => value + 1); } },
+    { id: "workbench.problems", title: "Show Problems", shortcut: "Mod+Shift+m", run: () => { setIsFocusMode(false); setIsBottomPanelOpen(true); setBottomPanelTab("problems"); } },
     ...(["definition", "references", "hover"] as const).map(kind => ({ id: `language.${kind}`, title: kind === "definition" ? "Go to Definition" : kind === "references" ? "Find References" : "Show Symbol Information", shortcut: kind === "definition" ? "F12" : kind === "references" ? "Shift+F12" : undefined, disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => language.query(kind) })),
     { id: "language.signature", title: "Show Signature Help", shortcut: "Mod+Shift+Space", disabled: !workspacePath || !isGoFile(activeFilePath) || cursorOffset === null || commandBusy ? "Place the cursor in a Go document and wait for document operations." : undefined, run: () => setSignatureRequestTrigger(value => value + 1) },
     { id: "language.format", title: "Format Document", shortcut: "Shift+Alt+f", disabled: !workspacePath || !isGoFile(activeFilePath) || documents.active?.readOnly || documents.saving || commandBusy ? "Open a writable Go document and wait for document operations." : undefined, run: languageEdits.format },
@@ -2154,7 +2156,7 @@ function EditorShell() {
     { id: "go.testWorkspace", title: "Go: Test Workspace", disabled: !workspacePath || commandBusy || runStatus === "running" || isDebugSessionBusy ? "Open a workspace and finish document/Run/Debug operations." : undefined, run: () => { setIsGoTestsOpen(true); void goTests.run("workspace", testDirectory); } },
     { id: "problems.next", title: "Next Problem", shortcut: "Alt+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(1) },
     { id: "problems.previous", title: "Previous Problem", shortcut: "Alt+Shift+F8", disabled: problems.length === 0 ? "No current problems." : undefined, run: () => navigateAdjacentProblem(-1) },
-    { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => { setHasLoadedBottomPanel(true); setIsBottomPanelOpen(value => !value); } },
+    { id: "workbench.panel", title: "Toggle Terminal Panel", shortcut: "Mod+j", run: () => { setIsFocusMode(false); setHasLoadedBottomPanel(true); setIsBottomPanelOpen(value => isFocusMode || !value); } },
     { id: "go.run", title: "Run Active Go File", shortcut: "Ctrl+F5", disabled: runDisabled ? "Open a Go file and stop active Run/Debug operations." : undefined, run: handleRunFileStandard },
     { id: "go.race", title: "Run Active Go File with Race Detector", disabled: runDisabled || runtimeAvailability === "unavailable" ? "A Go file and available Go toolchain are required." : undefined, run: handleRunFileWithRace },
     { id: "go.stop", title: "Stop Run", disabled: runStatus !== "running" ? "No active run." : undefined, run: handleStopRun },
@@ -2240,8 +2242,9 @@ function EditorShell() {
               isBottomPanelOpen ? "text-[var(--text)] bg-[var(--surface0)]" : ""
             }`}
             onClick={() => {
+              setIsFocusMode(false);
               setHasLoadedBottomPanel(true);
-              setIsBottomPanelOpen((prev) => !prev);
+              setIsBottomPanelOpen((prev) => isFocusMode || !prev);
             }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
@@ -2252,28 +2255,30 @@ function EditorShell() {
           <button type="button" aria-label="Commands" title="Command Palette (Ctrl+Shift+P)" className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" onClick={() => void executeCommand("workbench.commands")}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg><span className="sr-only">Commands</span></button>
           <button type="button" aria-label="Open Settings" title="Settings (Ctrl+,)" className="flex size-7 items-center justify-center rounded text-[var(--subtext0)] transition-colors hover:bg-[var(--bg-hover)] hover:text-[var(--text)]" onClick={() => setIsSettingsOpen(true)}><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span className="sr-only">Open Settings</span></button>
           <ThemeSwitcher />
+          <button type="button" aria-label="Toggle Focus Mode" aria-pressed={isFocusMode} title="Focus Mode (Ctrl+Shift+Enter)" className="workspace-focus-button" onClick={() => setIsFocusMode(value => !value)}>{isFocusMode ? "Exit Focus" : "Focus"}</button>
         </div>
       </div>
       <div className="flex min-h-0 min-w-0 flex-1 overflow-hidden">
         <ActivityBar
           activeTab={activeTab}
-          onTabChange={setActiveTab}
+          onTabChange={tab => { setIsFocusMode(false); setActiveTab(tab); }}
           signalCount={raceSignals.length}
           showDebugTab={showDebugTab}
           onOpenSettings={() => setIsSettingsOpen(true)}
-          onToggleBottomPanel={() => setIsBottomPanelOpen(prev => !prev)}
+          onToggleBottomPanel={() => { setIsFocusMode(false); setIsBottomPanelOpen(prev => isFocusMode || !prev); }}
           isBottomPanelOpen={isBottomPanelOpen}
         />
         <ResizableSplit
           orientation="horizontal"
           className="flex-1"
+          collapsed={isFocusMode}
           size={workspaceLayout.splitSizes.left}
           defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.left}
           minSize={120}
           maxSize={2000}
           onResize={handleLeftPaneResize}
           primary={
-            <aside inert={branchSwitchLoading} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
+            <aside inert={branchSwitchLoading || isFocusMode} className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-(--mantle)">
               {activeTab === "explorer" && (
                 <Explorer
                   workspacePath={workspacePath}
@@ -2501,16 +2506,16 @@ function EditorShell() {
           <ResizableSplit
             orientation="vertical"
             className="h-full flex-1 flex-col-reverse"
-            size={isBottomPanelOpen ? workspaceLayout.terminalSize : 0}
+            size={isBottomPanelOpen && !isFocusMode ? workspaceLayout.terminalSize : 0}
             resizeAnchor="end"
             defaultSize={DEFAULT_WORKSPACE_LAYOUT.splitSizes.terminalBottom}
             minSize={isBottomPanelOpen ? 120 : 0}
             maxSize={2000}
-            collapsed={!isBottomPanelOpen}
+            collapsed={!isBottomPanelOpen || isFocusMode}
             onResize={handleTerminalPaneResize}
             primary={
               <div
-                hidden={!isBottomPanelOpen}
+                hidden={!isBottomPanelOpen || isFocusMode}
                 className="h-full min-h-0 min-w-0"
               >
                 {hasLoadedBottomPanel ? (

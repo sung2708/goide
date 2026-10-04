@@ -34,9 +34,9 @@ const editorTheme = EditorView.theme(
     ".cm-scroller": {
       fontFamily:
         '"JetBrains Mono", "Fira Code", "SFMono-Regular", ui-monospace, monospace',
-      fontSize: "13px",
+      fontSize: "inherit",
       lineHeight: "1.62",
-      padding: "8px 0",
+      padding: "14px 0",
       overflow: "auto",
       overscrollBehavior: "contain",
     },
@@ -44,7 +44,7 @@ const editorTheme = EditorView.theme(
       padding: "0",
     },
     ".cm-line": {
-      padding: "0 10px",
+      padding: "0 18px",
       boxSizing: "border-box",
     },
     [`.cm-line.${PREDICTED_HINT_UNDERLINE_CLASS}`]: {
@@ -109,7 +109,7 @@ const editorTheme = EditorView.theme(
     },
     ".cm-lineNumbers .cm-gutterElement": {
       padding: "0 10px 0 12px",
-      fontSize: "13px",
+      fontSize: "inherit",
       lineHeight: "1.62",
       textAlign: "right",
       fontVariantNumeric: "tabular-nums",
@@ -124,7 +124,7 @@ const editorTheme = EditorView.theme(
     },
     ".cm-breakpoint-gutter .cm-gutterElement": {
       padding: "0",
-      minHeight: "calc(13px * 1.62)",
+      minHeight: "1.62em",
       display: "flex",
       alignItems: "center",
       justifyContent: "center",

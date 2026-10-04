@@ -794,7 +794,7 @@ button:focus-visible,
   gap: 16px;
   padding: 0 14px;
   border-bottom: 1px solid var(--border-structural);
-  background: var(--surface-chrome);
+  background: var(--bg-chrome);
 
 }
 .workspace-brand {
@@ -842,6 +842,8 @@ button:focus-visible,
   box-shadow: 0 0 0 1px var(--border-subtle);
 }
 .workspace-titlebar-note { width: 140px; text-align: right; font-size: 9px; letter-spacing: 1.5px; color: var(--overlay1); }
+.workspace-focus-button { border: 1px solid var(--border-subtle); border-radius: 5px; padding: 4px 9px; color: var(--subtext0); font-size: 11px; white-space: nowrap; }
+.workspace-focus-button:hover, .workspace-focus-button[aria-pressed="true"] { color: var(--text); background: var(--bg-active); border-color: var(--brand-primary); }
 .editor-toolbar { min-height: 36px; padding-top: 0; padding-bottom: 0; }
 .editor-file-tab {
   display: flex;
@@ -877,10 +879,10 @@ button:focus-visible,
 
 .welcome-card {
   width: 100%;
-  max-width: 440px;
+  max-width: 520px;
   display: flex;
   flex-direction: column;
-  gap: 20px;
+  gap: 26px;
   margin: auto;
 }
 
@@ -903,7 +905,7 @@ button:focus-visible,
 .welcome-title {
   margin: 0;
   font-family: var(--font-display);
-  font-size: 22px;
+  font-size: 30px;
   font-weight: 700;
   letter-spacing: -0.5px;
   line-height: 1;
@@ -987,8 +989,6 @@ button:focus-visible,
   flex-direction: column;
   border: 1px solid var(--border-structural);
   background: var(--surface-glass);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   box-shadow: var(--shadow-popover);
 }
 
@@ -1007,7 +1007,7 @@ button:focus-visible,
   cursor: pointer;
   text-align: left;
   width: 100%;
-  transition: background 120ms ease, color 120ms ease, padding-left 120ms ease;
+  transition: background 120ms ease, color 120ms ease;
 }
 
 .welcome-action-item:last-child {
@@ -1017,7 +1017,6 @@ button:focus-visible,
 .welcome-action-item:hover:not(:disabled) {
   background: var(--bg-hover);
   color: var(--text);
-  padding-left: 17px;
 }
 
 .welcome-action-item:disabled {

@@ -677,6 +677,8 @@ function CodeEditor({
   onSaveRef.current = onSave;
   const onSelectionLineChangeRef = useRef(onSelectionLineChange);
   onSelectionLineChangeRef.current = onSelectionLineChange;
+  const onHoverLineChangeRef = useRef(onHoverLineChange);
+  onHoverLineChangeRef.current = onHoverLineChange;
   const onCursorOffsetChangeRef = useRef(onCursorOffsetChange);
   onCursorOffsetChangeRef.current = onCursorOffsetChange;
   const onInteractionAnchorChangeRef = useRef(onInteractionAnchorChange);
@@ -689,6 +691,13 @@ function CodeEditor({
   onRequestHoverRef.current = onRequestHover;
   const onRequestSignatureRef = useRef(onRequestSignature);
   onRequestSignatureRef.current = onRequestSignature;
+  const onDocumentSymbolsChangeRef = useRef(onDocumentSymbolsChange);
+  onDocumentSymbolsChangeRef.current = onDocumentSymbolsChange;
+  const onViewportRangeChangeRef = useRef(onViewportRangeChange);
+  onViewportRangeChangeRef.current = onViewportRangeChange;
+  const onChangeRef = useRef(onChange); onChangeRef.current = onChange;
+  // react-codemirror reconfigures the whole editor when this callback changes.
+  const emitDocumentChange = useCallback((text: string) => onChangeRef.current?.(text), []);
   const counterpartLineRef = useRef(counterpartLine);
   counterpartLineRef.current = counterpartLine;
   const suppressFindWidgetRef = useRef(suppressFindWidget);
@@ -701,9 +710,11 @@ function CodeEditor({
   const cursorOffsetRef = useRef<number | null>(null);
   const viewportRangeRef = useRef<VisibleLineRange | null>(null);
   const lastAnchorRef = useRef<InteractionAnchor | null>(null);
+  const anchorMeasureRef = useRef(0);
+  const lastCounterpartAnchorRef = useRef<InteractionAnchor | null | undefined>(undefined);
+  const hoverMeasureRef = useRef(0);
 
   const handledJumpRequestIdRef = useRef<number | null>(null);
-  const handledWheelEventsRef = useRef(new WeakSet<Event>());
 
   const emitSelectionLine = useCallback((line: number | null) => {
     const callback = onSelectionLineChangeRef.current;
@@ -734,6 +745,7 @@ function CodeEditor({
   }, []);
 
   const emitInteractionAnchor = useCallback((line: number | null) => {
+    const generation = ++anchorMeasureRef.current;
     const callback = onInteractionAnchorChangeRef.current;
     if (!callback) {
       return;
@@ -749,31 +761,45 @@ function CodeEditor({
       return;
     }
 
-    const from = view.state.doc.line(line).from;
-    const coords = view.coordsAtPos(from);
-    if (!coords) {
-      if (lastAnchorRef.current !== null) {
-        lastAnchorRef.current = null;
-        callback(null);
-      }
-      return;
-    }
-
-    const rect = container.getBoundingClientRect();
-    const nextTop = Math.max(8, Math.round(coords.top - rect.top));
-    const nextLeft = Math.max(8, Math.round(coords.left - rect.left + 16));
-
-    if (
-      lastAnchorRef.current &&
-      lastAnchorRef.current.top === nextTop &&
-      lastAnchorRef.current.left === nextLeft
-    ) {
-      return;
-    }
-
-    const nextAnchor = { top: nextTop, left: nextLeft };
-    lastAnchorRef.current = nextAnchor;
-    callback(nextAnchor);
+    view.requestMeasure({
+      key: lastAnchorRef,
+      read: () => {
+        if (line > view.state.doc.lines) return null;
+        const coords = view.coordsAtPos(view.state.doc.line(line).from);
+        if (!coords) return null;
+        const rect = container.getBoundingClientRect();
+        return { top: Math.max(8, Math.round(coords.top - rect.top)), left: Math.max(8, Math.round(coords.left - rect.left + 16)) };
+      },
+      write: anchor => {
+        if (viewRef.current !== view || anchorMeasureRef.current !== generation) return;
+        const previous = lastAnchorRef.current;
+        if (previous?.top === anchor?.top && previous?.left === anchor?.left) return;
+        lastAnchorRef.current = anchor;
+        onInteractionAnchorChangeRef.current?.(anchor);
+      },
+    });
+  }, []);
+  const emitCounterpartAnchor = useCallback(() => {
+    const view = viewRef.current, container = containerRef.current;
+    if (!view || !container || !onCounterpartAnchorChangeRef.current) return;
+    view.requestMeasure({
+      key: lastCounterpartAnchorRef,
+      read: () => {
+        const line = counterpartLineRef.current;
+        if (line === null || line < 1 || line > view.state.doc.lines) return null;
+        const coords = view.coordsAtPos(view.state.doc.line(line).from);
+        if (!coords) return null;
+        const rect = container.getBoundingClientRect();
+        return { top: Math.max(8, Math.round(coords.top - rect.top)), left: Math.max(8, Math.round(coords.left - rect.left + 16)) };
+      },
+      write: anchor => {
+        if (viewRef.current !== view) return;
+        const previous = lastCounterpartAnchorRef.current;
+        if (previous !== undefined && previous?.top === anchor?.top && previous?.left === anchor?.left) return;
+        lastCounterpartAnchorRef.current = anchor;
+        onCounterpartAnchorChangeRef.current?.(anchor);
+      },
+    });
   }, []);
   useLayoutEffect(() => {
     const view = viewRef.current;
@@ -1286,24 +1312,9 @@ function CodeEditor({
           const view = update.view;
           const container = containerRef.current;
           if (!view || !container || viewRef.current !== view) return;
-          const onCounterpartAnchorChange = onCounterpartAnchorChangeRef.current;
-          const counterpartLine = counterpartLineRef.current;
-
-          if (onCounterpartAnchorChange && counterpartLine !== null && counterpartLine >= 1 && counterpartLine <= view.state.doc.lines) {
-            const cFrom = view.state.doc.line(counterpartLine).from;
-            const cCoords = view.coordsAtPos(cFrom);
-            if (cCoords) {
-              const rect = container.getBoundingClientRect();
-              onCounterpartAnchorChange({
-                top: Math.max(8, Math.round(cCoords.top - rect.top)),
-                left: Math.max(8, Math.round(cCoords.left - rect.left + 16)), // Offset to nudge anchor into text area
-              });
-            } else {
-              onCounterpartAnchorChange(null);
-            }
-          }
-
+          emitCounterpartAnchor();
           emitInteractionAnchor(hoveredLineRef.current ?? selectedLineRef.current);
+          emitViewportRange(view);
         });
       }
     })
@@ -1320,6 +1331,7 @@ function CodeEditor({
     emitSelectionLine,
     emitCursorOffset,
     emitInteractionAnchor,
+    emitCounterpartAnchor,
   ]);
   const lastSignatureRequest = useRef(signatureRequestTrigger);
   useEffect(() => {
@@ -1381,7 +1393,7 @@ function CodeEditor({
   };
 
   const emitViewportRange = (view: EditorView) => {
-    if (!onViewportRangeChange) {
+    if (!onViewportRangeChangeRef.current) {
       return;
     }
 
@@ -1399,7 +1411,7 @@ function CodeEditor({
     }
 
     viewportRangeRef.current = nextRange;
-    onViewportRangeChange(nextRange);
+    onViewportRangeChangeRef.current(nextRange);
   };
 
   useEffect(() => {
@@ -1516,7 +1528,7 @@ function CodeEditor({
   useEffect(() => {
     const view = viewRef.current;
     if (view) view.dispatch({ effects: setSemanticAnalysisEffect.of(view.state.field(semanticAnalysisField, false) ?? null) });
-  }, [executionActionsEnabled, selectionContextKey, onEntryAction, editorView]);
+  }, [executionActionsEnabled, selectionContextKey, editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1525,7 +1537,7 @@ function CodeEditor({
     }
 
     if (!activeSemanticClient || !filePath) {
-      onDocumentSymbolsChange?.([]);
+      onDocumentSymbolsChangeRef.current?.([]);
       view.dispatch({
         effects: setSemanticAnalysisEffect.of(null),
       });
@@ -1537,7 +1549,7 @@ function CodeEditor({
         return;
       }
 
-      onDocumentSymbolsChange?.(
+      onDocumentSymbolsChangeRef.current?.(
         result.symbols.map((symbol) => ({
           name: symbol.name,
           kind: symbol.kind,
@@ -1562,7 +1574,7 @@ function CodeEditor({
     activeSemanticClient.requestAnalysis(filePath);
 
     return unsubscribe;
-  }, [activeSemanticClient, editorView, filePath, onDocumentSymbolsChange]);
+  }, [activeSemanticClient, editorView, filePath]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1576,63 +1588,21 @@ function CodeEditor({
       emitViewportRange(view);
     };
 
-    const scrollElement = view.scrollDOM as HTMLElement & {
-      scrollBy?: (options: ScrollToOptions) => void;
-    };
+    const scrollElement = view.scrollDOM;
     if (scrollElement.style) {
       scrollElement.style.overscrollBehavior = "contain";
     }
 
     requestMeasure();
 
-    const resolveWheelTarget = () => {
-      let current: HTMLElement | null = scrollElement;
-      while (current) {
-        if (current.scrollHeight > current.clientHeight) {
-          return current;
-        }
-        current = current.parentElement;
-      }
-      return scrollElement;
-    };
-
-    const handleWheel = (event: WheelEvent) => {
-      if (handledWheelEventsRef.current.has(event)) {
-        return;
-      }
-      if (event.ctrlKey || (event.deltaX === 0 && event.deltaY === 0)) {
-        return;
-      }
-      handledWheelEventsRef.current.add(event);
-
-      const normalizeDelta = (delta: number) => {
-        if (event.deltaMode === 1) {
-          return delta * 16;
-        }
-        if (event.deltaMode === 2) {
-          return delta * (container.clientHeight || scrollElement.clientHeight);
-        }
-        return delta;
-      };
-
-      const left = normalizeDelta(event.deltaX);
-      const top = normalizeDelta(event.deltaY);
-      const wheelTarget = resolveWheelTarget() as HTMLElement & {
-        scrollBy?: (options: ScrollToOptions) => void;
-      };
-
-      if (typeof wheelTarget.scrollBy === "function") {
-        wheelTarget.scrollBy({ left, top, behavior: "auto" });
-      } else {
-        wheelTarget.scrollLeft += left;
-        wheelTarget.scrollTop += top;
-      }
-      emitViewportRange(view);
-      event.preventDefault();
-    };
-
-    container.addEventListener("wheel", handleWheel, { passive: false });
-    scrollElement.addEventListener("wheel", handleWheel, { passive: false });
+    // Leave wheel/trackpad momentum to the browser. No blocking wheel listener,
+    // ancestor layout scan, or synthetic scroll on each input event.
+    const handleScroll = () => view.requestMeasure({
+      key: viewportRangeRef,
+      read: () => null,
+      write: () => { if (viewRef.current === view) emitViewportRange(view); },
+    });
+    scrollElement.addEventListener("scroll", handleScroll, { passive: true });
 
     const resizeObserver = new ResizeObserver(() => {
       requestMeasure();
@@ -1647,11 +1617,10 @@ function CodeEditor({
     });
 
     return () => {
-      container.removeEventListener("wheel", handleWheel);
-      scrollElement.removeEventListener("wheel", handleWheel);
+      scrollElement.removeEventListener("scroll", handleScroll);
       resizeObserver.disconnect();
     };
-  }, [value, editorView]);
+  }, [editorView]);
 
   useEffect(() => {
     const view = viewRef.current;
@@ -1681,29 +1650,8 @@ function CodeEditor({
   }, [jumpRequest, editorView]);
 
   useEffect(() => {
-    const view = viewRef.current;
-    const container = containerRef.current;
-    if (!onCounterpartAnchorChange) return;
-
-    if (!view || !container || counterpartLine === null || counterpartLine < 1 || counterpartLine > view.state.doc.lines) {
-      onCounterpartAnchorChange(null);
-      return;
-    }
-
-    // Remove the window.requestAnimationFrame here; we will handle position updates via EditorView.updateListener
-    const from = view.state.doc.line(counterpartLine).from;
-    const coords = view.coordsAtPos(from);
-    if (!coords) {
-      onCounterpartAnchorChange(null);
-      return;
-    }
-
-    const rect = container.getBoundingClientRect();
-    onCounterpartAnchorChange({
-      top: Math.max(8, Math.round(coords.top - rect.top)),
-      left: Math.max(8, Math.round(coords.left - rect.left + 16)),
-    });
-  }, [counterpartLine, value, onCounterpartAnchorChange, editorView]);
+    emitCounterpartAnchor();
+  }, [counterpartLine, value, editorView, emitCounterpartAnchor]);
 
 
   return (
@@ -1716,27 +1664,25 @@ function CodeEditor({
           return;
         }
 
-        emitViewportRange(view);
-
-        if (!onHoverLineChange) {
-          return;
-        }
-
-        const pos = view.posAtCoords({
-          x: event.clientX,
-          y: event.clientY,
+        if (!onHoverLineChangeRef.current) return;
+        const generation = ++hoverMeasureRef.current;
+        const coords = { x: event.clientX, y: event.clientY };
+        view.requestMeasure({
+          key: hoverMeasureRef,
+          read: () => { const pos = view.posAtCoords(coords); return pos === null ? null : view.state.doc.lineAt(pos).number; },
+          write: nextLine => {
+            if (viewRef.current !== view || hoverMeasureRef.current !== generation) return;
+            emitViewportRange(view);
+            if (nextLine !== hoveredLineRef.current) {
+              hoveredLineRef.current = nextLine;
+              onHoverLineChangeRef.current?.(nextLine);
+              emitInteractionAnchor(nextLine);
+            }
+          },
         });
-
-        const nextLine = pos === null ? null : view.state.doc.lineAt(pos).number;
-
-
-        if (nextLine !== hoveredLineRef.current) {
-          hoveredLineRef.current = nextLine;
-          onHoverLineChange(nextLine);
-          emitInteractionAnchor(nextLine);
-        }
       }}
       onMouseLeave={() => {
+        hoverMeasureRef.current++;
         hoveredLineRef.current = null;
         onHoverLineChange?.(null);
         emitInteractionAnchor(selectedLineRef.current);
@@ -1853,7 +1799,7 @@ function CodeEditor({
         }}
         editable={editable}
         readOnly={!editable}
-        onChange={onChange}
+        onChange={emitDocumentChange}
       />
     </div>
   );
