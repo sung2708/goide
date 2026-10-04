@@ -238,7 +238,10 @@ fn shared_launch_environment_prefers_all_three_tools_and_normalizes_go_root() {
     fs::create_dir_all(root.join("go/bin")).unwrap();
     fs::create_dir(root.join("bin")).unwrap();
     fs::write(root.join("go/VERSION"), "go1.26.8").unwrap();
-    let paths = paths_at(&root.canonicalize().unwrap());
+    // macOS temp_dir can use /var while canonical paths use /private/var.
+    // Compare the selected environment with the same canonical tool root.
+    let canonical_root = root.canonicalize().unwrap();
+    let paths = paths_at(&canonical_root);
     let mut variables = std::collections::HashMap::new();
     super::super::command::selected_tool_environment(&paths, |key, value| {
         variables.insert(key.to_string(), value);
@@ -246,13 +249,16 @@ fn shared_launch_environment_prefers_all_three_tools_and_normalizes_go_root() {
     let selected: Vec<_> = std::env::split_paths(&variables["PATH"]).collect();
     assert_eq!(
         selected[0],
-        super::super::gopls::normalize_platform_pathbuf(root.join("go/bin"))
+        super::super::gopls::normalize_platform_pathbuf(canonical_root.join("go/bin"))
     );
     assert_eq!(
         selected[1],
-        super::super::gopls::normalize_platform_pathbuf(root.join("bin"))
+        super::super::gopls::normalize_platform_pathbuf(canonical_root.join("bin"))
     );
-    assert_eq!(PathBuf::from(&variables["GOROOT"]), root.join("go"));
+    assert_eq!(
+        PathBuf::from(&variables["GOROOT"]),
+        super::super::gopls::normalize_platform_pathbuf(canonical_root.join("go"))
+    );
     remove_private_tree(&root).unwrap();
 }
 #[test]
