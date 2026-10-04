@@ -33,6 +33,13 @@ open editor: Open Project, New Go Project and Close Project. Workspace changes
 retain their existing Save / Don't Save / Cancel guard. Startup restoration is
 otherwise unchanged; saving and closing can reopen the previous workspace.
 
+When a saved workspace is reopened, tabs retain their stored order but background
+files are not activated in sequence. Only the saved active tab is shown once its
+contents and view have loaded. If that file is unavailable, restoration reports
+the missing file and selects an accessible fallback at the end. A session saved
+without an active editor stays inactive. User edits, workspace changes and unmount
+still cancel pending restore results instead of replacing the user's state.
+
 Desktop builds keep dirty documents in `goro.drafts.v1` in the WebView's local
 storage. A successful storage write is a recovery checkpoint; edits within the
 200 ms idle window may not have reached it. Caret and viewport updates do not

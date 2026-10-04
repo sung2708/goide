@@ -13,15 +13,18 @@ export async function restoreWorkspaceDocuments(documents: DocumentSession, stor
     try {
       const loaded = await load(stored.root, file.path);
       if (!alive() || documents.snapshot() !== expected) return failures;
-      const opened = documents.open(file.path, loaded.text, loaded.readOnly);
+      // Restore tab order without showing every file in the editor in turn.
+      const opened = documents.open(file.path, loaded.text, loaded.readOnly, false);
       documents.view(opened.id, file.view);
+      if (file.path === stored.active) documents.activate(opened.id);
       expected = documents.snapshot();
     } catch { failures.push(file.path); }
   }
   if (alive() && documents.snapshot() === expected) {
-    const active = expected.documents.find(document => document.path === stored.active);
-    if (active) documents.activate(active.id);
-    else if (stored.active === null) documents.deactivate();
+    if (stored.active !== null && expected.activeId === null) {
+      const fallback = expected.documents[expected.documents.length - 1];
+      if (fallback) documents.activate(fallback.id);
+    }
   }
   return failures;
 }
