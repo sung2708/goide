@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 112" fill="none"><title>Goro</title><desc>Original Goro identity. Three parallel trails represent concurrent execution. MIT artwork; slogan outlines use Syne, SIL OFL 1.1.</desc>
+<g fill="#35CDBE"><rect x="12" y="38" width="48" height="10" rx="5"/><rect x="2" y="61" width="58" height="10" rx="5"/><rect x="24" y="84" width="38" height="10" rx="5"/></g>
+<g fill="#35CDBE" stroke="#123A50" stroke-width="3.5" stroke-linejoin="round"><path d="M73 32Q58 15 67 10Q77 5 84 25Z"/><path d="M123 25Q130 10 139 16Q147 23 136 35Z"/><path d="M62 46C62 27 82 18 105 20C133 22 152 39 152 61C152 84 129 97 102 96C77 96 59 85 58 69C58 62 62 55 62 46Z"/></g>
+<path d="M69 30Q67 24 72 22" stroke="#123A50" stroke-width="3" stroke-linecap="round"/>
+<g fill="#EFF9F8"><ellipse cx="108" cy="51" rx="14" ry="17"/><ellipse cx="138" cy="53" rx="12" ry="15"/></g>
+<g fill="#123A50"><ellipse cx="113" cy="52" rx="6" ry="8"/><ellipse cx="142" cy="54" rx="5" ry="7"/><path d="M133 69Q141 62 148 69Q148 77 140 77Q133 77 133 69Z"/></g>
+<path d="M134 84Q140 88 145 83" stroke="#123A50" stroke-width="3" stroke-linecap="round"/>
+</svg>

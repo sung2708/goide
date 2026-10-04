@@ -18,6 +18,7 @@
   ],
   "type": "module",
   "scripts": {
+    "brand:assets": "node scripts/generate-brand-assets.mjs",
     "brand:icons": "node scripts/generate-brand-icons.mjs",
     "dev": "vite",
     "build": "tsc && vite build",

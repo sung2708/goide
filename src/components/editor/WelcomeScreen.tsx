@@ -40,7 +40,7 @@ export default function WelcomeScreen({
                 <h1 className="welcome-title">Goro</h1>
                 <span className="welcome-badge">Go IDE</span>
               </div>
-              <p className="welcome-subtitle">A place to write, run, and understand Go.</p>
+              <p className="welcome-subtitle">Understand Go in motion.</p>
             </div>
           </div>
         </header>
@@ -156,7 +156,7 @@ export default function WelcomeScreen({
           <div className="flex items-center gap-2">
             <span className="welcome-engine-tag">LOCAL WORKSPACE</span>
           </div>
-          <span className="welcome-credit">Go gopher by Renee French</span>
+          <span className="welcome-credit">Goro · A desktop IDE for Go</span>
         </footer>
       </div>
     </div>

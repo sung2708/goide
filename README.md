@@ -4,7 +4,7 @@
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="public/brand/logo-dark.svg" />
-  <img src="public/brand/logo-light.svg" alt="Goro — Go gopher with an editor and concurrent runtime paths" width="278" height="104" />
+  <img src="public/brand/logo-light.svg" alt="Goro — Understand Go in motion." width="360" height="112" />
 </picture>
 
 **Understand Go in motion.**
@@ -164,4 +164,4 @@ Please report vulnerabilities privately via [GitHub Private Vulnerability Report
 
 Goro is released under the [MIT License](LICENSE).
 
-The Goro gopher artwork adapts the Go gopher by Renee French, licensed under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Changes include a vector redraw, editor/breakpoint panel, concurrent flow trails, and Goro colors. See the [original Go gopher](https://go.dev/blog/gopher) and [brand guide](docs/BRAND.md). Goro is an independent project.
+The current Goro mascot and geometric wordmark are original artwork under the MIT License. The slogan uses Syne outlines under the SIL Open Font License; see the [brand guide](docs/BRAND.md). Earlier revisions contained an adaptation of Renee French's Go gopher under CC BY 4.0; that attribution remains applicable to those earlier assets. Goro is an independent project.
