@@ -9,8 +9,23 @@ afterEach(() => { localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers(
 function Harness({ session, report, keep = true }: { session: DocumentSession; report: (message: string) => void; keep?: boolean }) {
   const snapshot = useSyncExternalStore(session.subscribe, session.snapshot);
   const recovery = useDraftRecovery(session, snapshot, report, keep);
-  return <>{recovery.banner}{recovery.dialog}<button onClick={recovery.open}>Review recovery</button></>;
+  return <>{recovery.banner}{recovery.dialog}<button onClick={recovery.open}>Review recovery</button><button onClick={() => { recovery.discardCurrent(); session.reset(null, true); }}>Discard and exit</button></>;
 }
+it("does not revive explicitly discarded drafts on exit, including a queued checkpoint, and retains other workspaces", () => {
+  vi.useFakeTimers();
+  const other = new DocumentSession(); other.reset("C:/other"); const old = other.open("main.go", "disk"); other.edit(old.id, "other draft");
+  new DraftJournal(localStorage).capture(other.snapshot());
+  const session = new DocumentSession(); session.reset("C:/repo"); const doc = session.open("main.go", "original");
+  const view = render(<Harness session={session} report={vi.fn()} />);
+  act(() => { session.edit(doc.id, "discard me"); vi.advanceTimersByTime(200); });
+  act(() => session.edit(doc.id, "queued edit"));
+  fireEvent.click(screen.getByRole("button", { name: "Discard and exit" }));
+  act(() => vi.advanceTimersByTime(200)); view.unmount();
+  const restarted = new DraftJournal(localStorage);
+  expect(restarted.pending("C:/repo")).toEqual([]);
+  expect(restarted.pending("C:/other")).toMatchObject([{ text: "other draft" }]);
+  expect(session.snapshot().root).toBeNull();
+});
 it("offers explicit recovery after restart and preserves the original save baseline", () => {
   const prior = new DocumentSession(); prior.reset("C:/repo");
   const old = prior.open("main.go", "old disk"); prior.edit(old.id, "valuable draft");

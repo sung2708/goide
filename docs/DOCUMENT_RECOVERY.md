@@ -19,6 +19,20 @@ reports that the copy was saved but its temporary file could not be removed.
 
 ## Recovery journal
 
+For a normal app exit, **Save and close** saves through the existing guarded
+workflow; **Cancel** keeps the current workspace and buffers open. **Don't Save
+and close** never writes source files. After native process cleanup succeeds, it
+clears the current workspace's recovery records and startup pointer, discards its
+editor/conflict drafts, and closes. The next launch starts at Welcome; recent
+workspaces and other workspaces' recovery records remain available. A failed
+cleanup does not discard drafts. A storage failure prevents closing and offers
+retry. A discard choice survives cleanup retries instead of switching to Save.
+
+The titlebar **Project** control remains available with an existing workspace or
+open editor: Open Project, New Go Project and Close Project. Workspace changes
+retain their existing Save / Don't Save / Cancel guard. Startup restoration is
+otherwise unchanged; saving and closing can reopen the previous workspace.
+
 Desktop builds keep dirty documents in `goro.drafts.v1` in the WebView's local
 storage. A successful storage write is a recovery checkpoint; edits within the
 200 ms idle window may not have reached it. Caret and viewport updates do not

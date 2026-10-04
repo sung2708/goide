@@ -2,6 +2,15 @@
 
 This document outlines the standard development environment, workflows, and quality gates for contributors and maintainers working on Goro.
 
+## Scope constraint
+
+Change only what the current user request authorizes. Do not bundle unrelated
+features, redesigns, branding, dependencies, versions, website edits or releases
+into a fix. Report unrelated findings separately. Implement and validate on
+develop before promotion; a focused pass is not complete QA. The persistent
+repository instruction is [AGENTS.md](../AGENTS.md). The active release hold and
+promotion gates are defined in [RELEASE_PROMOTION.md](RELEASE_PROMOTION.md).
+
 ---
 
 ## 1. Prerequisites & Environment Setup

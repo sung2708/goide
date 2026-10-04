@@ -1266,6 +1266,13 @@ function EditorShell() {
     registerInstall: updateService.registerInstall,
     install: updateService.install,
     save: preserveAllDocuments,
+    discard: () => {
+      workspaceHistory.clearStartup();
+      draftRecovery.discardCurrent();
+      discardConflictDrafts(workspacePathRef.current);
+      documents.reset(null, true);
+      workspacePathRef.current = null;
+    },
     cancelAutosave: () => { if (autoSaveDebounceRef.current !== null) { clearTimeout(autoSaveDebounceRef.current); autoSaveDebounceRef.current = null; } },
     onError: setFileError,
     onPending: (pending) => { branchMutationRef.current = pending; setExplorerOperationBusy(pending); },
@@ -2231,6 +2238,14 @@ function EditorShell() {
         <div className="flex items-center gap-2">
           <img src="/brand/icon.svg" alt="" className="size-4 shrink-0" aria-hidden="true" />
           <span className="workspace-brand text-[15px] font-bold tracking-tight">Goro</span>
+          <details className="relative text-xs">
+            <summary className="cursor-pointer rounded px-2 py-1 hover:bg-(--surface0)">Project</summary>
+            <div className="absolute left-0 top-full z-40 mt-1 flex w-48 flex-col gap-1 border border-(--border-muted) bg-(--base) p-2 shadow-lg">
+              <button type="button" disabled={commandBusy} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void executeCommand("workspace.open"); }}>Open Project…</button>
+              <button type="button" disabled={commandBusy || runStatus === "running" || isDebugSessionBusy} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void executeCommand("workspace.newGoProject"); }}>New Go Project…</button>
+              <button type="button" disabled={!workspacePath || commandBusy} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void executeCommand("workspace.close"); }}>Close Project</button>
+            </div>
+          </details>
         </div>
         <button
           type="button"
