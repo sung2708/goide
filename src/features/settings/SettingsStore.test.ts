@@ -5,6 +5,17 @@ function storage(initial: Record<string, string> = {}) {
   const values = new Map(Object.entries(initial));
   return { getItem: (key: string) => values.get(key) ?? null, setItem: vi.fn((key: string, value: string) => { values.set(key, value); }) };
 }
+it("persists all tool paths in one validated settings transaction", () => {
+  const backing = storage(); const store = new SettingsStore(() => backing);
+  const notify = vi.fn(); store.subscribe(notify);
+  store.updateToolPaths({ go: "C:/private/go/bin/go.exe", gopls: "C:/private/bin/gopls.exe", dlv: "C:/private/bin/dlv.exe" });
+  expect(notify).toHaveBeenCalledOnce();
+  expect(backing.setItem.mock.calls.filter(([key]) => key === SETTINGS_STORAGE_KEY)).toHaveLength(1);
+  const restored = new SettingsStore(() => backing).snapshot().values;
+  expect(restored["go.executablePath"]).toBe("C:/private/go/bin/go.exe");
+  expect(restored["go.goplsPath"]).toBe("C:/private/bin/gopls.exe");
+  expect(restored["debug.delvePath"]).toBe("C:/private/bin/dlv.exe");
+});
 it("defines typed, validated application defaults and rejects malformed or unknown settings", () => {
   expect(SETTING_DEFINITIONS.every(setting => setting.scope === "application" && setting.validate(setting.default))).toBe(true);
   expect(validateSettings({})).toEqual(DEFAULT_SETTINGS);

@@ -8,3 +8,5 @@ pub mod types;
 pub mod update_commands;
 
 pub mod debugger_commands;
+
+pub mod toolchain_commands;

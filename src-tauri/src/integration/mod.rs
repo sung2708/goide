@@ -12,6 +12,7 @@ pub mod language_edits;
 pub mod language_requests;
 pub mod lifecycle;
 pub mod lsp_manager;
+pub mod managed_toolchain;
 pub mod organize_imports;
 pub mod output;
 pub mod owned_sync_process;

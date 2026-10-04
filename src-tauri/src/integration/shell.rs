@@ -258,6 +258,12 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
             spawn_windows_shell_with_fallback(preferred_shell, |shell| {
                 let mut command = CommandBuilder::new(shell);
                 command.cwd(&cwd);
+                crate::integration::command::selected_tool_environment(
+                    &crate::integration::toolchain::paths::current(),
+                    |name, value| {
+                        command.env(name, value);
+                    },
+                );
                 owned_child::spawn(pair.slave.as_ref(), command)
                     .with_context(|| format!("failed to spawn shell `{shell}`"))
             })?;
@@ -273,6 +279,12 @@ pub async fn ensure_shell_session_inner<R: tauri::Runtime>(
     let (child, shell_health, selected_shell) = {
         let mut command = shell_command();
         command.cwd(&cwd);
+        crate::integration::command::selected_tool_environment(
+            &crate::integration::toolchain::paths::current(),
+            |name, value| {
+                command.env(name, value);
+            },
+        );
         let child =
             owned_child::spawn(pair.slave.as_ref(), command).context("failed to spawn shell")?;
         (child, ShellHealthDto::Launch, "bash".to_string())

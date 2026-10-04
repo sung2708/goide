@@ -79,7 +79,7 @@ pub fn std_command(program: &str) -> std::process::Command {
     let tools = crate::integration::toolchain::paths::current();
     #[allow(unused_mut)]
     let mut command = std::process::Command::new(resolved_program_from(program, &tools));
-    selected_go_environment(&tools, |name, value| {
+    selected_tool_environment(&tools, |name, value| {
         command.env(name, value);
     });
     #[cfg(windows)]
@@ -93,7 +93,7 @@ pub fn tokio_command(program: &str) -> tokio::process::Command {
     let tools = crate::integration::toolchain::paths::current();
     #[allow(unused_mut)]
     let mut command = tokio::process::Command::new(resolved_program_from(program, &tools));
-    selected_go_environment(&tools, |name, value| {
+    selected_tool_environment(&tools, |name, value| {
         command.env(name, value);
     });
     #[cfg(windows)]
@@ -103,16 +103,36 @@ pub fn tokio_command(program: &str) -> tokio::process::Command {
     command
 }
 
-fn selected_go_environment(
+pub(crate) fn selected_tool_environment(
     tools: &crate::integration::toolchain::paths::ToolPaths,
     mut apply: impl FnMut(&str, std::ffi::OsString),
 ) {
+    let mut paths = Vec::new();
+    for program in ["go", "gopls", "dlv"] {
+        if let Some(executable) = tools.executable(program) {
+            if let Some(directory) = executable.parent() {
+                let directory =
+                    crate::integration::gopls::normalize_platform_pathbuf(directory.to_path_buf());
+                if !paths.contains(&directory) {
+                    paths.push(directory);
+                }
+            }
+        }
+    }
+    if !paths.is_empty() {
+        paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
+        if let Ok(path) = env::join_paths(paths) {
+            apply("PATH", path);
+        }
+    }
     if let Some(go) = tools.executable("go") {
-        if let Some(directory) = go.parent() {
-            let mut paths = vec![directory.to_path_buf()];
-            paths.extend(env::split_paths(&env::var_os("PATH").unwrap_or_default()));
-            if let Ok(path) = env::join_paths(paths) {
-                apply("PATH", path);
+        if let Some(root) = go.parent().and_then(Path::parent) {
+            if root.join("VERSION").is_file() {
+                apply(
+                    "GOROOT",
+                    crate::integration::gopls::normalize_platform_pathbuf(root.to_path_buf())
+                        .into_os_string(),
+                );
             }
         }
     }

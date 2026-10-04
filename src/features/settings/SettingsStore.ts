@@ -42,6 +42,11 @@ export class SettingsStore {
     catch (error) { this.state = { ...this.state, error: String(error) }; this.listeners.forEach(listener => listener()); }
   }
   reset = () => this.persist({ ...DEFAULT_SETTINGS });
+  updateToolPaths(paths: { go: string; gopls: string; dlv: string }) {
+    const values = this.snapshot().values;
+    if (this.invalidStored) throw new Error("Reset invalid stored preferences before selecting managed tools.");
+    this.persist(validateSettings({ ...values, "go.executablePath": paths.go, "go.goplsPath": paths.gopls, "debug.delvePath": paths.dlv }));
+  }
   private persist(values: Settings) {
     this.invalidStored = false;
     let error: string | null = null;
