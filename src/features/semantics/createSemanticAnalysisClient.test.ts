@@ -26,6 +26,33 @@ function createWorkerStub() {
 }
 
 describe("createSemanticAnalysisClient", () => {
+  it("coalesces typing bursts, skips duplicate analysis and cancels queued work on disposal", () => {
+    vi.useFakeTimers();
+    try {
+      const { worker } = createWorkerStub();
+      const client = createSemanticAnalysisClient(() => worker);
+      client.syncDocument({ filePath: "main.go", text: "package main" });
+      client.requestAnalysis("main.go");
+      client.requestAnalysis("main.go");
+      for (let index = 0; index < 10; index++) {
+        client.syncDocument({ filePath: "main.go", text: `package main\n// ${index}` });
+        client.requestAnalysis("main.go");
+        vi.advanceTimersByTime(10);
+      }
+      const analyses = () => vi.mocked(worker.postMessage).mock.calls.map(call => call[0]).filter((message: any) => message.type === "analyze");
+      expect(analyses()).toHaveLength(1);
+      vi.advanceTimersByTime(120);
+      expect(analyses()).toEqual([
+        { type: "analyze", request: { filePath: "main.go", version: 1 } },
+        { type: "analyze", request: { filePath: "main.go", version: 11 } },
+      ]);
+      client.syncDocument({ filePath: "main.go", text: "package main\n// pending" });
+      client.requestAnalysis("main.go");
+      client.dispose();
+      vi.runAllTimers();
+      expect(analyses()).toHaveLength(2);
+    } finally { vi.useRealTimers(); }
+  });
   it("posts sync and analyze messages with incrementing versions", () => {
     const { worker } = createWorkerStub();
     const client = createSemanticAnalysisClient(() => worker);
@@ -133,5 +160,21 @@ describe("createSemanticAnalysisClient", () => {
     client.dispose();
 
     expect(worker.terminate).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays the current result to late editor subscribers but never replays an edited buffer", () => {
+    const { worker, emitResult } = createWorkerStub();
+    const client = createSemanticAnalysisClient(() => worker);
+    client.syncDocument({ filePath: "main.go", text: "package main" });
+    client.requestAnalysis("main.go");
+    emitResult({ filePath: "main.go", version: 1, symbols: [], folds: [], selectionRanges: [] });
+    const late = vi.fn();
+    client.subscribe(late);
+    expect(late).toHaveBeenCalledWith(expect.objectContaining({ version: 1, sourceText: "package main" }));
+    client.syncDocument({ filePath: "main.go", text: "package main\n// newer" });
+    const afterEdit = vi.fn();
+    client.subscribe(afterEdit);
+    expect(afterEdit).not.toHaveBeenCalled();
+    client.dispose();
   });
 });

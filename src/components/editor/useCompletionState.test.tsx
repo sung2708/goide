@@ -5,6 +5,24 @@ const fetchMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, data: true }));
 vi.mock("../../lib/ipc/client", () => ({ fetchWorkspaceCompletions: fetchMock, cancelLanguageRequest: cancelMock }));
 
+it("cancels an aborted popup request immediately without cancelling its successor", async () => {
+  fetchMock.mockClear(); cancelMock.mockClear();
+  const pending: Array<(result: unknown) => void> = [];
+  fetchMock.mockImplementation(() => new Promise(resolve => pending.push(resolve)));
+  const hook = renderHook(() => useCompletionState({ workspacePathRef: { current: "C:/original" }, activeFilePathRef: { current: "main.go" }, latestEditorContentRef: { current: "package main" }, activeFileContent: "package main" }));
+  const firstController = new AbortController();
+  let first!: Promise<unknown>, second!: Promise<unknown>;
+  act(() => { first = hook.result.current.handleRequestCompletions({ line: 1, column: 1, explicit: false, signal: firstController.signal } as any); });
+  const request1 = fetchMock.mock.calls[0][0];
+  act(() => firstController.abort());
+  expect(cancelMock).toHaveBeenLastCalledWith({ workspaceRoot: "C:/original", requestId: request1.requestId });
+  act(() => { second = hook.result.current.handleRequestCompletions({ line: 1, column: 2, explicit: false }); });
+  await act(async () => { pending[0]({ ok: true, data: [{ label: "obsolete" }] }); expect(await first).toEqual([]); });
+  await act(async () => { pending[1]({ ok: true, data: [{ label: "Println" }] }); expect(await second).toEqual([{ label: "Println" }]); });
+  expect(hook.result.current.completionAvailability).toBe("available");
+  hook.unmount(); fetchMock.mockClear(); cancelMock.mockClear();
+});
+
 it("cancels native completion on supersession, edits, workspace changes and unmount", async () => {
   const workspacePathRef = { current: "C:/original" as string | null };
   const activeFilePathRef = { current: "main.go" as string | null };

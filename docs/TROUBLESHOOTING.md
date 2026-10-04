@@ -111,3 +111,32 @@ finishes; interrupted staging directories are not selected after restart.
 See [Managed Go toolchains](TOOLCHAIN_MANAGER.md) for exact versions, sources and
 remaining platform acceptance. This development feature does not change the
 requirements of the currently published alpha installer.
+
+### Completion responsiveness (develop)
+
+Typing starts a completion query after 50 ms of inactivity (previously the
+CodeMirror default of 100 ms). Local snippets can appear while gopls is pending.
+Editing again aborts the old popup query and its native request; the next query
+uses the latest buffer without waiting for the old response. Closing the popup
+also cancels its request. Cancelled responses do not mark completion unavailable
+or replace a newer suggestion list. Accepted results continue to filter locally
+while their identifier prefix remains valid.
+
+Go outline, folding and entry-action analysis runs immediately when a file first
+opens, then waits for 120 ms of inactivity during edits. Repeated requests for
+the same version are skipped. Late editor subscribers receive the current
+result; editing invalidates it immediately, and disposing the editor cancels
+queued work. These background results never override a newer buffer.
+
+Regression checks use a real CodeMirror editor to verify that a second query
+starts after 50 ms even when the first promise is unresolved, and that a late
+response cannot replace its suggestions. A worker test verifies that ten rapid
+edits produce one subsequent analysis rather than ten. These are scheduling
+checks, not measurements of native gopls latency or editor frame rate.
+
+If completion remains slow, inspect **Go: Inspect Toolchain** first. Cold gopls
+startup and dependency loading can still delay the first request; reducing the
+editor timer does not remove that work. Before 1.0, measure cold and warm typing
+and completion separately in installed Windows, macOS and Linux builds, including
+large files and a workspace with multiple packages. Native latency and frame-rate
+acceptance remain unverified by these unit tests.

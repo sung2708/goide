@@ -485,6 +485,7 @@ export type EditorCompletionRequest = {
   explicit: boolean;
   triggerCharacter?: string | null;
   fileContent?: string | null;
+  signal?: AbortSignal;
 };
 
 class BreakpointMarker extends GutterMarker {
@@ -994,6 +995,11 @@ function CodeEditor({
         column: Math.max(1, context.pos - lineInfo.from + 1),
       };
 
+      // The shell cancels outdated buffers. Tell CodeMirror to restart too,
+      // rather than leaving its old query pending until native work returns.
+      const controller = new AbortController();
+      const supportsAbort = typeof context.addEventListener === "function";
+      context.addEventListener?.("abort", () => controller.abort(), { onDocChange: true });
       const request: EditorCompletionRequest = {
         line: requestPosition.line,
         column: requestPosition.column,
@@ -1001,10 +1007,11 @@ function CodeEditor({
         triggerCharacter:
           shouldTriggerByDot || virtualPackageQualifier !== null ? "." : null,
         fileContent: virtualCompletionDocument?.fileContent ?? documentText,
+        ...(supportsAbort ? { signal: controller.signal } : {}),
       };
 
       const items = await onRequestCompletionsRef.current(request);
-      if (context.aborted) {
+      if (context.aborted || controller.signal.aborted) {
         return null;
       }
       if (items.length === 0) {
@@ -1194,6 +1201,7 @@ function CodeEditor({
     autocompletion({
       override: [localSnippetSource, goplsCompletionSource],
       activateOnTyping: true,
+      activateOnTypingDelay: 50,
       defaultKeymap: false,
       maxRenderedOptions: 80,
       updateSyncTime: 35,

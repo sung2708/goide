@@ -49,6 +49,7 @@ export function useCompletionState({
     async (request: EditorCompletionRequest): Promise<CompletionItem[]> => {
       const currentWorkspace = workspacePathRef.current;
       const currentPath = activeFilePathRef.current;
+      if (request.signal?.aborted) return [];
       if (!currentWorkspace || !currentPath || !isGoFile(currentPath)) {
         setCompletionAvailability("idle");
         return [];
@@ -57,6 +58,8 @@ export function useCompletionState({
       const requestId = completionRequestIdRef.current + 1;
       completionRequestIdRef.current = requestId;
       const native = cancellation.begin(currentWorkspace);
+      const cancelNative = () => cancellation.cancel(native.requestId);
+      request.signal?.addEventListener("abort", cancelNative, { once: true });
 
       try {
         const response = await fetchWorkspaceCompletions({
@@ -72,6 +75,7 @@ export function useCompletionState({
         });
 
         if (
+          request.signal?.aborted ||
           requestId !== completionRequestIdRef.current ||
           workspacePathRef.current !== currentWorkspace ||
           activeFilePathRef.current !== currentPath
@@ -88,6 +92,7 @@ export function useCompletionState({
         return response.data;
       } catch (_error) {
         if (
+          !request.signal?.aborted &&
           requestId === completionRequestIdRef.current &&
           workspacePathRef.current === currentWorkspace &&
           activeFilePathRef.current === currentPath
@@ -96,9 +101,12 @@ export function useCompletionState({
           return [];
         }
         return [];
-      } finally { cancellation.complete(native.requestId); }
+      } finally {
+        request.signal?.removeEventListener("abort", cancelNative);
+        cancellation.complete(native.requestId);
+      }
     },
-    [activeFileContent, activeFilePathRef, latestEditorContentRef, workspacePathRef, cancellation.begin, cancellation.complete]
+    [activeFileContent, activeFilePathRef, latestEditorContentRef, workspacePathRef, cancellation.begin, cancellation.complete, cancellation.cancel]
   );
 
   return {

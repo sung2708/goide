@@ -363,6 +363,7 @@ describe("CodeEditor", () => {
     expect(autocompletionMock).toHaveBeenCalledWith(
       expect.objectContaining({
         activateOnTyping: true,
+        activateOnTypingDelay: 50,
         defaultKeymap: false,
         maxRenderedOptions: 80,
         updateSyncTime: 35,
@@ -988,6 +989,25 @@ describe("CodeEditor", () => {
     });
   });
 
+  it("restarts pending completion on edits and propagates popup cancellation to native work", async () => {
+    let finish!: (items: unknown[]) => void;
+    const requestCompletions = vi.fn(() => new Promise<unknown[]>(resolve => { finish = resolve; }));
+    render(<CodeEditor value={"package main\nfmt.\n"} onRequestCompletions={requestCompletions as any} />);
+    const registerAbort = vi.fn();
+    const pending = latestAutocompleteOverride?.({
+      pos: 16, explicit: false, matchBefore: () => null,
+      addEventListener: registerAbort,
+      state: { sliceDoc: () => ".", doc: { lineAt: () => ({ number: 2, from: 13 }), toString: () => "package main\nfmt.\n" } },
+    } as any);
+    expect(registerAbort).toHaveBeenCalledWith("abort", expect.any(Function), { onDocChange: true });
+    const signal = (requestCompletions.mock.calls[0] as any)[0].signal as AbortSignal;
+    expect(signal.aborted).toBe(false);
+    registerAbort.mock.calls[0][1]();
+    expect(signal.aborted).toBe(true);
+    finish([{ label: "obsolete" }]);
+    expect(await pending).toBeNull();
+  });
+
   it("requests completions when an identifier is typed without explicit trigger", async () => {
     const requestCompletions = vi.fn().mockResolvedValue([]);
 
@@ -1019,6 +1039,38 @@ describe("CodeEditor", () => {
       triggerCharacter: null,
       fileContent: "package main\nPrin\n",
     });
+  });
+
+  it("starts the latest real CodeMirror query within 50ms without waiting for the old response", async () => {
+    const { EditorState } = await import("@codemirror/state");
+    const { EditorView: RealEditorView } = await vi.importActual<typeof import("@codemirror/view")>("@codemirror/view");
+    const realCompletion = await vi.importActual<typeof import("@codemirror/autocomplete")>("@codemirror/autocomplete");
+    const pending: Array<(items: any[]) => void> = [];
+    const request = vi.fn((_request: any) => new Promise<any[]>(resolve => pending.push(resolve)));
+    render(<CodeEditor value="package main\nfmt" onRequestCompletions={request} />);
+    const config = autocompletionMock.mock.calls[autocompletionMock.mock.calls.length - 1][0];
+    vi.useFakeTimers();
+    const doc = "package main\nfmt";
+    const view = new RealEditorView({ state: EditorState.create({ doc, selection: { anchor: doc.length }, extensions: realCompletion.autocompletion({ ...config, override: [latestAutocompleteOverride] }) }) });
+    try {
+      view.dispatch({ changes: { from: doc.length, insert: "." }, selection: { anchor: doc.length + 1 }, userEvent: "input.type" });
+      await vi.advanceTimersByTimeAsync(50);
+      expect(request).toHaveBeenCalledTimes(1);
+      const firstSignal = request.mock.calls[0][0].signal as AbortSignal;
+      view.dispatch({ changes: { from: doc.length + 1, insert: "P" }, selection: { anchor: doc.length + 2 }, userEvent: "input.type" });
+      expect(firstSignal.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(49);
+      expect(request).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(request).toHaveBeenCalledTimes(2);
+      expect(request.mock.calls[1][0].fileContent).toBe(`${doc}.P`);
+      pending[1]([{ label: "Println" }]);
+      await vi.advanceTimersByTimeAsync(35);
+      expect(realCompletion.currentCompletions(view.state).map(item => item.label)).toContain("Println");
+      pending[0]([{ label: "obsolete" }]);
+      await vi.advanceTimersByTimeAsync(35);
+      expect(realCompletion.currentCompletions(view.state).map(item => item.label)).not.toContain("obsolete");
+    } finally { view.destroy(); vi.useRealTimers(); }
   });
 
   it("keeps rapid completion trigger bursts non-blocking on the typing path", async () => {
