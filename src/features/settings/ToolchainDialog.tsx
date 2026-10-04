@@ -1,3 +1,4 @@
+import ManagedToolchainPanel from "./ManagedToolchainPanel";
 import Dialog from "../../components/primitives/Dialog";
 import type { ToolchainStatus } from "../../lib/ipc/types";
 
@@ -14,6 +15,7 @@ export default function ToolchainDialog({ open, onClose, status, error, checking
       <dd className="whitespace-pre-wrap break-words text-sm">{tool.version ?? "No verified version"}</dd>
       {tool.error && <dd className="break-words text-(--red)">{tool.error}</dd>}
     </div>)}</dl>}
+    {open && <ManagedToolchainPanel />}
     <div className="mt-4 flex justify-end gap-4"><button disabled={checking} onClick={() => void refresh()}>Refresh toolchain</button><button onClick={onClose}>Close</button></div>
   </Dialog>;
 }

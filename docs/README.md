@@ -18,6 +18,7 @@ Welcome to the Goro engineering and product documentation. This directory provid
 - [DEVELOPMENT.md](DEVELOPMENT.md): Contributor development environment, branching workflow, Conventional Commit standards, and verification expectations.
 - [BUILDING.md](BUILDING.md): Detailed build instructions and prerequisites across Windows, macOS, and Linux, including MSVC toolchain configuration.
 - [TESTING.md](TESTING.md): Testing strategies, Vitest suites, Rust tests, and testing conventions.
+- [TOOLCHAIN_MANAGER.md](TOOLCHAIN_MANAGER.md): managed Go/gopls/Delve setup, integrity, activation and platform acceptance.
 - [TROUBLESHOOTING.md](TROUBLESHOOTING.md): Solutions for common issues regarding gopls, Delve, terminal PTY, and MSVC toolchains.
 
 ### 4. Release Engineering & Operations

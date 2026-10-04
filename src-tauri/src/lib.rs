@@ -15,12 +15,22 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             use tauri::Manager;
+            app.manage(std::sync::Arc::new(
+                integration::managed_toolchain::Store::new(
+                    app.path().app_data_dir()?.join("toolchains"),
+                ),
+            ));
             app.manage(std::sync::Arc::new(integration::updates::Store::new(
                 app.package_info().version.clone(),
             )));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            ui_bridge::toolchain_commands::managed_toolchain_state,
+            ui_bridge::toolchain_commands::managed_toolchain_start,
+            ui_bridge::toolchain_commands::managed_toolchain_cancel,
+            ui_bridge::toolchain_commands::managed_toolchain_use,
+            ui_bridge::toolchain_commands::managed_toolchain_remove,
             ui_bridge::update_commands::goro_update_state,
             ui_bridge::update_commands::goro_update_check,
             ui_bridge::update_commands::goro_update_download,

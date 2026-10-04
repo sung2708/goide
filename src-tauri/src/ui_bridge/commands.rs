@@ -2957,7 +2957,7 @@ fn validate_workspace_scoped_go_path(
 
 static SHELL_SESSIONS: std::sync::OnceLock<ShellSessionStore> = std::sync::OnceLock::new();
 
-fn get_shell_sessions_handle() -> ShellSessionStore {
+pub(super) fn get_shell_sessions_handle() -> ShellSessionStore {
     SHELL_SESSIONS
         .get_or_init(|| Arc::new(Mutex::new(ShellSessionState::default())))
         .clone()

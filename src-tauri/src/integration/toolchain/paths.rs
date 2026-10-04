@@ -173,7 +173,9 @@ mod tests {
             .unwrap();
         assert_eq!(
             std::env::split_paths(child_path).next().unwrap(),
-            go.parent().unwrap()
+            crate::integration::gopls::normalize_platform_pathbuf(
+                go.parent().unwrap().to_path_buf()
+            )
         );
         assert!(super::super::probe("go", &["version"]).available);
     }

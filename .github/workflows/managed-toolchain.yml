@@ -1,0 +1,38 @@
+name: Managed Toolchain Acceptance
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  setup-and-debug:
+    name: Managed Go setup (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install Linux webview dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev build-essential libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d
+      - name: Integrity and cancellation contracts
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml managed_toolchain --lib -- --test-threads=1
+      - name: Integrity and cancellation contracts (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_test_msvc.cmd --locked managed_toolchain --lib -- --test-threads=1
+      - name: Download, create project, run, test, diagnose and debug with managed tools
+        if: runner.os != 'Windows'
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml real_managed_setup --lib -- --ignored --test-threads=1 --nocapture
+      - name: Download, create project, run, test, diagnose and debug with managed tools (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: scripts\cargo_test_msvc.cmd --locked real_managed_setup --lib -- --ignored --test-threads=1 --nocapture

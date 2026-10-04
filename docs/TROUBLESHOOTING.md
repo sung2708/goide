@@ -96,3 +96,18 @@ Use **Focus** in the title bar, **Toggle Focus Mode** in the command palette, or
 - **Behavior**: The desktop app registers a native watcher and falls back to 900 ms polling if native setup fails or the native watcher reports an error. Polling compares entry type, file size, and modification time. Startup/subscription failures appear in the workbench; backend scan errors are logged without treating inaccessible files as deleted.
 - **Limits**: `.git`, `node_modules`, `target`, and `dist` are excluded from sync scans. Links are not traversed. Workspaces exceeding 100,000 scanned entries or 256 directory levels report a startup error. Browser preview has no native watcher. A polling edit preserving both size and modification time can be missed; Explorer sync does not reload active document contents.
 - **Workaround**: Refresh Explorer manually for excluded trees or unavailable sync. On network filesystems that silently omit native events, use manual refresh. External-edit conflict handling remains tracked in [ROADMAP.md](ROADMAP.md).
+
+### Managed Go setup (develop)
+
+Open **Go: Inspect Toolchain** from the command palette. **Download and install
+tools** installs the pinned Go/gopls/Delve candidate into Goro's private application
+data folder. Network access and space for the Go archive, extracted SDK, module
+sources and tool binaries are required. **Use this bundle** selects all three
+paths; stop Run/Debug first. Existing terminal sessions keep their environment,
+so start a new shell after changing tools. Existing executables can still be
+selected in Settings. Cancelling stays pending until setup stops and cleanup
+finishes; interrupted staging directories are not selected after restart.
+
+See [Managed Go toolchains](TOOLCHAIN_MANAGER.md) for exact versions, sources and
+remaining platform acceptance. This development feature does not change the
+requirements of the currently published alpha installer.
