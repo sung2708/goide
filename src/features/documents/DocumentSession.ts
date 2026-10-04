@@ -34,13 +34,13 @@ export class DocumentSession {
     if (this.dirty && !discard) throw new Error("Save or explicitly discard all dirty documents before changing workspace.");
     this.editors.clear(); this.publish({ root, activeId: null, documents: [] });
   }
-  open(path: string, text: string, readOnly = false) {
+  open(path: string, text: string, readOnly = false, activate = true) {
     if (!this.state.root) throw new Error("Open a workspace first.");
     const existing = this.state.documents.find(document => document.path === path);
-    if (existing) { this.activate(existing.id); return existing; }
+    if (existing) { if (activate) this.activate(existing.id); return existing; }
     if (this.state.documents.length >= 100) throw new Error("Close an editor tab before opening more than 100 documents.");
     const document: OpenDocument = { id: ++this.nextId, path, text, baseline: text, version: 0, readOnly, view: { anchor: 0, head: 0, scrollTop: 0, scrollLeft: 0 } };
-    this.publish({ ...this.state, activeId: document.id, documents: [...this.state.documents, document] });
+    this.publish({ ...this.state, activeId: activate ? document.id : this.state.activeId, documents: [...this.state.documents, document] });
     return document;
   }
   activate(id: number) {

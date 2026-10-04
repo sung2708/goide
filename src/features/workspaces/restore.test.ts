@@ -5,6 +5,27 @@ import type { WorkspaceSession } from "./history";
 const stored: WorkspaceSession = { root: "C:/project", active: "a.go", files: ["a.go", "b.go"].map(path => ({ path, view: { anchor: 100, head: 200, scrollTop: 20, scrollLeft: 0 } })) };
 function session() { const documents = new DocumentSession(); documents.reset(stored.root); return documents; }
 describe("session restore", () => {
+  it("never activates background tabs while restoring the saved active file", async () => {
+    const documents = session(); const active: (string | null)[] = [];
+    documents.subscribe(() => active.push(documents.active?.path ?? null));
+    await restoreWorkspaceDocuments(documents, stored, async (_root, path) => {
+      if (path === "b.go") expect(documents.active?.path).toBe("a.go");
+      return { text: path, readOnly: false };
+    });
+    expect(active.filter(path => path !== null)).not.toContain("b.go");
+    expect(documents.snapshot().documents.map(document => document.path)).toEqual(["a.go", "b.go"]);
+  });
+  it("shows only the saved last tab and leaves inactive sessions inactive", async () => {
+    const documents = session(); const active: (string | null)[] = [];
+    documents.subscribe(() => active.push(documents.active?.path ?? null));
+    const load = async (_root: string, path: string) => ({ text: path, readOnly: false });
+    await restoreWorkspaceDocuments(documents, { ...stored, active: "b.go" }, load);
+    expect(active.filter(path => path !== null)).toEqual(["b.go"]);
+    documents.reset(stored.root); active.length = 0;
+    await restoreWorkspaceDocuments(documents, { ...stored, active: null }, load);
+    expect(active.every(path => path === null)).toBe(true);
+    expect(documents.snapshot().documents).toHaveLength(2);
+  });
   it("reads current disk content/permissions, clamps selection and restores active tab", async () => {
     const documents = session(); const load = vi.fn(async (_root: string, path: string) => ({ text: path, readOnly: path === "b.go" }));
     expect(await restoreWorkspaceDocuments(documents, stored, load)).toEqual([]);
