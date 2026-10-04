@@ -2,6 +2,23 @@
 
 This document defines the complete operational procedure for preparing, validating, publishing, and verifying releases of Goro.
 
+## Required branch policy
+
+All Goro releases, including alpha, beta, release candidates and stable, must
+come from `main`. Develop features and fixes on `develop`, validate them, then
+merge `develop` into `main` and push `main` before preparing a release. Pushing
+`develop` alone does not update the release source or published installers.
+
+Run manual release workflows with branch `main`, including candidate builds with
+`publish=false`. Create the release tag on the reviewed main commit after version
+synchronization and candidate acceptance; the tag must identify the exact commit
+being built. Do not create release tags on commits exclusive to `develop` or a
+feature branch. Never move an existing release tag to a newer commit.
+
+After release preparation or a hotfix on main, merge main back into develop so
+future development uses the same version and fixes. A main merge or CI success
+alone does not authorize publication or satisfy the native acceptance gates.
+
 For the maintainer-requested experimental alpha publication from main, follow [Release setup](RELEASE_SETUP.md) and the reviewed [alpha notes](releases/v0.2.0-alpha.1.md). The current native/stable acceptance audit remains NOT READY in [Release Readiness](RELEASE_READINESS.md); the alpha does not certify those missing checks.
 
 The secure updater/distribution contract is defined in [UPDATES.md](UPDATES.md).
@@ -21,7 +38,7 @@ The workflow initializes MSVC on Windows, runs Rust tests as well as frontend te
 ## 1. Release Flow Overview
 
 ```
-Developer Work / PRs
+Developer Work / PRs → develop
        │
        ▼
 CI Validation (All checks green)
@@ -56,7 +73,10 @@ Maintainer Post-Release Verification
 Ensure you are on the `main` branch with no uncommitted changes:
 ```bash
 git checkout main
-git pull origin main
+git fetch origin main develop
+git merge --ff-only origin/main
+git merge origin/develop
+git push origin main
 git status
 ```
 

@@ -26,19 +26,26 @@ Ensure the following tools are installed and present on your `PATH`:
 
 ## 2. Branching & Git Workflow
 
-We use a feature-branch workflow rooted on `main`:
+Development integrates on `develop`; all releases originate from `main`:
 
 ```
-main ──────────┬─────────────────────────────▲───────────
-               │                             │
-               └──► feature/xyz or fix/xyz ──┘
+feature/fix → develop → validated merge → main → release tag
+                  ▲                         │
+                  └── version/hotfix sync ───┘
 ```
 
 - **`main`**: The primary branch. Always kept in a releasable, passing state.
+- **`develop`**: Integration branch for ongoing work; merge reviewed changes into
+  main before release. A push here does not publish a new installer.
 - **`feature/<short-description>`**: New features, UI enhancements, or tool integrations.
 - **`fix/<short-description>`**: Bug fixes, stability improvements, or test corrections.
 - **`docs/<short-description>`**: Documentation updates.
 - **`refactor/<short-description>`**: Structural code refactoring without external behavioral changes.
+
+Alpha, beta, release candidate and stable tags must identify the reviewed main
+commit. Manual release and non-publishing candidate workflows also run from main.
+Synchronize main-only release preparation and hotfixes back into develop. See
+[the required release branch policy](RELEASE.md#required-branch-policy).
 
 ---
 
