@@ -7,6 +7,7 @@ const openMock = vi.fn();
 const listWorkspaceEntriesMock = vi.fn();
 const indexWorkspaceFilesMock = vi.fn();
 const readWorkspaceFileMock = vi.fn();
+const createGoProjectMock = vi.fn();
 
 vi.mock("@tauri-apps/plugin-dialog", () => ({
   open: (...args: unknown[]) => openMock(...args),
@@ -16,6 +17,8 @@ vi.mock("../../lib/ipc/client", async () => {
   const actual = await vi.importActual("../../lib/ipc/client");
   return {
     ...actual,
+    createGoProject: (...args: unknown[]) => createGoProjectMock(...args),
+    configureToolchainPaths: async (paths: unknown) => ({ ok: true, data: paths }),
     indexWorkspaceFiles: (...args: unknown[]) => indexWorkspaceFilesMock(...args),
     listWorkspaceEntries: (...args: unknown[]) => listWorkspaceEntriesMock(...args),
     readWorkspaceFile: (...args: unknown[]) => readWorkspaceFileMock(...args),
@@ -56,6 +59,7 @@ describe("EditorShell panels", () => {
     listWorkspaceEntriesMock.mockResolvedValue({ ok: true, data: [] });
     indexWorkspaceFilesMock.mockResolvedValue({ ok: true, data: { files: [], notice: null } });
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
+    createGoProjectMock.mockResolvedValue({ ok: true, data: "C:/projects/hello" });
   });
 
   it("shows explorer panel by default and hides summary/runtime/git by default", () => {
@@ -72,6 +76,22 @@ describe("EditorShell panels", () => {
       "aria-pressed",
       "false"
     );
+  });
+
+  it("creates a project from the welcome screen and opens main.go in the new workspace", async () => {
+    openMock.mockResolvedValue("C:/projects");
+    render(<EditorShell />);
+    fireEvent.click(screen.getByRole("button", { name: "New Go Project…" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Browse…" }));
+    await waitFor(() => expect(screen.getByLabelText("Parent folder")).toHaveValue("C:/projects"));
+    fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "hello" } });
+    fireEvent.change(screen.getByLabelText("Module path"), { target: { value: "example.test/hello" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create Project" }));
+    await waitFor(() => expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/projects/hello", "main.go"));
+    expect(await screen.findByTestId("opened-document")).toHaveTextContent("package main");
+    expect(createGoProjectMock).toHaveBeenCalledOnce();
+    expect(openMock).toHaveBeenCalledOnce();
+    expect(screen.queryByRole("dialog", { name: "New Go Project" })).not.toBeInTheDocument();
   });
 
   it("keeps only the terminal panel toggle available in the shell chrome", async () => {

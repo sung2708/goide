@@ -18,6 +18,8 @@ it("renders lightweight Run/Debug controls with the exact source snapshot", () =
   const { context, source } = setup();
   const buttons = [...document.querySelectorAll("button")]; expect(buttons.map(button => button.textContent)).toEqual(["Run", "Debug"]);
   buttons[0].click(); expect(context.execute).toHaveBeenCalledWith(expect.objectContaining({ kind: "main" }), "run", source);
+  expect(document.querySelector(".cm-entry-actions")?.closest(".cm-line")).not.toBeNull();
+  expect(view!.state.doc.toString()).toBe(source);
 });
 it("rejects stale widgets across edits, workspace changes and pending execution", () => {
   const { context, publish } = setup(); const button = document.querySelector("button")!;

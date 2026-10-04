@@ -73,6 +73,14 @@ struct Plan {
 }
 fn patterns(root: &Path, directory: &Path, target: &Target) -> Result<Plan> {
     let context = json(directory, &["env", "-json", "GOMOD", "GOWORK"])?;
+    patterns_from_context(root, directory, target, &context)
+}
+fn patterns_from_context(
+    root: &Path,
+    directory: &Path,
+    target: &Target,
+    context: &Value,
+) -> Result<Plan> {
     let work = context["GOWORK"]
         .as_str()
         .ok_or_else(|| anyhow!("Go omitted GOWORK"))?;
@@ -190,7 +198,31 @@ pub(crate) fn execution_target(
         .parent()
         .context("Test file has no package directory")?;
     let filter = test_filter(name)?;
-    let plan = patterns(&root, directory, &Target::Package)?;
+    let context = json(directory, &["env", "-json", "GOMOD", "GOWORK"])?;
+    let module = context["GOMOD"].as_str().unwrap_or("");
+    let work_file = context["GOWORK"].as_str().unwrap_or("");
+    let standalone = !is_test
+        && (module.is_empty() || module == "/dev/null" || module.eq_ignore_ascii_case("NUL"))
+        && (work_file.is_empty() || work_file == "off");
+    let plan = if standalone {
+        Plan {
+            directory: directory.to_path_buf(),
+            patterns: Vec::new(),
+            work: None,
+        }
+    } else {
+        patterns_from_context(&root, directory, &Target::Package, &context)?
+    };
+    let package_target = if standalone {
+        format!(
+            "./{}",
+            file.file_name()
+                .context("No Go filename")?
+                .to_string_lossy()
+        )
+    } else {
+        ".".to_owned()
+    };
     let work = plan.work.as_ref().map_or_else(
         || std::ffi::OsString::from("off"),
         |path| path.as_os_str().to_owned(),
@@ -200,7 +232,7 @@ pub(crate) fn execution_target(
             .current_dir(directory)
             .env("GOFLAGS", "")
             .env("GOWORK", &work)
-            .args(["list", "-json", "."]),
+            .args(["list", "-json", &package_target]),
         None,
     )?;
     if !listed.status.success() {
@@ -240,7 +272,7 @@ pub(crate) fn execution_target(
             ));
         }
         return Ok(super::delve::LaunchMode::Package {
-            package: ".".into(),
+            package: package_target,
             cwd: directory.to_string_lossy().into_owned(),
             work: plan.work.map(|path| path.to_string_lossy().into_owned()),
         });

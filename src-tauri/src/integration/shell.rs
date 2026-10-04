@@ -137,7 +137,7 @@ where
 
 #[cfg(windows)]
 fn is_windows_shell_available(shell: &str) -> bool {
-    std::process::Command::new("where")
+    crate::integration::command::std_command("where")
         .arg(shell)
         .output()
         .map(|output| output.status.success())

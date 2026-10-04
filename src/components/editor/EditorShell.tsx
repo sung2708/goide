@@ -35,6 +35,7 @@ import { UpdateNotice } from "../../features/updates/UpdatePanel";
 import { useStartupUpdates } from "../../features/updates/useStartupUpdates";
 import ToolchainDialog from "../../features/settings/ToolchainDialog";
 import GoProjectDialog from "../../features/goProject/GoProjectDialog";
+import NewGoProjectDialog from "../../features/goProject/NewGoProjectDialog";
 import GoTestsDialog from "../../features/goTests/GoTestsDialog";
 import { useGoTests } from "../../features/goTests/useGoTests";
 import ThemeSwitcher from "../layout/ThemeSwitcher";
@@ -310,6 +311,8 @@ function EditorShell() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isToolchainOpen, setIsToolchainOpen] = useState(false);
   const [isGoProjectOpen, setIsGoProjectOpen] = useState(false);
+  const [isNewGoProjectOpen, setIsNewGoProjectOpen] = useState(false);
+  const [newProjectToOpen, setNewProjectToOpen] = useState<string | null>(null);
   const runtimeSignalTimeoutMs = resolveRuntimeSignalTimeoutMs();
   const { session: documents, snapshot: documentSnapshot, workspacePath, setWorkspacePath, activeFilePath, setActiveFilePath, activeFileContent, setActiveFileContent, isDirty, activeFilePathRef, savedContentRef, latestEditorContentRef } = useDocumentSession();
   const [isOpening, setIsOpening] = useState(false);
@@ -1250,7 +1253,7 @@ function EditorShell() {
 
   const safeCloseDialog = useSafeWindowClose({
     dirty: () => hasConflictDrafts(workspacePathRef.current) || documents.dirty,
-    busy: () => documentTransitionRef.current || isSavingRef.current || gitOperationBusy,
+    busy: () => isNewGoProjectOpen || documentTransitionRef.current || isSavingRef.current || gitOperationBusy,
     registerInstall: updateService.registerInstall,
     install: updateService.install,
     save: preserveAllDocuments,
@@ -1940,6 +1943,11 @@ function EditorShell() {
     [documents, clearActiveDiagnostics, invalidateDiagnosticsRequests, isReading, refreshDiagnosticsForFile, rememberOpenedFile, workspacePath]
   );
 
+  useEffect(() => {
+    if (!newProjectToOpen || isOpening || isNewGoProjectOpen) return;
+    setNewProjectToOpen(null);
+    if (workspacePath === newProjectToOpen) void handleOpenFile("main.go");
+  }, [newProjectToOpen, workspacePath, isOpening, isNewGoProjectOpen, handleOpenFile]);
   const workspaceHistory = useWorkspaceHistory(documents, documentSnapshot, handleOpenWorkspace, setFileError);
 
   // Git has already preserved the buffer before entering this callback. Never
@@ -2081,7 +2089,7 @@ function EditorShell() {
    */
   const surfaceKey = workspacePath ? "workspace-shell" : null;
 
-  const commandBusy = documentTransitionRef.current || branchMutationRef.current || runStopInFlightRef.current;
+  const commandBusy = isNewGoProjectOpen || documentTransitionRef.current || branchMutationRef.current || runStopInFlightRef.current;
   const goToLine = useGoToLine(`${workspacePath}\u0000${activeFilePath}`, activeFileContent ?? "", selectedLine ?? 1, !!activeFilePath && !commandBusy, requestJump);
   const problems = useMemo(() => [
     ...Object.entries(knownDiagnostics)
@@ -2126,6 +2134,7 @@ function EditorShell() {
     { id: "git.openGraph", title: "Git: Open Git Graph", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("graph") },
     { id: "git.stash", title: "Git: Open Stashes", disabled: !workspacePath ? "Open a repository workspace first." : undefined, run: () => openGitView("stashes") },
     { id: "workspace.open", title: "Open Workspace Folder", shortcut: "Mod+o", disabled: commandBusy ? "A document operation is in progress." : undefined, run: () => handleOpenWorkspace() },
+    { id: "workspace.newGoProject", title: "New Go Project", category: "Workspace", disabled: commandBusy || runStatus === "running" || isDebugSessionBusy ? "Finish document operations and stop Run/Debug first." : undefined, run: () => setIsNewGoProjectOpen(true) },
     { id: "workspace.close", title: "Close Workspace", shortcut: "Mod+Shift+w", disabled: !workspacePath || commandBusy ? "Open a workspace and finish document operations." : undefined, run: () => handleOpenWorkspace(null) },
     { id: "file.quickOpen", allowInInput: true, title: "Quick Open File", shortcut: "Mod+p", disabled: !workspacePath ? "Open a workspace first." : undefined, run: () => { setQuickOpenQuery(""); setIsQuickOpenOpen(true); } },
     { id: "file.save", title: "Save Active File", shortcut: "Mod+s", disabled: !activeFilePath || documents.active?.readOnly || commandBusy || isSavingRef.current ? "Open an editable file and wait for document operations." : undefined, run: () => handleSaveFile(latestEditorContentRef.current ?? "") },
@@ -2171,6 +2180,7 @@ function EditorShell() {
         <ToolchainDialog open={isToolchainOpen} onClose={() => setIsToolchainOpen(false)} {...toolchain} />
         <GoTestsDialog open={isGoTestsOpen} close={() => setIsGoTestsOpen(false)} runner={goTests} directory={testDirectory} navigate={(path, line, column) => { const root = workspacePathRef.current; void handleOpenFile(path).then(() => { if (workspacePathRef.current === root && activeFilePathRef.current === path) requestJump(line, column); }); }} />
         <GoProjectDialog open={isGoProjectOpen} onClose={() => setIsGoProjectOpen(false)} root={workspacePath} activePath={activeFilePath} transaction={moduleDocumentTransaction} cancelPreparation={savePreparation.cancel} onChanged={root => { if (workspacePathRef.current === root) { setExplorerRevision(current => current + 1); void reloadGitState(root); } }} />
+        {isNewGoProjectOpen && <NewGoProjectDialog paths={{ go: settings.values["go.executablePath"], gopls: settings.values["go.goplsPath"], dlv: settings.values["debug.delvePath"] }} onClose={() => setIsNewGoProjectOpen(false)} onCreated={async path => { const opened = await handleOpenWorkspace(path); if (opened) setNewProjectToOpen(path); return opened; }} />}
         <LanguageEditReview state={codeActions.state} onApply={codeActions.apply} onClose={codeActions.close} onPreviewAction={codeActions.preview} />
         <LanguageEditReview state={languageEdits.state} onApply={languageEdits.apply} onClose={languageEdits.close} onRenameNameChange={languageEdits.setRenameName} onPreviewRename={languageEdits.previewRename} />
         <LanguageResults state={language.state} onClose={language.close} onNavigate={location => {
@@ -2650,6 +2660,7 @@ function EditorShell() {
                     workspacePath={workspacePath}
                     isOpening={isOpening}
                     onOpenWorkspace={() => void handleOpenWorkspace()}
+                    onNewProject={() => void executeCommand("workspace.newGoProject")}
                     recentWorkspaces={workspaceHistory.recent}
                     onReopenWorkspace={workspaceHistory.reopen}
                     onForgetWorkspace={workspaceHistory.forget}

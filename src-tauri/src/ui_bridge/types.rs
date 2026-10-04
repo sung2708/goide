@@ -9,6 +9,7 @@ pub use crate::integration::fs::FileInfo as WorkspaceFileInfoDto;
 pub use crate::integration::go_project::actions::{
     Output as GoModuleOutputDto, Request as GoModuleRequestDto,
 };
+pub use crate::integration::go_project::create::Request as CreateGoProjectRequestDto;
 pub use crate::integration::go_project::{
     ProjectInfo as GoProjectInfoDto, Request as GoProjectRequestDto,
 };
