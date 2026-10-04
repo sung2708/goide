@@ -301,5 +301,5 @@ preallocation cap). Verified downloads use bounded in-memory buffers, so peak
 memory still rises during download/verification. Platform install paths and
 Windows breakaway need signed end-to-end host QA. The pre-existing Unix PTY
 descendant and Git cleanup edge cases remain release blockers in
-[release readiness](RELEASE_READINESS.md). See the current evidence in
-Update System Report (local archived report).
+[release readiness](RELEASE_READINESS.md). The website/updater wire contract is
+documented in [release metadata](RELEASE_METADATA_REPORT.md).

@@ -1,50 +1,49 @@
-# Goro Documentation Directory
+# Goro documentation
 
-Welcome to the Goro engineering and product documentation. This directory provides comprehensive guides for users, contributors, and maintainers.
+These are maintained guides and contracts for users, contributors and maintainers.
+Source capabilities do not imply acceptance of a shipped installer.
 
----
+## Using Goro
 
-## Documentation Map
+- [Product scope](PRODUCT.md)
+- [Navigation and search](NAVIGATION_SEARCH.md)
+- [Managed Go toolchains](TOOLCHAIN_MANAGER.md)
+- [Document copies and recovery](DOCUMENT_RECOVERY.md)
+- [Troubleshooting](TROUBLESHOOTING.md)
+- [Brand assets and licensing](BRAND.md)
 
-### 1. Product & Strategy
-- [PRODUCT.md](PRODUCT.md): Product vision, target users, problem statement, Go workflows, core differentiators, non-goals, and definition of stable 1.0.
-- [ROADMAP.md](ROADMAP.md): Detailed phase-by-phase roadmap toward production 1.0 (Foundation, Alpha, Beta, RC, Stable 1.0) with explicit exit criteria.
+## Contributing
 
-### 2. Architecture & Design
-- [ARCHITECTURE.md](ARCHITECTURE.md): Comprehensive system architecture, Tauri IPC boundaries, Rust backend modules, editor architecture, terminal docking, gopls/delve integrations, Mermaid diagrams, and technical debt documentation.
-- [ENGINEERING_RULES.md](ENGINEERING_RULES.md): Durable engineering principles and invariants governing component boundaries, state ownership, typed IPC contracts, and async lifecycle cleanup.
+- [Development and scope constraints](DEVELOPMENT.md)
+- [Build instructions](BUILDING.md)
+- [Testing](TESTING.md)
+- [Architecture](ARCHITECTURE.md)
+- [Engineering rules](ENGINEERING_RULES.md)
+- [Roadmap and exit criteria](ROADMAP.md)
+- [Repository instructions](../AGENTS.md)
+- [Security policy](../SECURITY.md)
 
-### 3. Development & Contribution
-- [DEVELOPMENT.md](DEVELOPMENT.md): Contributor development environment, branching workflow, Conventional Commit standards, and verification expectations.
-- [BUILDING.md](BUILDING.md): Detailed build instructions and prerequisites across Windows, macOS, and Linux, including MSVC toolchain configuration.
-- [TESTING.md](TESTING.md): Testing strategies, Vitest suites, Rust tests, and testing conventions.
-- [TOOLCHAIN_MANAGER.md](TOOLCHAIN_MANAGER.md): managed Go/gopls/Delve setup, integrity, activation and platform acceptance.
-- [DOCUMENT_RECOVERY.md](DOCUMENT_RECOVERY.md): native document copies, bounded local draft checkpoints, explicit recovery and installed-app acceptance.
-- [TROUBLESHOOTING.md](TROUBLESHOOTING.md): Solutions for common issues regarding gopls, Delve, terminal PTY, and MSVC toolchains.
+## Releasing and website integration
 
-### 4. Release Engineering & Operations
-- [UPDATES.md](UPDATES.md): Official updater, signing, public distribution, website contracts and first-release setup.
-- [RELEASE_METADATA_REPORT.md](RELEASE_METADATA_REPORT.md): Website/updater metadata schema, pipeline validation, maintainer setup and alpha upgrade procedure.
-- [VERSIONING.md](VERSIONING.md): Semantic Versioning policy, pre-1.0 guidelines, version synchronization mechanism, tag naming, and migration of historical prototype tags.
-- [RELEASE_READINESS.md](RELEASE_READINESS.md): Current evidence-based decision, focused Go IDE scope, blockers and native acceptance protocol.
-- [RELEASE.md](RELEASE.md): Step-by-step maintainer release runbook, tag-driven CI/CD release workflow, verification checklists, artifact naming, and rollback procedures.
-- [RELEASE_PROMOTION.md](RELEASE_PROMOTION.md): Required develop-to-main gates, future automatic release sequence, exact candidate identity and active release hold.
-- [SECURITY.md](../SECURITY.md): Vulnerability reporting policy, SLA, and architectural security boundaries.
+- [Version policy](VERSIONING.md)
+- [Develop-to-main promotion gates](RELEASE_PROMOTION.md)
+- [Release readiness](RELEASE_READINESS.md)
+- [Release runbook](RELEASE.md)
+- [Distribution setup](RELEASE_SETUP.md)
+- [Secure updates](UPDATES.md)
+- [Website/updater metadata contract](RELEASE_METADATA_REPORT.md)
+- [Changelog](../CHANGELOG.md) and historical notes in [releases](releases)
 
----
+## Documentation policy
 
-## Documentation Principles
+Track durable behavior, user/contributor instructions, architecture, security and
+release contracts. Keep AI prompts, brainstorming, intermediate implementation
+plans, per-session QA reports and raw logs in `.local/working-docs/`, which is
+ignored by Git. Keep unresolved release gates in RELEASE_READINESS.md rather than
+hiding them with the local evidence. Never turn a scoped test result into a claim
+of full-suite or installed-app acceptance.
 
-Every document in this repository must satisfy one standard:
-> **"Will a developer, contributor, maintainer, security researcher, or user need this?"**
-
-We maintain documentation integrity:
-- Documentation reflects the **actual implementation** in code. Non-existent functionality is never claimed as implemented.
-- We clearly distinguish between **Implemented**, **Experimental**, and **Planned** capabilities.
-- Ephemeral AI agent scratchpads, raw prompt histories, and intermediate planning documents are strictly excluded from git tracking.
-
-## Brand identity
-
-The product is **Goro**; repository paths and GitHub URLs remain **goide**. See [Brand & Artwork](BRAND.md) for logos, app icons, color tokens, licensing, and icon export.
-
-- [Navigation and Search](NAVIGATION_SEARCH.md): input, matching/replacement contracts, worker ownership, budgets and acceptance gates.
+The cleanup archive is local at `.local/working-docs/2026-10-04/docs/`. A local Git
+bundle preserves history before cleanup. Published release notes and the
+repository changelog are preserved unchanged; temporary reports are removed from
+tracked history as requested by the maintainer.

@@ -110,3 +110,26 @@ Quick Open regressions cover fuzzy matching, exact filename ranking, recent-file
 Command regressions verify exact Windows/macOS modifier matching, disabled actions, native error envelopes, current command availability, modal/composition isolation and listener cleanup. EditorShell tests open/search/execute the palette, exercise existing debug and symbol shortcuts, preserve Run state after a failed stop, and wait for backend-observed pause state after a DAP acknowledgement.
 
 Multi-document regressions exercise independent dirty tab buffers, reread avoidance, Save All baseline isolation and partial failure, newer edits during saves, explicit close/discard/cancel, failed close-save retry, workspace choice safety, native read-only UI, and existing branch release-gate transitions. CodeMirror tests round-trip real history/selection and verify that external content invalidates stale editor state. Native filesystem fixtures check read-only metadata and refused writes, scoped paths, binary/non-UTF-8 rejection and oversized text limits. Native multi-document desktop smoke checks and persistent session recovery remain outstanding.
+
+## Native checks and acceptance
+
+Run the standard suite with shared native registries serialized:
+
+```sh
+cargo test --manifest-path src-tauri/Cargo.toml --locked -- --test-threads=1
+cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+```
+
+On Windows, use `scripts\cargo_test_msvc.cmd` when the MSVC environment requires
+initialization. Tool-dependent fixtures marked ignored must be run explicitly with
+Go, gopls and Delve available; default Cargo success does not cover them.
+
+The manual Managed Toolchain Acceptance workflow covers Windows x64, Linux x64,
+macOS ARM64 and macOS Intel x64. It installs/probes real managed tools and publishes
+nothing. Runner tests do not replace installed-app QA.
+
+Record exact candidate SHA, environment, commands, passed/failed/skipped checks and
+ignored-fixture disposition. Keep detailed per-run output in `.local/working-docs/`
+and retain unresolved gates in [release readiness](RELEASE_READINESS.md).
+A focused regression is not a full-suite pass. Do not weaken assertions or extend
+timeouts solely to mask a race; await completion of the user-visible operation.

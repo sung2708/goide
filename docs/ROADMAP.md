@@ -28,7 +28,7 @@ Phase 1: Foundation & Hygiene  ──►  Phase 2: Alpha (0.2.x)  ──►  Pha
   - [ ] Consistent process ownership and native exit/cancellation verification.
   - [ ] Shared command/keybinding, source-location, Problems and typed settings foundations.
 
-### Phase 2: Alpha Releases (`v0.2.x`) (Active Target: `v0.2.0-alpha.1`)
+### Phase 2: Alpha Releases (`v0.2.x`)
 - **Focus**: Core stability, decomposition of monolithic backend modules, and hardening of developer workflows.
 - **Exit Criteria**:
   - Refactored `src-tauri/src/ui_bridge/commands.rs` into domain modules (`fs`, `debug`, `lsp`, `terminal`).
