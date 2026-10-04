@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
@@ -81,7 +81,7 @@ describe("EditorShell panels", () => {
   it("creates a project from the welcome screen and opens main.go in the new workspace", async () => {
     openMock.mockResolvedValue("C:/projects");
     render(<EditorShell />);
-    fireEvent.click(screen.getByRole("button", { name: "New Go Project…" }));
+    fireEvent.click(within(screen.getByRole("navigation", { name: "Quick actions" })).getByRole("button", { name: "New Go Project…" }));
     fireEvent.click(await screen.findByRole("button", { name: "Browse…" }));
     await waitFor(() => expect(screen.getByLabelText("Parent folder")).toHaveValue("C:/projects"));
     fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "hello" } });
