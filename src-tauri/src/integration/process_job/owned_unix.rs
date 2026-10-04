@@ -134,11 +134,25 @@ impl OwnedChild {
         if self.resources().stopped {
             return Ok(());
         }
-        self.resources_mut()
-            .group
-            .signal_once()
-            .map_err(|e| e.to_string())?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        loop {
+            match self.resources_mut().group.signal_once() {
+                Ok(()) => break,
+                Err(error) if error.raw_os_error() == Some(libc::EPERM) => {
+                    // Darwin can deny signals while Delve completes disconnect.
+                    // Retry only while Group still owns its unreaped leader;
+                    // signal_once rechecks wait authority on every attempt.
+                    // A persistent denial remains an error, never proof of exit.
+                    if tokio::time::Instant::now() >= deadline {
+                        return Err(format!(
+                            "Owned group signalling remains denied; retry Stop: {error}"
+                        ));
+                    }
+                    tokio::time::sleep(Duration::from_millis(20)).await;
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
         tokio::time::timeout_at(deadline, self.wait())
             .await
             .map_err(|_| "Owned leader retirement is unconfirmed; retry Stop.".to_string())?

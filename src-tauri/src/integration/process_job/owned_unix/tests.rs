@@ -10,6 +10,22 @@ async fn child() -> OwnedChild {
     OwnedChild::spawn(&mut command, || Ok(())).await.unwrap()
 }
 #[tokio::test]
+async fn transient_permission_denial_retries_without_losing_the_owned_leader() {
+    retry_cleanup().await.unwrap();
+    let mut foreign = child().await;
+    let mut owned = child().await;
+    let identity = owned.identity();
+    owned.resources_mut().group.deny_next_signal_for_test();
+    owned.stop().await.unwrap();
+    assert_eq!(owned.identity(), identity);
+    assert!(owned.resources().stopped);
+    owned.stop().await.unwrap();
+    drop(owned);
+    assert!(!is_pending());
+    assert!(foreign.try_wait().unwrap().is_none());
+    foreign.stop().await.unwrap();
+}
+#[tokio::test]
 async fn cancelled_group_cleanup_retains_child_and_uuid_until_confirmed_retry() {
     retry_cleanup().await.unwrap();
     let mut foreign = child().await;
