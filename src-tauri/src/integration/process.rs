@@ -273,7 +273,7 @@ async fn start_go_run(
         crate::integration::go_tests::execution_target(&plan_root, &plan_path, None)
     })
     .await??;
-    let crate::integration::delve::LaunchMode::Package { cwd, work, .. } = plan else {
+    let crate::integration::delve::LaunchMode::Package { package, cwd, work } = plan else {
         return Err(anyhow!("Use Run Test for a _test.go target."));
     };
     startup.check()?;
@@ -287,7 +287,9 @@ async fn start_go_run(
     // Spawn go run <package> (optionally with -race)
     let package_root = Path::new(&cwd);
     let normalized_target = crate::integration::gopls::normalize_platform_pathbuf(target);
-    let args = build_go_run_args(package_root, &normalized_target, mode);
+    let mut args = build_go_run_args(package_root, &normalized_target, mode);
+    // Go may select an explicit file for a non-module scratch directory.
+    *args.last_mut().expect("run target") = package;
     let mut command = build_go_run_command(package_root, work.as_deref(), &args);
     let mut child = OwnedChild::spawn(&mut command, || startup.check())
         .await
@@ -454,6 +456,42 @@ mod tests {
     use super::{build_go_run_args, to_package_run_target, RunMode};
     use std::path::Path;
     use std::process::Stdio;
+    #[tokio::test]
+    #[ignore = "requires installed Go; runs a scratch file through owned production startup"]
+    async fn actual_run_starts_a_standalone_file_without_creating_module_files() {
+        use tokio::io::AsyncReadExt;
+        let root = std::env::temp_dir().join(format!("goro-scratch-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&root).unwrap();
+        std::fs::write(
+            root.join("main.go"),
+            "package main\nimport \"fmt\"\nfunc main() { fmt.Println(42) }\n",
+        )
+        .unwrap();
+        let handle = std::sync::Arc::new(tokio::sync::Mutex::new(None));
+        let mut streams = super::start_go_run(
+            root.to_string_lossy().into_owned(),
+            "main.go".into(),
+            uuid::Uuid::new_v4().to_string(),
+            RunMode::Standard,
+            handle.clone(),
+        )
+        .await
+        .unwrap();
+        let mut output = String::new();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            streams.stdout.read_to_string(&mut output),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        super::stop_all_runs(&handle).await.unwrap();
+        assert_eq!(output.trim(), "42");
+        assert!(!root.join("go.mod").exists());
+        assert!(!root.join("go.sum").exists());
+        std::fs::remove_file(root.join("main.go")).unwrap();
+        std::fs::remove_dir(root).unwrap();
+    }
     #[tokio::test]
     async fn stop_cancels_owned_startup_tool_before_waiting_for_registration() {
         let root =

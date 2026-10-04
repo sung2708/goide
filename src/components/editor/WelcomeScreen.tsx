@@ -3,6 +3,7 @@ type WelcomeScreenProps = {
   workspacePath: string | null;
   isOpening: boolean;
   onOpenWorkspace: () => void;
+  onNewProject?: () => void;
   onQuickOpen: () => void;
   onSearch: () => void;
   onTerminal: () => void;
@@ -16,6 +17,7 @@ export default function WelcomeScreen({
   workspacePath,
   isOpening,
   onOpenWorkspace,
+  onNewProject,
   onQuickOpen,
   onSearch,
   onTerminal,
@@ -76,6 +78,7 @@ export default function WelcomeScreen({
 
         {/* Unified Precision Actions List */}
         <nav className="welcome-actions" aria-label="Quick actions">
+          {onNewProject && <button type="button" className="welcome-action-item" onClick={onNewProject} disabled={isOpening}><span className="welcome-action-left">New Go Project…</span></button>}
           <button
             type="button"
             className="welcome-action-item welcome-action-primary"

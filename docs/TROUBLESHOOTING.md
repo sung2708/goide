@@ -8,6 +8,14 @@ This guide provides diagnosis and resolution steps for common issues encountered
 
 Goro runs preflight checks on startup. Missing external tools are surfaced in the status bar.
 
+### Starting a Go project (develop; not included in alpha.5)
+
+- Choose **New Go Project…** on the welcome screen or **New Go Project** in the command palette. Select a parent folder and enter a new folder name and module path, such as `example.com/hello`.
+- Goro uses the configured Go executable to run `go mod init`, adds a runnable `main.go`, and opens the project through the usual document-preservation workflow. Existing directories are rejected. If creation fails, inspect the reported folder before retrying; partial files are retained.
+- `go.sum` is created by Go when dependencies require checksums. A standard-library-only starter does not need it.
+- For a saved standalone `main.go` without a module or Go workspace, **Run** executes that file directly without creating module files. Module/workspace projects continue to run the selected package, including its helper files. Imports requiring modules need a module and dependencies first; package/workspace test execution still requires `go.mod` or `go.work`.
+- Run/Debug entry controls sit beside the declaration and do not add editor rows. Controls from an obsolete source snapshot cannot start execution.
+
 ### Issue: `go` executable not found
 - **Symptom**: Status bar indicates Go is missing; running Go files fails.
 - **Resolution**:

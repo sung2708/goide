@@ -1,5 +1,18 @@
 use super::types::{ApiResponse, GoProjectInfoDto, GoProjectRequestDto};
 #[tauri::command]
+pub async fn create_go_project(
+    request: super::types::CreateGoProjectRequestDto,
+) -> ApiResponse<String> {
+    match super::commands::with_idle_go_tools(move || {
+        crate::integration::go_project::create::create(request)
+    })
+    .await
+    {
+        Ok(path) => ApiResponse::ok(path),
+        Err(error) => ApiResponse::err("go_project_create_failed", &error),
+    }
+}
+#[tauri::command]
 pub async fn run_go_tests<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     request: super::types::GoTestRequestDto,

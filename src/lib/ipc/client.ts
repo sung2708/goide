@@ -54,6 +54,10 @@ export async function inspectGoProject(request: import("./types").GoProjectReque
   if (!hasTauriInternals()) return { ok: false, error: { code: "go_project_native_required", message: "Go project inspection requires the desktop app and Go." } };
   return invoke("inspect_go_project", { request });
 }
+export async function createGoProject(request: import("./types").CreateGoProjectRequest): Promise<ApiResponse<string>> {
+  if (!hasTauriInternals()) return { ok: false, error: { code: "go_project_native_required", message: "Creating a project requires the desktop app and an installed Go toolchain." } };
+  return invoke("create_go_project", { request });
+}
 export async function subscribeGoTestOutput(request: import("./types").GoTestRequest, receive: (event: import("./types").GoTestEvent) => void): Promise<() => void> {
   if (!hasTauriInternals()) throw new Error("Live test output requires the desktop app.");
   const { listen } = await import("@tauri-apps/api/event");

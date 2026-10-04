@@ -118,6 +118,7 @@ export type DiagnosticsResponse = {
 
 export type LanguageQueryKind = "definition" | "references" | "hover";
 export type GoProjectRequest = { workspaceRoot: string; relativeDirectory: string; requestId: string };
+export type CreateGoProjectRequest = { parentDirectory: string; name: string; modulePath: string };
 export type GoModuleAction = "tidy" | "download";
 export type GoTestRequest = GoProjectRequest & { target: "package" | "workspace"; testName: string | null };
 export type GoTestOutput = { packages: { importPath: string; relativeDirectory: string }[]; success: boolean; exitCode: number | null; stdout: string; stderr: string };
