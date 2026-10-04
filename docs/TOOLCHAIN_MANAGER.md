@@ -1,6 +1,6 @@
 # Managed Go toolchains
 
-## Product contract and implementation plan
+## Product contract
 
 Goro must support both existing executables and an explicitly installed private Go,
 gopls and Delve bundle. Downloading is optional, requires network access and never
@@ -51,6 +51,12 @@ uses GOTOOLCHAIN=local; ordinary project execution retains its existing policy.
 - Further catalogs/version choices, automatic background updates and an offline
   installer require separate audited catalog changes. No tool changes mid-session.
 
-Source tests do not replace installer and native acceptance. Status and evidence
-are recorded below as implementation progresses; this document does not authorize
-a release.
+Source tests do not replace installer and native acceptance. Required gates are recorded in [release readiness](RELEASE_READINESS.md); this document does not authorize a release.
+
+## Platform acceptance workflow
+
+The manual `.github/workflows/managed-toolchain.yml` workflow runs integrity and
+real setup/debug checks on Windows x64, Linux x64, macOS ARM64 and macOS Intel x64.
+It publishes nothing and uses no release secrets. Run it against the candidate
+being evaluated; a workflow definition is not evidence of a completed hosted run.
+Native installer acceptance remains a separate gate.

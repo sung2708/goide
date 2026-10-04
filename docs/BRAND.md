@@ -37,8 +37,8 @@ Monochrome variants retain one color throughout.
 These tokens remain in src/styles/global.css. No editor syntax colors or named
 palettes change. Use logo-light.svg on pale surfaces and logo-dark.svg on dark
 surfaces. Monochrome black/white/brand/gray assets use explicit fills; currentColor
-variants are available for inline embedding. Contrast ratios are documented in
-the implementation report (local archived report).
+variants are available for inline embedding. Check contrast on the actual
+background when embedding the assets; brand accents are not body-text tokens.
 
 ## Usage
 
@@ -91,7 +91,8 @@ for compatibility and accuracy. There is no release or version change.
 
 ## Validation and inventory
 
-See Brand asset implementation (local archived report) for the exact file
-inventory, export evidence and remaining native/platform acceptance. Website
-integration belongs to the separate goide_web repository; its asset package is
-public/brand, with instructions there to preserve the same canonical sources.
+Canonical assets are in [public/brand](../public/brand); native app icons are in
+[src-tauri/icons](../src-tauri/icons). Review small-size legibility after exports
+and verify the actual Dock, taskbar and installer icons on each supported platform.
+Website integration belongs to the separate goide_web repository; preserve the
+same canonical sources in its public/brand package.

@@ -11,7 +11,7 @@ until the maintainer resumes releases.
    reviewed release notes on develop. `0.5.0` is the requested complete milestone,
    not a version bump that can substitute for unfinished functionality or QA.
    Close or explicitly resolve every applicable gate in
-   [release readiness](RELEASE_READINESS.md) and beta readiness (local archived report).
+   [release readiness](RELEASE_READINESS.md).
 2. Run frontend, release contracts, security checks and native tests on Windows
    x64, Linux x64, macOS ARM64 and macOS Intel x64 for the **same candidate SHA**.
    Run required ignored real-tool fixtures explicitly; a skipped, cancelled,

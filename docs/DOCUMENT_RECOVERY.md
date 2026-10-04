@@ -71,7 +71,7 @@ The manager offers export of the original JSON and an explicit confirmed reset;
 reset restarts journaling. Removing app data or clearing WebView storage removes
 these copies. View metadata remains separate in workspace history.
 
-## Evidence and remaining acceptance
+## Acceptance requirements
 
 Tests cover restart reconstruction, protected startup records, original baselines,
 dirty destination rejection, quota failure, corrupt storage/reset, privacy opt-out,
