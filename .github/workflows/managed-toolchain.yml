@@ -5,16 +5,30 @@ permissions:
   contents: read
 jobs:
   setup-and-debug:
-    name: Managed Go setup (${{ matrix.os }})
+    name: Managed Go setup (${{ matrix.platform }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+            platform: Linux x64
+            arch: x64
+          - os: windows-latest
+            platform: Windows x64
+            arch: x64
+          - os: macos-15
+            platform: macOS ARM64
+            arch: arm64
+          - os: macos-15-intel
+            platform: macOS Intel x64
+            arch: x64
     steps:
       - name: Checkout source
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Verify native runner architecture
+        run: node -e "if(process.arch !== '${{ matrix.arch }}') throw new Error('Unexpected runner architecture ' + process.arch); console.log(process.platform, process.arch)"
       - name: Install Linux webview dependencies
         if: runner.os == 'Linux'
         run: |

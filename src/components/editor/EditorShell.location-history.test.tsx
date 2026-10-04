@@ -27,11 +27,15 @@ async function open() {
 it("returns to the source location, moves forward to the definition and preserves buffers", async () => {
   await open();
   fireEvent.keyDown(document.body, { key: "ArrowLeft", altKey: true });
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("main.go\nsecond line\nthird line"));
-  expect(screen.getByTestId("jump")).toHaveTextContent("1:1");
+  await waitFor(() => {
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("main.go\nsecond line\nthird line");
+    expect(screen.getByTestId("jump")).toHaveTextContent("1:1");
+  });
   fireEvent.keyDown(document.body, { key: "ArrowRight", altKey: true });
-  await waitFor(() => expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other.go\nsecond line\nthird line"));
-  expect(screen.getByTestId("jump")).toHaveTextContent("2:3");
+  await waitFor(() => {
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("other.go\nsecond line\nthird line");
+    expect(screen.getByTestId("jump")).toHaveTextContent("2:3");
+  });
   expect(read).toHaveBeenCalledTimes(2);
 });
 it("retains the back entry when its closed file cannot be read, so retry still works", async () => {

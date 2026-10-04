@@ -2,6 +2,12 @@
 
 Goro adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`).
 
+The maintainer's next complete milestone is `0.5.0`. Do not change the version or
+create `v0.5.0` merely because code was pushed. Applicable feature, native QA,
+security, toolchain and distribution gates must be complete on the exact candidate;
+see [Release promotion](RELEASE_PROMOTION.md). The current release hold forbids
+tag/publication until releases are resumed. This policy does not bump manifests.
+
 ---
 
 ## 1. Pre-1.0 Versioning Track

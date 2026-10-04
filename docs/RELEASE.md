@@ -4,6 +4,11 @@ This document defines the complete operational procedure for preparing, validati
 
 ## Required branch policy
 
+Develop must pass all required checks on the exact candidate before promotion to
+main. The required future automatic promotion/tag/publication order and active
+release hold are defined in [Release promotion](RELEASE_PROMOTION.md). That
+automation is not yet implemented; ordinary pushes do not automatically release.
+
 All Goro releases, including alpha, beta, release candidates and stable, must
 come from `main`. Develop features and fixes on `develop`, validate them, then
 merge `develop` into `main` and push `main` before preparing a release. Pushing
