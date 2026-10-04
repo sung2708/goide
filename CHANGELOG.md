@@ -13,6 +13,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] - 2026-10-04
+
+### Added
+- Optional managed Go/gopls/Delve setup, new Go projects, and bounded local draft recovery with export copies.
+- Persistent Project actions for opening, creating and closing projects with existing document-safety guards.
+
+### Fixed
+- Restore only the saved active document while loading background tabs.
+- Honor Don't Save on normal app exit and dismiss Project when pressing outside the menu.
+- Scope the Welcome new-project regression to its own navigation area.
+
+### Release status
+- Experimental alpha from main after develop promotion; native recovery, containment, performance and cross-platform install/upgrade acceptance remain open. See [release notes](docs/releases/v0.5.0-alpha.1.md).
+
+## Historical development notes
+
 ### Changed
 - Rename the public product to **Goro**, inspired by goroutines, with the brand line **Understand Go in motion.** Repository URLs, npm/Cargo package names, and the application identifier remain `goide`.
 - Replace legacy branding with the runtime gopher, original Goro wordmark, light/dark/monochrome logos, simplified favicons, and native application icons. Update README, product/brand documentation, welcome screen, window title, and release names.

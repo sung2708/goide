@@ -1,8 +1,9 @@
 # Release readiness
 
-Releases are on hold until the maintainer explicitly resumes them. Source features
-and passing unit tests do not certify an installer. No version, tag, main merge or
-publication is authorized by this checklist.
+The maintainer resumed releases on 2026-10-04 and authorized develop-to-main
+promotion. The next candidate is experimental `0.5.0-alpha.1`. Source features and
+passing unit tests do not certify an installer. This checklist does not declare
+beta/stable readiness; publication requires the reviewed source and package gates.
 
 The release path is **validated develop candidate → main → verified candidate
 packages → immutable tag/release → metadata last**. Follow
