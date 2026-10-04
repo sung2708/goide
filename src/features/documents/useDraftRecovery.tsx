@@ -69,5 +69,12 @@ export function useDraftRecovery(session: DocumentSession, snapshot: DocumentSna
     {[...new Set(stored.map(draft => draft.root))].map(root => <div key={root} className="my-3 text-sm"><button disabled={exporting} onClick={() => setDiscardRoot(root)}>Discard stored drafts for {root}…</button>{discardRoot === root && <div><p>Delete these recovery copies? Open editor buffers remain unchanged.</p><button onClick={() => { try { journal.current?.discard(root); setDiscardRoot(null); setRevision(value => value + 1); } catch (error) { report(String(error)); } }}>Confirm discard</button><button onClick={() => setDiscardRoot(null)}>Keep drafts</button></div>}</div>)}
     <button disabled={exporting} onClick={() => setManagerOpen(false)}>Close</button>
   </Dialog>;
-  return { banner, dialog, open: () => setManagerOpen(true) };
+  const discardCurrent = () => {
+    const root = session.snapshot().root;
+    if (!enabled || !root) return;
+    if (!journal.current) throw new Error("Draft recovery could not be cleared. Review stored drafts before closing without saving.");
+    journal.current.discard(root);
+    setRevision(value => value + 1);
+  };
+  return { banner, dialog, open: () => setManagerOpen(true), discardCurrent };
 }

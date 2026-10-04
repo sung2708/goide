@@ -61,7 +61,9 @@ export function useWorkspaceHistory(documents: DocumentSession, snapshot: Docume
     });
     return () => { cancelled = true; mounted.current = false; };
   }, [enabled, history]);
-  return { recent, reopen: (root: string) => {
+  return { recent, clearStartup: () => {
+    if (!history.close()) throw new Error("Workspace startup state could not be cleared. Retry before closing without saving.");
+  }, reopen: (root: string) => {
     const stored = history.session(root);
     if (stored && !restoring.current) void restore.current(stored);
   }, forget: (root: string) => { history.forget(root); setRecent([...history.sessions]); } };

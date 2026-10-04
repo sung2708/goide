@@ -62,6 +62,6 @@ export class WorkspaceHistory {
     const session = { root: snapshot.root, files, active: files.some(file => file.path === active) ? active : null };
     this.write({ version: 1, last: snapshot.root, sessions: [session, ...this.history.sessions.filter(entry => entry.root !== snapshot.root)].slice(0, 10) });
   }
-  close() { this.write({ ...this.history, last: null }); }
+  close() { return this.write({ ...this.history, last: null }); }
   forget(root: string) { this.write({ ...this.history, last: this.history.last === root ? null : this.history.last, sessions: this.history.sessions.filter(entry => entry.root !== root) }); }
 }

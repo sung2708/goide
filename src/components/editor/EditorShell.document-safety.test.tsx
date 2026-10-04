@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import EditorShell from "./EditorShell";
 import { settingsStore } from "../../features/settings/SettingsStore";
@@ -56,6 +56,36 @@ function edit(value: string) {
 }
 
 describe("EditorShell document safety", () => {
+  it("opens New Go Project from an existing workspace without changing its draft", async () => {
+    await openMain("off"); edit("unsaved main");
+    fireEvent.click(screen.getByText("Project"));
+    fireEvent.click(screen.getByRole("button", { name: "New Go Project…" }));
+    const newProject = await screen.findByRole("dialog", { name: "New Go Project" });
+    fireEvent.click(within(newProject).getByRole("button", { name: "Close" }));
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("unsaved main");
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+  it("keeps the existing project and draft when Open Project is cancelled", async () => {
+    await openMain("off"); edit("unsaved main");
+    openMock.mockResolvedValue("C:/different");
+    fireEvent.click(screen.getByText("Project"));
+    fireEvent.click(screen.getByRole("button", { name: "Open Project…" }));
+    const decision = await screen.findByRole("dialog", { name: "Unsaved document changes" });
+    fireEvent.click(within(decision).getByRole("button", { name: "Cancel" }));
+    expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace");
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("unsaved main");
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+  it("opens another project without saving when Don't Save is selected", async () => {
+    await openMain("off"); edit("unsaved main");
+    openMock.mockResolvedValue("C:/different");
+    fireEvent.click(screen.getByText("Project"));
+    fireEvent.click(screen.getByRole("button", { name: "Open Project…" }));
+    const discard = await screen.findByRole("dialog", { name: "Unsaved document changes" });
+    fireEvent.click(within(discard).getByRole("button", { name: "Don't Save" }));
+    await waitFor(() => expect(screen.getByTestId("workspace")).toHaveTextContent("C:/different"));
+    expect(writeMock).not.toHaveBeenCalled();
+  });
   afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => {
     vi.useRealTimers();
