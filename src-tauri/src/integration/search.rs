@@ -276,6 +276,14 @@ pub fn search(
     };
     let mut bytes = 0;
     let mut matches_count = 0;
+    let mut failures = Vec::new();
+    let mut unreadable_count = 0usize;
+    let mut note_failure = |description: String| {
+        unreadable_count += 1;
+        if failures.len() < 10 {
+            failures.push(description);
+        }
+    };
     let walker = workspace_walker(&root);
     for entry in walker.build() {
         if token.load(Ordering::Acquire) || crate::integration::lifecycle::gate().is_closing() {
@@ -291,7 +299,13 @@ pub fn search(
             report.reason = Some("Search stopped at its time/file/64 MiB/200-file/2000-line result budget. Narrow the glob filters.".into());
             break;
         }
-        let entry = entry.map_err(|e| format!("Search traversal failed: {e}"))?;
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                note_failure(format!("Traversal: {error}"));
+                continue;
+            }
+        };
         if !entry.file_type().is_some_and(|kind| kind.is_file()) {
             continue;
         }
@@ -299,10 +313,11 @@ pub fn search(
         let relative = path
             .strip_prefix(&root)
             .map_err(|_| "Search path escapes workspace")?;
-        let relative = relative
-            .to_str()
-            .ok_or("Search filename is not UTF-8")?
-            .replace('\\', "/");
+        let Some(relative) = relative.to_str() else {
+            note_failure("A filename is not UTF-8.".into());
+            continue;
+        };
+        let relative = relative.replace('\\', "/");
         if (!options.include.is_empty() && !include.is_match(&relative))
             || exclude.is_match(&relative)
         {
@@ -310,22 +325,30 @@ pub fn search(
         }
         report.scanned_files += 1;
         // Walkers never follow links; revalidate before opening to guard replacement by a link.
-        let metadata = std::fs::symlink_metadata(path).map_err(|e| e.to_string())?;
-        if !metadata.is_file()
-            || metadata.len() > 1024 * 1024
-            || !path
-                .canonicalize()
-                .map_err(|e| e.to_string())?
-                .starts_with(&root)
-        {
+        let metadata = match std::fs::symlink_metadata(path) {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                note_failure(format!("{relative}: {error}"));
+                continue;
+            }
+        };
+        let canonical = match path.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(error) => {
+                note_failure(format!("{relative}: {error}"));
+                continue;
+            }
+        };
+        if !metadata.is_file() || metadata.len() > 1024 * 1024 || !canonical.starts_with(&root) {
             continue;
         }
         let mut raw = Vec::new();
-        std::fs::File::open(path)
-            .map_err(|e| e.to_string())?
-            .take(1024 * 1024 + 1)
-            .read_to_end(&mut raw)
-            .map_err(|e| e.to_string())?;
+        let read = std::fs::File::open(path)
+            .and_then(|file| file.take(1024 * 1024 + 1).read_to_end(&mut raw));
+        if let Err(error) = read {
+            note_failure(format!("{relative}: {error}"));
+            continue;
+        }
         bytes += raw.len();
         if raw.len() > 1024 * 1024 || raw.contains(&0) {
             continue;
@@ -378,6 +401,18 @@ pub fn search(
     report
         .files
         .sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    if unreadable_count > 0 {
+        report.limited = true;
+        let previous = report
+            .reason
+            .take()
+            .map(|reason| format!("{reason} "))
+            .unwrap_or_default();
+        report.reason = Some(format!(
+            "{previous}{unreadable_count} unreadable path(s) omitted; other results are usable. {}",
+            failures.join("; ")
+        ));
+    }
     Ok(report)
 }
 

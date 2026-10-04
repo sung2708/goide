@@ -35,6 +35,26 @@ impl Drop for Workspace {
     }
 }
 #[test]
+#[cfg(windows)]
+fn unreadable_file_does_not_discard_other_search_matches() {
+    use std::os::windows::fs::OpenOptionsExt;
+    let workspace = Workspace::new();
+    workspace.write("visible.go", b"needle");
+    workspace.write("locked.go", b"needle");
+    let _lock = fs::OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(workspace.0.join("locked.go"))
+        .unwrap();
+    let report = workspace
+        .search("needle", SearchOptions::default())
+        .expect("partial results must survive a denied file");
+    assert_eq!(report.files.len(), 1);
+    assert_eq!(report.files[0].relative_path, "visible.go");
+    assert!(report.limited);
+    assert!(report.reason.unwrap().contains("locked.go"));
+}
+#[test]
 fn matching_is_native_case_regex_unicode_and_glob_scoped() {
     let workspace = Workspace::new();
     workspace.write(
