@@ -218,6 +218,7 @@ describe("CodeEditor", () => {
     prevSnippetFieldMock.mockReturnValue(true);
     acceptCompletionMock.mockReturnValue(false);
     mockView.requestMeasure.mockClear();
+    mockView.requestMeasure.mockImplementation((request?: { read: () => unknown; write: (value: unknown) => void }) => { if (request) request.write(request.read()); });
     mockView.scrollDOM.scrollBy.mockClear();
     mockView.scrollDOM.addEventListener.mockClear();
     mockView.scrollDOM.removeEventListener.mockClear();
@@ -260,77 +261,43 @@ describe("CodeEditor", () => {
     expect(newSave).toHaveBeenCalledWith("latest draft");
   });
 
-  it("registers a non-passive wheel listener on the CodeMirror scroll container", () => {
-    render(<CodeEditor value={"package main\n"} />);
-
-    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
-      (call: unknown[]) => call[0] === "wheel"
-    );
-
-    expect(wheelRegistration).toBeDefined();
-    expect(wheelRegistration?.[2]).toEqual({ passive: false });
-  });
-
-  it("forwards wheel scrolling from the editor host when scrollDOM is scrollable", () => {
-    mockView.scrollDOM.scrollHeight = 400;
-    render(<CodeEditor value={"package main\n"} />);
-
-    fireEvent.wheel(screen.getByTestId("mock-codemirror").parentElement as HTMLElement, {
-      deltaX: 4,
-      deltaY: 36,
-    });
-
-    expect(mockView.scrollDOM.scrollBy).toHaveBeenCalledWith({
-      left: 4,
-      top: 36,
-      behavior: "auto",
-    });
-  });
-
-  it("forwards wheel scrolling to the first scrollable ancestor when scrollDOM itself cannot scroll", () => {
-    const scrollableAncestor = {
-      scrollBy: vi.fn(),
-      clientHeight: 120,
-      scrollHeight: 400,
-      scrollLeft: 0,
-      scrollTop: 0,
-      parentElement: null,
-      dispatchEvent: vi.fn(),
-    };
-    mockView.scrollDOM.parentElement = scrollableAncestor;
-    render(<CodeEditor value={"package main\n"} />);
-
-    const wheelRegistration = mockView.scrollDOM.addEventListener.mock.calls.find(
-      (call: unknown[]) => call[0] === "wheel"
-    );
-    const handler = wheelRegistration?.[1] as ((event: {
-      ctrlKey: boolean;
-      deltaX: number;
-      deltaY: number;
-      deltaMode: number;
-      preventDefault: () => void;
-      target?: EventTarget | null;
-    }) => void) | undefined;
-
-    const preventDefault = vi.fn();
-    handler?.({
-      ctrlKey: false,
-      deltaX: 4,
-      deltaY: 36,
-      deltaMode: 0,
-      preventDefault,
-      target: mockView.scrollDOM as unknown as EventTarget,
-    });
-
-    expect(scrollableAncestor.scrollBy).toHaveBeenCalledWith({
-      left: 4,
-      top: 36,
-      behavior: "auto",
-    });
+  it("leaves wheel input native and observes scrolling passively", () => {
+    render(<CodeEditor value="package main\n" />);
+    expect(mockView.scrollDOM.addEventListener.mock.calls.some(call => call[0] === "wheel")).toBe(false);
+    expect(mockView.scrollDOM.addEventListener).toHaveBeenCalledWith("scroll", expect.any(Function), { passive: true });
+    const event = new WheelEvent("wheel", { deltaY: 36, bubbles: true, cancelable: true });
+    screen.getByTestId("mock-codemirror").parentElement!.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(false);
     expect(mockView.scrollDOM.scrollBy).not.toHaveBeenCalled();
-    expect(preventDefault).toHaveBeenCalledTimes(1);
   });
 
+  it("does not reinstall scrolling or rebuild editor callbacks during parent renders", () => {
+    const oldChange = vi.fn(), newChange = vi.fn();
+    const { rerender } = render(<CodeEditor value="package main\n" onChange={oldChange} />);
+    const registrations = mockView.scrollDOM.addEventListener.mock.calls.length;
+    const change = latestCodeMirrorProps!.onChange as (text: string) => void;
+    rerender(<CodeEditor value="package main\n// edit\n" onChange={newChange} />);
+    expect(mockView.scrollDOM.addEventListener).toHaveBeenCalledTimes(registrations);
+    expect(latestCodeMirrorProps!.onChange).toBe(change);
+    change("latest source");
+    expect(newChange).toHaveBeenCalledWith("latest source");
+    expect(oldChange).not.toHaveBeenCalled();
+  });
+
+  it("does not request another analysis when only the outline callback changes", () => {
+    const listeners: Array<(result: SemanticAnalysisResult) => void> = [];
+    const client: SemanticAnalysisClient = { syncDocument: vi.fn(), requestAnalysis: vi.fn(), subscribe: vi.fn(callback => { listeners.push(callback); return vi.fn(); }), dispose: vi.fn() };
+    const oldOutline = vi.fn(), newOutline = vi.fn();
+    const { rerender } = render(<CodeEditor value="package main\n" filePath="main.go" semanticAnalysisClient={client} onDocumentSymbolsChange={oldOutline} />);
+    const requests = vi.mocked(client.requestAnalysis).mock.calls.length;
+    const subscriptions = vi.mocked(client.subscribe).mock.calls.length;
+    rerender(<CodeEditor value="package main\n" filePath="main.go" semanticAnalysisClient={client} onDocumentSymbolsChange={newOutline} />);
+    expect(client.requestAnalysis).toHaveBeenCalledTimes(requests);
+    expect(client.subscribe).toHaveBeenCalledTimes(subscriptions);
+    listeners[listeners.length - 1]({ filePath: "main.go", version: 1, symbols: [], folds: [], selectionRanges: [] });
+    expect(newOutline).toHaveBeenCalledWith([]);
+    expect(oldOutline).not.toHaveBeenCalled();
+  });
   it("keeps the editor root at full height without forcing minHeight", () => {
     render(<CodeEditor value={"package main\n"} />);
 
@@ -880,7 +847,7 @@ describe("CodeEditor", () => {
 
   it("emits viewport range changes only when viewport changes", () => {
     const viewportSpy = vi.fn();
-    const { container } = render(
+    render(
       <CodeEditor
         value={"package main\nfunc main() {}\n"}
         onViewportRangeChange={viewportSpy}
@@ -890,13 +857,15 @@ describe("CodeEditor", () => {
     expect(viewportSpy).toHaveBeenCalledTimes(1);
     expect(viewportSpy).toHaveBeenNthCalledWith(1, { fromLine: 1, toLine: 2 });
 
-    const editorContainer = container.firstElementChild as HTMLElement;
-    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 20 });
-    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 60 });
+    const onScroll = mockView.scrollDOM.addEventListener.mock.calls.find(
+      (call) => call[0] === "scroll"
+    )![1] as () => void;
+    onScroll();
+    onScroll();
     expect(viewportSpy).toHaveBeenCalledTimes(1);
 
     mockView.viewport = { from: 20, to: 70 };
-    fireEvent.mouseMove(editorContainer, { clientX: 8, clientY: 60 });
+    onScroll();
     expect(viewportSpy).toHaveBeenCalledTimes(2);
     expect(viewportSpy).toHaveBeenNthCalledWith(2, { fromLine: 2, toLine: 2 });
   });

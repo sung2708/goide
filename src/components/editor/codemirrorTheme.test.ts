@@ -30,5 +30,7 @@ describe("codemirrorTheme", () => {
     expect(themeSpec).toBeDefined();
     expect(themeSpec?.[".cm-scroller"]?.height).toBeUndefined();
     expect(themeSpec?.[".cm-scroller"]?.minHeight).toBeUndefined();
+    expect(themeSpec?.[".cm-scroller"]?.fontSize).toBe("inherit");
+    expect(themeSpec?.[".cm-lineNumbers .cm-gutterElement"]?.fontSize).toBe("inherit");
   });
 });

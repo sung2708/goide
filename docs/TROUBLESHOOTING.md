@@ -16,6 +16,12 @@ Goro runs preflight checks on startup. Missing external tools are surfaced in th
 - For a saved standalone `main.go` without a module or Go workspace, **Run** executes that file directly without creating module files. Module/workspace projects continue to run the selected package, including its helper files. Imports requiring modules need a module and dependencies first; package/workspace test execution still requires `go.mod` or `go.work`.
 - Run/Debug entry controls sit beside the declaration and do not add editor rows. Controls from an obsolete source snapshot cannot start execution.
 
+### Editor navigation and focus (develop)
+
+Wheel and trackpad input use native scrolling, including momentum and horizontal movement. Overlay positions are measured through CodeMirror's measurement scheduler. Parent renders do not restart semantic analysis or rebuild the editor's change callback. Editor text and line numbers follow the configured font size.
+
+Use **Focus** in the title bar, **Toggle Focus Mode** in the command palette, or `Ctrl+Shift+Enter` (`Cmd+Shift+Enter` on macOS) to temporarily hide the sidebar and terminal. Exiting restores their layout; documents and terminal sessions stay mounted. Selecting a workspace view or invoking workspace search leaves Focus Mode.
+
 ### Issue: `go` executable not found
 - **Symptom**: Status bar indicates Go is missing; running Go files fails.
 - **Resolution**:

@@ -40,7 +40,7 @@ export default function WelcomeScreen({
                 <h1 className="welcome-title">Goro</h1>
                 <span className="welcome-badge">Go IDE</span>
               </div>
-              <p className="welcome-subtitle">Focused Go runtime &amp; concurrency workbench</p>
+              <p className="welcome-subtitle">A place to write, run, and understand Go.</p>
             </div>
           </div>
         </header>

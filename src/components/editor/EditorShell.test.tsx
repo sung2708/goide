@@ -124,6 +124,25 @@ describe("EditorShell panels", () => {
     expect(screen.getByText(/Health/i)).toBeInTheDocument();
   });
 
+  it("restores the sidebar and mounted terminal after leaving focus mode", async () => {
+    openMock.mockResolvedValue("C:/workspace");
+    render(<EditorShell />);
+    fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
+    await waitFor(() => expect(screen.getByRole("button", { name: "Toggle Focus Mode" })).toBeEnabled());
+    fireEvent.click(screen.getByRole("button", { name: /show terminal panel/i }));
+    const terminal = await screen.findByTestId("bottom-panel");
+    const focus = screen.getByRole("button", { name: "Toggle Focus Mode" });
+    fireEvent.click(focus);
+    expect(focus).toHaveAttribute("aria-pressed", "true");
+    expect(document.querySelector("aside")).toHaveAttribute("inert");
+    expect(terminal.closest("[hidden]")).not.toBeNull();
+    fireEvent.keyDown(document.body, { key: "Enter", ctrlKey: true, shiftKey: true });
+    expect(focus).toHaveAttribute("aria-pressed", "false");
+    expect(document.querySelector("aside")).not.toHaveAttribute("inert");
+    expect(screen.getByTestId("bottom-panel")).toBe(terminal);
+    expect(terminal.closest("[hidden]")).toBeNull();
+  });
+
   it("surfaces missing toolchain state in the status bar instead of a top warning banner", async () => {
     render(<EditorShell />);
 
