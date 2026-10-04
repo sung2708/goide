@@ -308,6 +308,17 @@ async function getRuntimeSignalsWithTimeout(
 }
 
 function EditorShell() {
+  const projectMenuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    const dismissProjectMenu = (event: PointerEvent) => {
+      const menu = projectMenuRef.current;
+      if (menu?.open && event.target instanceof Node && !menu.contains(event.target)) {
+        menu.open = false;
+      }
+    };
+    document.addEventListener("pointerdown", dismissProjectMenu, true);
+    return () => document.removeEventListener("pointerdown", dismissProjectMenu, true);
+  }, []);
   const settings = useSettings();
   useStartupUpdates();
   const settingsRef = useRef(settings.values); settingsRef.current = settings.values;
@@ -2238,7 +2249,7 @@ function EditorShell() {
         <div className="flex items-center gap-2">
           <img src="/brand/icon.svg" alt="" className="size-4 shrink-0" aria-hidden="true" />
           <span className="workspace-brand text-[15px] font-bold tracking-tight">Goro</span>
-          <details className="relative text-xs">
+          <details ref={projectMenuRef} className="relative text-xs">
             <summary className="cursor-pointer rounded px-2 py-1 hover:bg-(--surface0)">Project</summary>
             <div className="absolute left-0 top-full z-40 mt-1 flex w-48 flex-col gap-1 border border-(--border-muted) bg-(--base) p-2 shadow-lg">
               <button type="button" disabled={commandBusy} onClick={event => { event.currentTarget.closest("details")?.removeAttribute("open"); void executeCommand("workspace.open"); }}>Open Project…</button>
