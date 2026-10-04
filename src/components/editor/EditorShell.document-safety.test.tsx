@@ -56,6 +56,25 @@ function edit(value: string) {
 }
 
 describe("EditorShell document safety", () => {
+  it("dismisses Project on an outside press without changing the document", async () => {
+    await openMain("off"); edit("unsaved main");
+    const menu = screen.getByText("Project").closest("details")!;
+    menu.open = true;
+    fireEvent.pointerDown(screen.getByRole("textbox", { name: "Document" }));
+    expect(menu).not.toHaveAttribute("open");
+    expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("unsaved main");
+    expect(writeMock).not.toHaveBeenCalled();
+  });
+  it("keeps Project open for presses within its dropdown", async () => {
+    await openMain("off");
+    const menu = screen.getByText("Project").closest("details")!;
+    menu.open = true;
+    fireEvent.pointerDown(screen.getByRole("button", { name: "New Go Project…" }));
+    expect(menu).toHaveAttribute("open");
+    fireEvent.click(screen.getByRole("button", { name: "New Go Project…" }));
+    await screen.findByRole("dialog", { name: "New Go Project" });
+    expect(menu).not.toHaveAttribute("open");
+  });
   it("opens New Go Project from an existing workspace without changing its draft", async () => {
     await openMain("off"); edit("unsaved main");
     fireEvent.click(screen.getByText("Project"));

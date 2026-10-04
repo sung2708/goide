@@ -29,7 +29,8 @@ cleanup does not discard drafts. A storage failure prevents closing and offers
 retry. A discard choice survives cleanup retries instead of switching to Save.
 
 The titlebar **Project** control remains available with an existing workspace or
-open editor: Open Project, New Go Project and Close Project. Workspace changes
+open editor: Open Project, New Go Project and Close Project. The dropdown closes
+when pressing outside it or selecting an action. Workspace changes
 retain their existing Save / Don't Save / Cancel guard. Startup restoration is
 otherwise unchanged; saving and closing can reopen the previous workspace.
 
