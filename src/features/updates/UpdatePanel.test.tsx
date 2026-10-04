@@ -7,7 +7,7 @@ vi.mock("./service", () => ({ updateService: { subscribe: () => () => undefined,
 vi.mock("../settings/useSettings", () => ({ useSettings: () => ({ values: { "updates.channel": mocks.channel } }) }));
 beforeEach(() => { mocks.channel = "default"; mocks.check.mockReset(); mocks.install.mockReset(); mocks.download.mockReset(); mocks.state = { revision: 1, currentVersion: "1.0.0", channel: "stable", configured: true, phase: "updateAvailable", release: { version: "1.1.0", notes: "<img src=x onerror=alert(1)>", publishedAt: null }, received: 100, total: null, lastChecked: null, error: null }; });
 it("renders release notes as plain text and manual check uses the shared service", () => {
-  const { container } = render(<UpdatePanel />); expect(container.querySelector("img")).toBeNull(); expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+  const { container } = render(<UpdatePanel />); expect(container.querySelector("pre img")).toBeNull(); expect(container.querySelector("[onerror]")).toBeNull(); expect(container.querySelector("img")).toHaveAttribute("src", "/brand/icon.svg"); expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Check for Updates" })); expect(mocks.check).toHaveBeenCalledWith(undefined);
 });
 it("reports actual progress without inventing a total or completion", () => {

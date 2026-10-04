@@ -47,6 +47,9 @@ try {
   cpSync(native, join(root, "src-tauri", "icons"), { recursive: true });
   copyFileSync(join(brand, "icon-32.png"), join(root, "src-tauri", "icons", "32x32.png"));
   writeFileSync(join(brand, "favicon.ico"), ico([16, 24, 32]));
+  for (const size of [16, 32, 48]) {
+    copyFileSync(join(brand, `icon-${size}.png`), join(brand, `favicon-${size}x${size}.png`));
+  }
   writeFileSync(join(root, "src-tauri", "icons", "icon.ico"), ico([16, 24, 32, 48, 64, 128, 256]));
   console.log("Goro icons exported, including simplified small ICO entries.");
 } finally {

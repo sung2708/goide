@@ -11,7 +11,7 @@ export function UpdatePanel() {
   const busy = ["checking", "downloading", "installing"].includes(state.phase);
   const selected = (channel ?? defaultChannel(state.currentVersion)) === state.channel;
   return <section aria-label="Goro updates" className="my-3 border border-(--border-default) p-3 text-xs">
-    <h3 className="font-semibold">About Goro & Updates</h3>
+    <div className="flex items-center gap-2"><img src="/brand/icon.svg" alt="" width="24" height="24" aria-hidden="true" /><h3 className="font-semibold">About Goro & Updates</h3></div>
     <p className="my-2">Version {state.currentVersion || "unavailable"} · selected {channel ?? defaultChannel(state.currentVersion)} channel</p>
     {!selected && state.release && <p>Channel changed. Check again before downloading or installing.</p>}
     <p role="status">{label[state.phase]}{state.release && ` · ${state.release.version}`}</p>
