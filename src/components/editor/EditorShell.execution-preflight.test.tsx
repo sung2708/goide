@@ -69,7 +69,8 @@ it("keeps document ownership through a pending probe and does not launch after c
 it("reports missing Delve and keeps Debug unstarted", async () => {
   const user = await setup(); tools.mockResolvedValue({ ...ready, data: { ...ready.data, delve: { available: false, status: "missing", error: "Selected Delve is absent" } } });
   await user.click(screen.getByRole("button", { name: /debug active go file/i }));
-  expect(await screen.findByRole("dialog", { name: /unable to start debug session/i })).toHaveTextContent("Selected Delve is absent");
+  expect(await screen.findByRole("button", { name: "Show application error" })).toHaveTextContent("Selected Delve is absent");
+  expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).not.toBeInTheDocument();
   expect(debug).not.toHaveBeenCalled();
 }, 20000);
 

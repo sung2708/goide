@@ -155,7 +155,15 @@ function StatusBar({
       </div>
 
       <div className="ml-auto flex items-center gap-1 pr-0.5">
-        {operationError && <button type="button" aria-label="Show application error" onClick={onOpenErrors} title={operationError} className="max-w-60 truncate border border-(--red) px-2 py-0.5 text-(--red)"><span role="status">{operationError}</span></button>}
+        {operationError && (
+          <button type="button" aria-label="Show application error" onClick={onOpenErrors} title={operationError} className="max-w-60 truncate border border-(--red) px-2 py-0.5 text-(--red)">
+            <span role="status">
+              {operationError.split("\n\n").map((message, index) => (
+                <span key={index}>{index > 0 && <span aria-hidden="true"> · </span>}{message}</span>
+              ))}
+            </span>
+          </button>
+        )}
         <div className="flex items-center gap-0.5">
           <span className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[var(--subtext0)]">
             <span
