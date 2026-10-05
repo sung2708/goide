@@ -5,8 +5,9 @@ Goro adheres to [Semantic Versioning 2.0.0](https://semver.org/spec/v2.0.0.html)
 The maintainer's next complete milestone is `0.5.0`. Do not change the version or
 create `v0.5.0` merely because code was pushed. Applicable feature, native QA,
 security, toolchain and distribution gates must be complete on the exact candidate;
-see [Release promotion](RELEASE_PROMOTION.md). The current release hold forbids
-tag/publication until releases are resumed. This policy does not bump manifests.
+see [Release promotion](RELEASE_PROMOTION.md). The maintainer resumed releases on
+2026-10-04. `0.5.0-alpha.1` is the experimental candidate; it does not certify the
+complete beta/stable milestone or reuse withdrawn alpha tags.
 
 ---
 

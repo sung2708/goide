@@ -16,6 +16,8 @@ failed, were skipped or could not be run. Never present a focused test as a full
 suite or installer acceptance. Do not promote a failing or unchecked candidate
 to `main`; follow docs/RELEASE_PROMOTION.md for exact-candidate release gates.
 
-Releases are currently on hold. No version/tag/publication/metadata update until
-the user explicitly resumes releases. When resumed, releases originate from main
-only after the required develop and main gates pass.
+The maintainer resumed releases on 2026-10-04 and authorized merging develop into
+main for the next release. Releases originate from main only after the required
+develop and main checks pass. Current preparation targets experimental
+`0.5.0-alpha.1`; do not call it beta/stable or claim unverified native acceptance.
+Any subsequent explicit release hold takes precedence.

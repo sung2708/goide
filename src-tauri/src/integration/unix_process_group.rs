@@ -13,6 +13,11 @@ pub(crate) struct Group {
 #[cfg(test)]
 mod tests;
 impl Group {
+    #[cfg(test)]
+    pub(crate) fn deny_next_signal_for_test(&mut self) {
+        self.group_signal_error = Some(libc::EPERM);
+    }
+
     /// Caller created this child with process_group(0) before its exec.
     pub fn new(pid: u32) -> Self {
         Self {
