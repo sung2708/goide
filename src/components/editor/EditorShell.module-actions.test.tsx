@@ -28,12 +28,15 @@ async function setup() {
   render(<EditorShell />); const user = userEvent.setup();
   await user.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
   await user.click(await screen.findByRole("button", { name: "Open Main" }));
+  await screen.findByTestId("module-buffer");
+  await waitFor(() => expect(screen.getByRole("button", { name: "Edit Source" })).toBeEnabled());
   return user;
 }
 async function inspect() {
   fireEvent.keyDown(document.body, { key: "P", ctrlKey: true, shiftKey: true });
   const input = await screen.findByRole("combobox", { name: "Search commands" });
   fireEvent.change(input, { target: { value: "Go: Inspect Project and Environment" } }); fireEvent.keyDown(input, { key: "Enter" });
+  await screen.findByText("example.test/main", {}, { timeout: 5000 });
   await waitFor(() => expect(screen.getByRole("button", { name: "Save All and Tidy Module" })).toBeEnabled());
 }
 it("blocks module startup after a failed canonical Save All and retains the dirty source", async () => {

@@ -62,7 +62,7 @@ Key frontend test suites in `src/`:
 - **`src/components/editor/EditorShell.document-safety.test.tsx`**: Guards dirty-buffer persistence before file/workspace transitions, failed reads and saves, edits during pending I/O, autosave scope and cancellation, concurrent file opening, and save completion after unmount.
 - **`src/components/editor/useWorkspaceFsSync.test.tsx`**: Verifies listener/start ordering, late startup cleanup, serialized workspace switching, failed IPC envelopes, Windows canonical paths, callback updates, and backend subscription disposal.
 - **`src/components/editor/EditorShell.test.tsx`**: Tests workbench layout, keyboard shortcuts (Ctrl+P, Ctrl+Shift+F), panel toggles, and shell-first ergonomics.
-- **`src/components/editor/CodeEditor.test.tsx`**: Tests CodeMirror 6 mounting, wheel event handling, selection ranges, and gutter markers.
+- **`src/components/editor/CodeEditor.test.tsx`**: Tests stable Monaco lifecycle, model switching, callback updates, cursor/viewport anchors, gutter actions and separate diagnostic owners.
 - **`src/components/editor/FindWidget.test.tsx`**: Tests search input, replace input, case matching, whole-word matching, regex toggles, and navigation shortcuts (Enter, Shift+Enter).
 - **`src/components/editor/DocumentOutline.test.tsx`**: Tests symbol tree extraction, keyboard navigation, and jump actions.
 
@@ -109,7 +109,7 @@ Quick Open regressions cover fuzzy matching, exact filename ranking, recent-file
 
 Command regressions verify exact Windows/macOS modifier matching, disabled actions, native error envelopes, current command availability, modal/composition isolation and listener cleanup. EditorShell tests open/search/execute the palette, exercise existing debug and symbol shortcuts, preserve Run state after a failed stop, and wait for backend-observed pause state after a DAP acknowledgement.
 
-Multi-document regressions exercise independent dirty tab buffers, reread avoidance, Save All baseline isolation and partial failure, newer edits during saves, explicit close/discard/cancel, failed close-save retry, workspace choice safety, native read-only UI, and existing branch release-gate transitions. CodeMirror tests round-trip real history/selection and verify that external content invalidates stale editor state. Native filesystem fixtures check read-only metadata and refused writes, scoped paths, binary/non-UTF-8 rejection and oversized text limits. Native multi-document desktop smoke checks and persistent session recovery remain outstanding.
+Multi-document regressions exercise independent dirty tab buffers, reread avoidance, Save All baseline isolation and partial failure, newer edits during saves, explicit close/discard/cancel, failed close-save retry, workspace choice safety, native read-only UI, and existing branch release-gate transitions. Monaco model tests retain undo/redo across tabs and dispose closed models; adapter tests reject stale language results. Native filesystem fixtures check read-only metadata and refused writes, scoped paths, binary/non-UTF-8 rejection and oversized text limits. Native multi-document desktop smoke checks and persistent session recovery remain outstanding.
 
 ## Native checks and acceptance
 

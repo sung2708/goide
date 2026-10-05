@@ -7,6 +7,7 @@ Source capabilities do not imply acceptance of a shipped installer.
 
 - [Product scope](PRODUCT.md)
 - [Navigation and search](NAVIGATION_SEARCH.md)
+- [Monaco editor behavior and ownership](EDITOR.md)
 - [Managed Go toolchains](TOOLCHAIN_MANAGER.md)
 - [Document copies and recovery](DOCUMENT_RECOVERY.md)
 - [Troubleshooting](TROUBLESHOOTING.md)

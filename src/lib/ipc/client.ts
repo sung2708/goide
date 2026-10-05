@@ -217,11 +217,13 @@ export async function stopCurrentRun(context: import("./types").RunContext): Pro
 
 export async function fetchWorkspaceDiagnostics(
   workspaceRoot: string,
-  relativePath: string
+  relativePath: string,
+  live?: { buffers: { path: string; content: string }[]; requestId: string }
 ): Promise<ApiResponse<DiagnosticsResponse>> {
   return invoke<ApiResponse<DiagnosticsResponse>>("get_active_file_diagnostics", {
     workspaceRoot,
     relativePath,
+    ...live,
   });
 }
 

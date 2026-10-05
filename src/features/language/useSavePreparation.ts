@@ -3,6 +3,7 @@ import { formatWorkspaceDocument, organizeWorkspaceImports } from "../../lib/ipc
 import type { DocumentSession, DocumentSnapshot, SavePreparation } from "../documents/DocumentSession";
 import type { Settings } from "../settings/model";
 import { useLanguageCancellation } from "./useLanguageCancellation";
+import { isGoSyntaxPreparationError } from "./savePreparationErrors";
 const sourceKey = (snapshot: DocumentSnapshot) => JSON.stringify([snapshot.root, snapshot.documents.filter(document => document.path.endsWith(".go")).map(document => [document.id, document.path, document.version, document.readOnly])]);
 export function useSavePreparation(documents: DocumentSession, snapshot: DocumentSnapshot, settings: Readonly<Settings>, onError?: (message: string) => void) {
   const sourceIdentity = sourceKey(snapshot);
@@ -33,7 +34,11 @@ export function useSavePreparation(documents: DocumentSession, snapshot: Documen
       try {
         const response = await operation({ ...native, relativePath: document.path, buffers: sources.map(source => ({ path: source.path, content: source.id === document.id ? content : source.text })) });
         verifyCurrent();
-        if (!response.ok || !response.data) throw new Error(response.error?.message ?? "Save preparation returned no edit plan.");
+        if (!response.ok || !response.data) {
+          const message = response.error?.message ?? "Save preparation returned no edit plan.";
+          if (isGoSyntaxPreparationError(message)) return document.text;
+          throw new Error(message);
+        }
         if (response.data.files.length > 1) throw new Error("Save preparation returned edits outside the saved document.");
         const edit = response.data.files[0];
         if (edit) {

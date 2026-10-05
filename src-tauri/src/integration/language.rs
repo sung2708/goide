@@ -193,9 +193,11 @@ pub fn synchronize_documents(
         super::language_requests::check()?;
         let uri = lsp_manager::path_to_file_uri(path)?;
         current.insert(uri.clone());
+        if session.open_file_contents.get(&uri) == Some(content) { continue; }
         let version = session.next_id;
         session.next_id += 1;
         session.open_file_versions.insert(uri.clone(), version);
+        session.open_file_contents.insert(uri.clone(), content.clone());
         if session.open_files.insert(uri.clone()) {
             lsp_manager::write_lsp_notification_sync(
                 &mut session.stdin,
@@ -220,6 +222,7 @@ pub fn synchronize_documents(
     session
         .open_file_versions
         .retain(|uri, _| current.contains(uri));
+    session.open_file_contents.retain(|uri, _| current.contains(uri));
     session.open_files = current;
     Ok(())
 }

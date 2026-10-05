@@ -81,6 +81,12 @@ function ExecutablePreference({
   );
 }
 
+function TextPreference({ value, label, commit }: { value: string; label: string; commit: (value: string) => void }) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return <textarea aria-label={label} value={draft} placeholder="jk <Esc> insert" maxLength={2048} rows={4} onChange={event => setDraft(event.target.value)} onBlur={() => { if (draft !== value) commit(draft); }} className="w-64 max-w-[55%] resize-y rounded-none border border-[var(--border-default)] bg-[var(--surface0)] px-2.5 py-1 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--border-interaction)]" />;
+}
+
 export default function SettingsDialog({
   open,
   onClose,
@@ -114,7 +120,7 @@ export default function SettingsDialog({
       <div className="border-b border-[var(--border-structural)] px-6 py-4">
         <h2 className="text-base font-semibold tracking-tight text-[var(--text)]">Settings</h2>
         <p className="mt-0.5 text-xs text-[var(--subtext0)]">
-          Preferences apply immediately. Go formatting and linting managed via gopls.
+          Preferences apply immediately. Go formatting and linting managed via gopls. Vim mappings use one `lhs rhs context` entry per line, such as `jk &lt;Esc&gt; insert`.
         </p>
         <div className="mt-3.5 relative">
           <input
@@ -153,17 +159,28 @@ export default function SettingsDialog({
                 .map((setting) => (
                   <label
                     key={setting.key}
-                    className="flex items-center justify-between gap-4 py-2.5 text-xs cursor-pointer"
+                    className={`flex items-center justify-between gap-4 py-2.5 text-xs cursor-pointer ${setting.type === "text" ? "items-start" : ""}`}
                   >
                     <span className="font-medium text-[var(--subtext1)]">{setting.label}</span>
                     {setting.type === "boolean" ? (
-                      <input
-                        type="checkbox"
-                        aria-label={setting.label}
-                        checked={values[setting.key] === true}
-                        onChange={(event) => update(setting.key, event.target.checked)}
-                        className="size-4 cursor-pointer rounded-none accent-[var(--brand-primary)]"
-                      />
+                      <span className="relative inline-flex shrink-0 items-center">
+                        <input
+                          type="checkbox"
+                          role="switch"
+                          aria-label={setting.label}
+                          checked={values[setting.key] === true}
+                          onChange={(event) => update(setting.key, event.target.checked)}
+                          className="peer sr-only"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="h-5 w-9 rounded-full border border-[var(--border-default)] bg-[var(--surface2)] transition-colors peer-checked:border-[var(--brand-primary)] peer-checked:bg-[var(--brand-primary)] peer-focus-visible:outline peer-focus-visible:outline-2 peer-focus-visible:outline-offset-2 peer-focus-visible:outline-[var(--border-interaction)] motion-reduce:transition-none"
+                        />
+                        <span
+                          aria-hidden="true"
+                          className="pointer-events-none absolute left-0.5 size-4 rounded-full bg-[var(--text)] shadow-sm transition-transform peer-checked:translate-x-4 motion-reduce:transition-none"
+                        />
+                      </span>
                     ) : setting.type === "number" ? (
                       <NumberPreference
                         label={setting.label}
@@ -178,6 +195,8 @@ export default function SettingsDialog({
                         value={String(values[setting.key])}
                         commit={(value) => update(setting.key, value)}
                       />
+                    ) : setting.type === "text" ? (
+                      <TextPreference label={setting.label} value={String(values[setting.key])} commit={(value) => update(setting.key, value)} />
                     ) : (
                       <select
                         aria-label={setting.label}

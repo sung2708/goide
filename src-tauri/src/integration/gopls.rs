@@ -45,6 +45,7 @@ pub enum DiagnosticSeverity {
     Error,
     Warning,
     Info,
+    Hint,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -99,6 +100,10 @@ pub struct CompletionItem {
     pub insert_text: String,
     pub range: Option<CompletionRange>,
     pub additional_text_edits: Vec<CompletionTextEdit>,
+    pub sort_text: Option<String>,
+    pub filter_text: Option<String>,
+    pub preselect: bool,
+    pub commit_characters: Vec<String>,
 }
 
 fn is_mutex_name(text: &str) -> bool {
@@ -961,11 +966,8 @@ fn request_file_completions(
     file_content: &str,
 ) -> Result<Vec<CompletionItem>> {
     let target_uri = lsp_manager::path_to_file_uri(target_path)?;
-    let document_version = if session.open_files.contains(&target_uri) {
-        session.next_id
-    } else {
-        1
-    };
+    let document_version = session.next_id;
+    session.next_id += 1;
 
     if !session.open_files.contains(&target_uri) {
         lsp_manager::write_lsp_notification_sync(
@@ -981,7 +983,7 @@ fn request_file_completions(
             }),
         )?;
         session.open_files.insert(target_uri.clone());
-    } else {
+    } else if session.open_file_contents.get(&target_uri).map(String::as_str) != Some(file_content) {
         lsp_manager::write_lsp_notification_sync(
             &mut session.stdin,
             "textDocument/didChange",
@@ -1000,6 +1002,7 @@ fn request_file_completions(
     session
         .open_file_versions
         .insert(target_uri.clone(), document_version);
+    session.open_file_contents.insert(target_uri.clone(), file_content.to_string());
     let result = crate::integration::language::request_method(
         session,
         "textDocument/completion",
@@ -1033,7 +1036,7 @@ fn normalize_path_for_file_uri(path: &str) -> String {
     path.to_string()
 }
 
-fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionItem> {
+pub(crate) fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionItem> {
     let Some(result) = response.get("result") else {
         return Vec::new();
     };
@@ -1084,6 +1087,10 @@ fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionItem> {
             insert_text,
             range,
             additional_text_edits,
+            sort_text: value.get("sortText").and_then(Value::as_str).map(str::to_string),
+            filter_text: value.get("filterText").and_then(Value::as_str).map(str::to_string),
+            preselect: value.get("preselect").and_then(Value::as_bool).unwrap_or(false),
+            commit_characters: value.get("commitCharacters").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
         });
     }
     items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
@@ -1395,6 +1402,10 @@ fn parse_gopls_completion_output(output_bytes: &[u8]) -> Vec<CompletionItem> {
             insert_text,
             range: None,
             additional_text_edits: Vec::new(),
+            sort_text: None,
+            filter_text: None,
+            preselect: false,
+            commit_characters: Vec::new(),
         });
     }
 
@@ -2424,6 +2435,18 @@ func main() {
                 .any(|item| item.label == "Println" || item.label == "Printf"),
             "expected fmt.Print* completion from gopls, got: {items:?}"
         );
+
+        // The editor asks while code is incomplete and the prefix keeps growing.
+        // Neither a missing closing brace nor unsaved edits require a disk save.
+        for prefix in ["", "P", "Pr", "Print"] {
+            let draft = format!("package main\nimport \"fmt\"\nfunc main() {{\n    fmt.{prefix}");
+            let candidates = get_file_completions(
+                &temp_dir.to_string_lossy(), "main.go", 4,
+                9 + prefix.len(), None, Some(&draft),
+            ).expect("completion for incomplete unsaved code");
+            assert!(candidates.iter().any(|item| item.label == "Println"),
+                "missing Println at prefix {prefix:?}: {candidates:?}");
+        }
 
         let unsaved = source
             .replace("\"fmt\"", "\"strings\"")

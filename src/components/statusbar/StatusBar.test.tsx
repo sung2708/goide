@@ -2,6 +2,12 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import StatusBar from "./StatusBar";
+it("opens docked application errors through a compact status control", async () => {
+  const open = vi.fn();
+  render(<StatusBar workspacePath={null} activeFilePath={null} mode="quick-insight" runtimeAvailability="unavailable" diagnosticsAvailability="idle" completionAvailability="idle" isBottomPanelOpen={false} onToggleBottomPanel={vi.fn()} operationError="Disk write failed" onOpenErrors={open} />);
+  await userEvent.setup().click(screen.getByRole("button", { name: "Show application error" }));
+  expect(open).toHaveBeenCalledOnce(); expect(screen.getByRole("status")).toHaveTextContent("Disk write failed");
+});
 
 function renderStatusBar(
   diagnosticsAvailability: "available" | "unavailable" | "idle" = "available",

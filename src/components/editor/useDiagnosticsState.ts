@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { fetchWorkspaceDiagnostics } from "../../lib/ipc/client";
 import type { EditorDiagnostic } from "../../lib/ipc/types";
 import { isGoFile } from "./editorShellUtils";
+import type { DocumentSnapshot } from "../../features/documents/DocumentSession";
+import { useLanguageCancellation } from "../../features/language/useLanguageCancellation";
 
 export type DiagnosticsIndicatorState = "available" | "unavailable" | "idle";
 
@@ -11,6 +13,8 @@ export type FileDiagnosticsSummary = {
 };
 
 type UseDiagnosticsStateParams = {
+  getDocumentSnapshot?: () => DocumentSnapshot;
+  documentSnapshot?: DocumentSnapshot;
   workspacePathRef: MutableRefObject<string | null>;
   activeFilePathRef: MutableRefObject<string | null>;
 };
@@ -36,9 +40,14 @@ type DiagnosticsState = {
 };
 
 export function useDiagnosticsState({
+  getDocumentSnapshot,
+  documentSnapshot,
   workspacePathRef,
   activeFilePathRef,
 }: UseDiagnosticsStateParams): DiagnosticsState {
+  const latestSnapshot = useRef(documentSnapshot); latestSnapshot.current = documentSnapshot;
+  const snapshotGetter = useRef(getDocumentSnapshot); snapshotGetter.current = getDocumentSnapshot;
+  const cancellation = useLanguageCancellation(documentSnapshot);
   const [diagnostics, setDiagnostics] = useState<EditorDiagnostic[]>([]);
   const [knownDiagnostics, setKnownDiagnostics] = useState<Record<string, EditorDiagnostic[]>>({});
   const forgetDiagnostics = useCallback((path: string) => {
@@ -112,15 +121,18 @@ export function useDiagnosticsState({
       diagnosticsRequestIdRef.current = requestId;
 
       try {
-        const diagnosticsResponse = await fetchWorkspaceDiagnostics(
-          diagnosticWorkspacePath,
-          diagnosticFilePath
-        );
+        const expected = snapshotGetter.current?.() ?? latestSnapshot.current;
+        const live = expected?.root === diagnosticWorkspacePath ? cancellation.begin(diagnosticWorkspacePath, expected) : null;
+        let diagnosticsResponse;
+        try {
+          diagnosticsResponse = live && expected ? await fetchWorkspaceDiagnostics(diagnosticWorkspacePath, diagnosticFilePath, { requestId: live.requestId, buffers: expected.documents.filter(document => isGoFile(document.path)).map(document => ({ path: document.path, content: document.text })) }) : await fetchWorkspaceDiagnostics(diagnosticWorkspacePath, diagnosticFilePath);
+        } finally { if (live) cancellation.complete(live.requestId); }
 
         if (
           requestId !== diagnosticsRequestIdRef.current ||
           workspacePathRef.current !== diagnosticWorkspacePath ||
-          activeFilePathRef.current !== diagnosticFilePath
+          activeFilePathRef.current !== diagnosticFilePath ||
+          (snapshotGetter.current?.() ?? latestSnapshot.current) !== expected
         ) {
           return;
         }
@@ -162,7 +174,7 @@ export function useDiagnosticsState({
         // flickering between valid and empty states.
       }
     },
-    [activeFilePathRef, removeDiagnosticsSummary, workspacePathRef]
+    [activeFilePathRef, removeDiagnosticsSummary, workspacePathRef, cancellation.begin, cancellation.complete]
   );
 
   const scheduleDiagnosticsRefresh = useCallback(
@@ -173,10 +185,20 @@ export function useDiagnosticsState({
         if (diagnosticWorkspacePath && diagnosticFilePath) {
           void refreshDiagnosticsForFile(diagnosticWorkspacePath, diagnosticFilePath);
         }
-      }, 1000);
+      }, 180);
     },
     [cancelDiagnosticsTimers, refreshDiagnosticsForFile]
   );
+
+  const activeVersion = documentSnapshot?.documents.find(document => document.id === documentSnapshot.activeId)?.version;
+  const priorActive = useRef<{ root: string | null; id: number | null; version: number | undefined } | null>(null);
+  useEffect(() => {
+    const previous = priorActive.current;
+    priorActive.current = documentSnapshot ? { root: documentSnapshot.root, id: documentSnapshot.activeId, version: activeVersion } : null;
+    // Opening/switching files already requests diagnostics through the shell.
+    // Only buffer edits need this debounce, avoiding duplicate initial pulls.
+    if (documentSnapshot && previous?.root === documentSnapshot.root && previous.id === documentSnapshot.activeId && previous.version !== activeVersion) scheduleDiagnosticsRefresh(documentSnapshot.root, documentSnapshot.documents.find(document => document.id === documentSnapshot.activeId)?.path ?? null);
+  }, [documentSnapshot?.root, documentSnapshot?.activeId, activeVersion, scheduleDiagnosticsRefresh]);
 
   useEffect(() => {
     return () => {

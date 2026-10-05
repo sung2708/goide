@@ -2,6 +2,8 @@ import { cn } from "../../lib/utils/cn";
 import type { ToolchainStatus } from "../../lib/ipc/types";
 
 type StatusBarProps = {
+  operationError?: string | null;
+  onOpenErrors?: () => void;
   workspacePath: string | null;
   activeFilePath: string | null;
   activeSymbol?: {
@@ -30,6 +32,7 @@ type StatusBarProps = {
 };
 
 function StatusBar({
+  operationError, onOpenErrors,
   workspacePath,
   activeFilePath,
   activeSymbol = null,
@@ -152,6 +155,7 @@ function StatusBar({
       </div>
 
       <div className="ml-auto flex items-center gap-1 pr-0.5">
+        {operationError && <button type="button" aria-label="Show application error" onClick={onOpenErrors} title={operationError} className="max-w-60 truncate border border-(--red) px-2 py-0.5 text-(--red)"><span role="status">{operationError}</span></button>}
         <div className="flex items-center gap-0.5">
           <span className="flex items-center gap-1.5 rounded px-1.5 py-0.5 text-[var(--subtext0)]">
             <span

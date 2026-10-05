@@ -54,6 +54,7 @@ export type AnalyzeConcurrencyRequest = {
 };
 
 export type CompletionRequest = {
+  buffers?: Array<{ path: string; content: string }>;
   requestId?: string;
   workspaceRoot: string;
   relativePath: string;
@@ -83,6 +84,10 @@ export type CompletionItem = {
   insertText: string;
   range?: CompletionRange | null;
   additionalTextEdits?: CompletionTextEdit[];
+  sortText?: string | null;
+  filterText?: string | null;
+  preselect?: boolean;
+  commitCharacters?: string[];
 };
 
 export type RunOutputPayload = {
@@ -92,7 +97,7 @@ export type RunOutputPayload = {
   exitCode?: number;
 };
 
-export type DiagnosticSeverity = "error" | "warning" | "info";
+export type DiagnosticSeverity = "error" | "warning" | "info" | "hint";
 
 export type EditorDiagnosticRange = {
   startLine: number;

@@ -1,0 +1,23 @@
+.goro-breakpoint { background: var(--red); border-radius: 50%; width: 10px !important; height: 10px !important; margin: 5px; }
+.goro-debug-current-line { background: var(--bg-active); border-left: 2px solid var(--red); }
+.goro-predicted-hint { text-decoration: underline dotted var(--signal-predicted); text-underline-offset: 3px; }
+.goro-find-match { background: var(--surface1); outline: 1px solid var(--yellow); }
+.goro-inline-error { color: var(--red); opacity: .8; font-style: italic; }
+.goro-inline-warning { color: var(--yellow); opacity: .8; font-style: italic; }
+.goro-vim-status { color: var(--subtext0); background: var(--bg-editor); font: 12px monospace; padding: 2px 12px; }
+.goro-editor .monaco-editor { overscroll-behavior: contain; }
+.goro-entry-actions { display: flex; align-items: center; gap: 8px; padding-left: 16px; font: 11px/1 sans-serif; white-space: nowrap; }
+.goro-entry-actions button { display: inline-flex; align-items: center; justify-content: center; height: calc(100% - 2px); min-height: 16px; padding: 0 8px; color: var(--subtext1); background: var(--surface0); border: 1px solid var(--border-default); border-radius: 0; cursor: pointer; transition: background-color 120ms ease, border-color 120ms ease; }
+.goro-entry-actions button:disabled { opacity: .5; cursor: not-allowed; }
+.goro-entry-actions button:not(:disabled):hover { color: var(--text); background: var(--surface1); border-color: var(--border-interaction); }
+.goro-entry-actions button:not(:disabled):active { background: var(--bg-active); }
+.goro-entry-actions button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.goro-markdown-preview { color: var(--text); background: var(--bg-editor); padding: 0 18px; overflow: auto; font: 13px/1.62 sans-serif; }
+.goro-markdown-preview h1, .goro-markdown-preview h2, .goro-markdown-preview h3 { font-weight: 700; margin: 0; }
+.goro-markdown-preview p, .goro-markdown-preview ul, .goro-markdown-preview ol, .goro-markdown-preview pre { margin: 0; }
+.goro-markdown-preview blockquote { margin: 0; border-left: 2px solid var(--blue); padding-left: 12px; color: var(--subtext0); }
+.goro-markdown-preview code { color: var(--green); background: var(--surface0); }
+.goro-markdown-preview img { max-width: 100%; max-height: 240px; }
+.goro-markdown-preview table { border-collapse: collapse; }
+.goro-markdown-preview td, .goro-markdown-preview th { border: 1px solid var(--border-muted); padding: 2px 8px; }
+.goro-markdown-source-hidden { opacity: 0; }

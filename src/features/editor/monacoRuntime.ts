@@ -1,0 +1,30 @@
+import * as monaco from "monaco-editor/esm/vs/editor/editor.api";
+import "monaco-editor/esm/vs/editor/browser/coreCommands";
+import "monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching";
+import "monaco-editor/esm/vs/editor/contrib/clipboard/browser/clipboard";
+import "monaco-editor/esm/vs/editor/contrib/comment/browser/comment";
+import "monaco-editor/esm/vs/editor/contrib/contextmenu/browser/contextmenu";
+import "monaco-editor/esm/vs/editor/contrib/cursorUndo/browser/cursorUndo";
+import "monaco-editor/esm/vs/editor/contrib/find/browser/findController";
+import "monaco-editor/esm/vs/editor/contrib/folding/browser/folding";
+import "monaco-editor/esm/vs/editor/contrib/hover/browser/hoverContribution";
+import "monaco-editor/esm/vs/editor/contrib/indentation/browser/indentation";
+import "monaco-editor/esm/vs/editor/contrib/lineSelection/browser/lineSelection";
+import "monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations";
+import "monaco-editor/esm/vs/editor/contrib/multicursor/browser/multicursor";
+import "monaco-editor/esm/vs/editor/contrib/parameterHints/browser/parameterHints";
+import "monaco-editor/esm/vs/editor/contrib/smartSelect/browser/smartSelect";
+import "monaco-editor/esm/vs/editor/contrib/snippet/browser/snippetController2";
+import "monaco-editor/esm/vs/editor/contrib/suggest/browser/suggestController";
+import "monaco-editor/esm/vs/editor/contrib/tokenization/browser/tokenization";
+import "monaco-editor/esm/vs/editor/contrib/toggleTabFocusMode/browser/toggleTabFocusMode";
+import "monaco-editor/esm/vs/editor/contrib/wordOperations/browser/wordOperations";
+import "monaco-editor/esm/vs/editor/contrib/wordPartOperations/browser/wordPartOperations";
+import "monaco-editor/esm/vs/editor/contrib/readOnlyMessage/browser/contribution";
+import EditorWorker from "monaco-editor/esm/vs/editor/editor.worker?worker";
+import "monaco-editor/esm/vs/basic-languages/go/go.contribution";
+import "monaco-editor/esm/vs/basic-languages/markdown/markdown.contribution";
+
+// Bundled module worker: no loader, CDN, blob URL or unsafe-eval CSP exception.
+self.MonacoEnvironment = { getWorker: () => new EditorWorker() };
+export { monaco };

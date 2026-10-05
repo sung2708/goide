@@ -89,7 +89,7 @@ Implementation order is baseline green, data safety, process ownership, command/
 - [ ] **P0** Actionable notifications and progress without routine notification spam or silent failures.
 
 ### Editor & Language Intelligence
-- [x] CodeMirror 6 Go syntax highlighting and bracket pairing.
+- [x] Monaco Go syntax highlighting and bracket pairing.
 - [x] In-file Find and Replace widget (`FindWidget`).
 - [x] Go semantic analysis with `web-tree-sitter` in Web Worker.
 - [x] `gopls` autocompletion and diagnostic surfacing.

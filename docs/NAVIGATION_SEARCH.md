@@ -14,7 +14,7 @@ Worker ranking prepares the index once, keeps one in-flight query and the newest
 
 ## Find in File
 
-Ctrl/Cmd+F, F3 and Shift+F3 use the editor's registry-backed find handlers. Literal matching uses CodeMirror. Regex runs in an owned Web Worker with a one-second deadline, 4 MiB document/replacement-expansion limits, 4,096-character patterns, 64 KiB replacement text and 2,000 matches. Query/document changes cancel the worker; stale responses cannot act on a new document. Invalid regex retains prior valid highlights where the document is unchanged, with replacement disabled. Match coordinates use UTF-16; whole-word regex respects Unicode letters, numbers, marks and underscore. Closing Find clears its decorations and restores editor focus. Ordinary document edits rescan without selecting text under the user's cursor.
+Ctrl/Cmd+F, F3 and Shift+F3 use the editor's registry-backed find handlers. Literal and regex matching run in an owned Web Worker with a one-second deadline, 4 MiB document/replacement-expansion limits, 4,096-character patterns, 64 KiB replacement text and 2,000 matches. Query/document changes cancel the worker; stale responses cannot act on a new document. Invalid regex retains prior valid highlights where the document is unchanged, with replacement disabled. Match coordinates use UTF-16; whole-word regex respects Unicode letters, numbers, marks and underscore. Closing Find clears its decorations and restores editor focus. Ordinary document edits rescan without selecting text under the user's cursor.
 
 ## Replace in File
 
@@ -60,7 +60,7 @@ is separate from document Undo.
 
 ## Tests added
 
-Ranking covers title/ID order, noncontiguous matches, camel boundaries, Unicode case expansion, UTF-16 offsets and bounded recent commands. Picker tests cover registry execution, disabled actions, composition and page navigation. Worker tests cover query coalescing, stale responses, termination, deadline and cancellation. A real CodeMirror EditorState/history test verifies literal Unicode replacement and one-step Undo. Workspace checks cover whitespace, dirty authority, stale baselines, per-file exclusion, CRLF/BOM, capture replacement and unlisted-range preservation.
+Ranking covers title/ID order, noncontiguous matches, camel boundaries, Unicode case expansion, UTF-16 offsets and bounded recent commands. Picker tests cover registry execution, disabled actions, composition and page navigation. Worker tests cover query coalescing, stale responses, termination, deadline and cancellation. Monaco model tests verify Unicode offsets and undo/redo; adapter and worker tests cover bounded replacement. Workspace checks cover whitespace, dirty authority, stale baselines, per-file exclusion, CRLF/BOM, capture replacement and unlisted-range preservation.
 
 ## Performance
 

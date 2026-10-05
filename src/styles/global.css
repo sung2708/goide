@@ -598,8 +598,7 @@
 code,
 pre,
 .font-code,
-.cm-editor,
-.cm-scroller,
+.goro-editor .monaco-editor,
 .xterm {
   font-family: "JetBrains Mono", "Cascadia Mono", "SFMono-Regular", ui-monospace, monospace;
   font-size: 13px;
@@ -753,6 +752,44 @@ dialog::backdrop {
 }
 
 /* ── Focus ring ── */
+/* Fast feedback on workbench controls; Monaco owns its editor interactions. */
+:where(button, a[href], [role="button"], [role="tab"], [role="menuitem"], select):not(.monaco-editor *) {
+  cursor: pointer;
+  transition: background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease, opacity 120ms ease;
+}
+:where(button, [role="button"], [role="tab"], [role="menuitem"]):not(.monaco-editor *):not(:disabled):not([aria-disabled="true"]):hover {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--focus-ring) 35%, transparent);
+  background-image: linear-gradient(var(--surface-hover), var(--surface-hover));
+}
+:where(button, [role="button"]):not(.monaco-editor *):not(:disabled):not([aria-disabled="true"]):active {
+  box-shadow: inset 0 0 0 1px var(--border-interaction);
+  background-image: linear-gradient(var(--bg-active), var(--bg-active));
+}
+:where(button, [role="button"], select):not(.monaco-editor *):is(:disabled, [aria-disabled="true"]) {
+  cursor: not-allowed;
+}
+:where(a[href], [role="tab"], [role="menuitem"], select):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
+
+.goro-dialog-panel {
+  background-color: var(--bg-elevated);
+  border-color: var(--surface-glass-border);
+  box-shadow: var(--shadow-floating);
+}
+@supports (backdrop-filter: blur(1px)) {
+  .goro-dialog-panel {
+    background-color: var(--surface-glass);
+    backdrop-filter: blur(var(--blur-elevated));
+  }
+  [role="menu"] {
+    background-color: var(--surface-glass);
+    backdrop-filter: blur(var(--blur-subtle));
+    box-shadow: var(--shadow-popover);
+  }
+}
+
 button:focus-visible,
 [role="button"]:focus-visible {
   outline: 2px solid var(--focus-ring);

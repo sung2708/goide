@@ -17,6 +17,8 @@ pub struct LspSession {
     pub workspace_root: PathBuf,
     pub open_files: HashSet<String>,
     pub open_file_versions: HashMap<String, i64>,
+    pub open_file_contents: HashMap<String, String>,
+    pub supports_pull_diagnostics: bool,
     pub next_id: i64,
     reader_task: Option<std::thread::JoinHandle<()>>,
 }
@@ -116,6 +118,8 @@ pub fn start_new_lsp_session<'a>(
         workspace_root: workspace_root.to_path_buf(),
         open_files: HashSet::new(),
         open_file_versions: HashMap::new(),
+        open_file_contents: HashMap::new(),
+        supports_pull_diagnostics: false,
         next_id: 1,
         reader_task: Some(reader_task),
     };
@@ -138,9 +142,12 @@ pub fn start_new_lsp_session<'a>(
                         .unwrap_or("workspace")
                 }
             ],
+            "initializationOptions": { "pullDiagnostics": true },
             "capabilities": {
+                "general": { "positionEncodings": ["utf-16"] },
                 "workspace": { "workspaceFolders": true },
                 "textDocument": {
+                    "diagnostic": { "dynamicRegistration": false, "relatedDocumentSupport": false },
                     "codeAction": { "codeActionLiteralSupport": { "codeActionKind": { "valueSet": ["quickfix", "refactor", "refactor.extract", "refactor.rewrite", "source", "source.organizeImports"] } }, "dataSupport": true, "disabledSupport": true, "resolveSupport": { "properties": ["edit"] } }, "signatureHelp": { "signatureInformation": {
                         "documentationFormat": ["plaintext", "markdown"],
                         "parameterInformation": { "labelOffsetSupport": true },
@@ -158,7 +165,12 @@ pub fn start_new_lsp_session<'a>(
         }),
     )?;
 
-    ensure_lsp_response_success_sync(wait_lsp_response_sync(&new_session.rx, 0)?)?;
+    let initialized = wait_lsp_response_sync(&new_session.rx, 0)?;
+    ensure_lsp_response_success_sync(initialized.clone())?;
+    new_session.supports_pull_diagnostics = initialized.pointer("/result/capabilities/diagnosticProvider").is_some_and(|provider| provider.is_object() || provider == &Value::Bool(true));
+    if initialized.pointer("/result/capabilities/positionEncoding").and_then(Value::as_str).is_some_and(|encoding| encoding != "utf-16") {
+        return Err(anyhow!("gopls selected an unsupported position encoding; Goro requires UTF-16"));
+    }
     write_lsp_notification_sync(&mut new_session.stdin, "initialized", json!({}))?;
 
     write_lsp_notification_sync(
@@ -435,6 +447,8 @@ mod tests {
             workspace_root: PathBuf::new(),
             open_files: HashSet::new(),
             open_file_versions: HashMap::new(),
+            open_file_contents: HashMap::new(),
+            supports_pull_diagnostics: false,
             next_id: 1,
             reader_task: Some(reader),
         };

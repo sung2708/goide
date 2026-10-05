@@ -9,6 +9,8 @@ import type {
 export type SemanticSyntaxNode = {
   type: string;
   hasError?: boolean;
+  isMissing?: boolean;
+  children?: Array<SemanticSyntaxNode | null>;
   startIndex: number;
   endIndex: number;
   namedChildren: Array<SemanticSyntaxNode | null>;

@@ -25,7 +25,7 @@ vi.mock("../../lib/ipc/client", async () => {
   };
 });
 
-// This suite exercises workbench navigation. CodeMirror rendering and DOM
+// This suite exercises workbench navigation. Monaco rendering and DOM
 // geometry are covered by the dedicated CodeEditor suite.
 vi.mock("./CodeEditor", () => ({
   default: ({ value }: { value: string }) => (
@@ -81,7 +81,7 @@ describe("EditorShell panels", () => {
   it("creates a project from the welcome screen and opens main.go in the new workspace", async () => {
     openMock.mockResolvedValue("C:/projects");
     render(<EditorShell />);
-    fireEvent.click(screen.getByRole("button", { name: "New Go Project…" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "New Go Project…" }).find(button => !button.closest("details"))!);
     fireEvent.click(await screen.findByRole("button", { name: "Browse…" }));
     await waitFor(() => expect(screen.getByLabelText("Parent folder")).toHaveValue("C:/projects"));
     fireEvent.change(screen.getByLabelText("Project name"), { target: { value: "hello" } });

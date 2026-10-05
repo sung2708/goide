@@ -53,7 +53,7 @@ fn diagnostic_context(request: &QueryRequest) -> Result<Vec<Value>> {
         if [range.start_line, range.start_column, range.end_line, range.end_column].contains(&0) { return Err(anyhow!("Code action diagnostic coordinates must be positive.")); }
         let range = json!({"start": {"line": range.start_line - 1, "character": range.start_column - 1}, "end": {"line": range.end_line - 1, "character": range.end_column - 1}});
         if let Some(before) = before { language_edits::text_in_range(before, &range)?; }
-        let severity = match diagnostic.severity { crate::ui_bridge::types::DiagnosticSeverityDto::Error => 1, crate::ui_bridge::types::DiagnosticSeverityDto::Warning => 2, crate::ui_bridge::types::DiagnosticSeverityDto::Info => 3 };
+        let severity = match diagnostic.severity { crate::ui_bridge::types::DiagnosticSeverityDto::Error => 1, crate::ui_bridge::types::DiagnosticSeverityDto::Warning => 2, crate::ui_bridge::types::DiagnosticSeverityDto::Info => 3, crate::ui_bridge::types::DiagnosticSeverityDto::Hint => 4 };
         let mut value = json!({"range": range, "message": diagnostic.message, "severity": severity});
         if let Some(source) = &diagnostic.source { value["source"] = json!(source); }
         if let Some(code) = &diagnostic.code { value["code"] = json!(code); }

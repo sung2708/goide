@@ -31,3 +31,4 @@ pub mod updates;
 
 pub mod code_actions;
 mod workspace_edits;
+pub mod editor_diagnostics;
