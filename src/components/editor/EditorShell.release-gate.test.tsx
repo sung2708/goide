@@ -213,7 +213,7 @@ describe("Release gate: branch switching document safety", () => {
     });
     await act(async () => { fireEvent.click(within(dialog).getByRole("button", { name: "Confirm branch switch" })); });
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("disk after stash");
-    expect(screen.getByText("Checkout denied")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("Checkout denied");
     expect(writeMock).toHaveBeenCalledTimes(1);
   });
 
@@ -280,7 +280,7 @@ describe("Release gate: branch switching document safety", () => {
     await openDocument();
     switchMock.mockRejectedValueOnce(new Error("Git transport unavailable"));
     await selectMain();
-    expect(screen.getByText("Git transport unavailable")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("Git transport unavailable");
     expect(screen.getByRole("textbox", { name: "Document" })).not.toHaveAttribute("readonly");
     await selectMain();
     expect(switchMock).toHaveBeenCalledTimes(2);
