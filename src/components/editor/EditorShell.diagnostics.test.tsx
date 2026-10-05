@@ -190,7 +190,7 @@ describe("EditorShell diagnostics", () => {
     fireEvent.keyDown(window, { key: "F12" });
     const dialog = await screen.findByRole("dialog", { name: "Go to Definition" });
     expect(queryWorkspaceLanguageMock).toHaveBeenCalledWith(expect.objectContaining({ relativePath: "main.go", kind: "definition", line: 1, column: 9 }));
-    await user.click(within(dialog).getByRole("button", { name: "helper.go:2:7" }));
+    await user.click(await within(dialog).findByRole("button", { name: "helper.go:2:7" }));
     await waitFor(() => expect(screen.getByTestId("jump-position")).toHaveTextContent("2:7"));
     expect(readWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "helper.go");
     expect(screen.getByRole("tab", { name: /helper.go/ })).toHaveAttribute("aria-selected", "true");

@@ -32,6 +32,7 @@ const docs = [
   "docs/releases/v0.2.0-alpha.3.md",
   "docs/releases/v0.2.0-alpha.4.md",
   "docs/releases/v0.2.0-alpha.5.md",
+  "docs/releases/v0.5.0-alpha.1.md",
   "docs/UPDATES.md",
   "docs/RELEASE_METADATA_REPORT.md",
   "docs/RELEASE_READINESS.md",
