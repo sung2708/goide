@@ -167,9 +167,17 @@ pub fn start_new_lsp_session<'a>(
 
     let initialized = wait_lsp_response_sync(&new_session.rx, 0)?;
     ensure_lsp_response_success_sync(initialized.clone())?;
-    new_session.supports_pull_diagnostics = initialized.pointer("/result/capabilities/diagnosticProvider").is_some_and(|provider| provider.is_object() || provider == &Value::Bool(true));
-    if initialized.pointer("/result/capabilities/positionEncoding").and_then(Value::as_str).is_some_and(|encoding| encoding != "utf-16") {
-        return Err(anyhow!("gopls selected an unsupported position encoding; Goro requires UTF-16"));
+    new_session.supports_pull_diagnostics = initialized
+        .pointer("/result/capabilities/diagnosticProvider")
+        .is_some_and(|provider| provider.is_object() || provider == &Value::Bool(true));
+    if initialized
+        .pointer("/result/capabilities/positionEncoding")
+        .and_then(Value::as_str)
+        .is_some_and(|encoding| encoding != "utf-16")
+    {
+        return Err(anyhow!(
+            "gopls selected an unsupported position encoding; Goro requires UTF-16"
+        ));
     }
     write_lsp_notification_sync(&mut new_session.stdin, "initialized", json!({}))?;
 

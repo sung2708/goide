@@ -983,7 +983,12 @@ fn request_file_completions(
             }),
         )?;
         session.open_files.insert(target_uri.clone());
-    } else if session.open_file_contents.get(&target_uri).map(String::as_str) != Some(file_content) {
+    } else if session
+        .open_file_contents
+        .get(&target_uri)
+        .map(String::as_str)
+        != Some(file_content)
+    {
         lsp_manager::write_lsp_notification_sync(
             &mut session.stdin,
             "textDocument/didChange",
@@ -1002,7 +1007,9 @@ fn request_file_completions(
     session
         .open_file_versions
         .insert(target_uri.clone(), document_version);
-    session.open_file_contents.insert(target_uri.clone(), file_content.to_string());
+    session
+        .open_file_contents
+        .insert(target_uri.clone(), file_content.to_string());
     let result = crate::integration::language::request_method(
         session,
         "textDocument/completion",
@@ -1087,10 +1094,29 @@ pub(crate) fn parse_lsp_completion_response(response: &Value) -> Vec<CompletionI
             insert_text,
             range,
             additional_text_edits,
-            sort_text: value.get("sortText").and_then(Value::as_str).map(str::to_string),
-            filter_text: value.get("filterText").and_then(Value::as_str).map(str::to_string),
-            preselect: value.get("preselect").and_then(Value::as_bool).unwrap_or(false),
-            commit_characters: value.get("commitCharacters").and_then(Value::as_array).map(|items| items.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default(),
+            sort_text: value
+                .get("sortText")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            filter_text: value
+                .get("filterText")
+                .and_then(Value::as_str)
+                .map(str::to_string),
+            preselect: value
+                .get("preselect")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            commit_characters: value
+                .get("commitCharacters")
+                .and_then(Value::as_array)
+                .map(|items| {
+                    items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_string)
+                        .collect()
+                })
+                .unwrap_or_default(),
         });
     }
     items.dedup_by(|a, b| a.label == b.label && a.detail == b.detail);
@@ -2441,11 +2467,18 @@ func main() {
         for prefix in ["", "P", "Pr", "Print"] {
             let draft = format!("package main\nimport \"fmt\"\nfunc main() {{\n    fmt.{prefix}");
             let candidates = get_file_completions(
-                &temp_dir.to_string_lossy(), "main.go", 4,
-                9 + prefix.len(), None, Some(&draft),
-            ).expect("completion for incomplete unsaved code");
-            assert!(candidates.iter().any(|item| item.label == "Println"),
-                "missing Println at prefix {prefix:?}: {candidates:?}");
+                &temp_dir.to_string_lossy(),
+                "main.go",
+                4,
+                9 + prefix.len(),
+                None,
+                Some(&draft),
+            )
+            .expect("completion for incomplete unsaved code");
+            assert!(
+                candidates.iter().any(|item| item.label == "Println"),
+                "missing Println at prefix {prefix:?}: {candidates:?}"
+            );
         }
 
         let unsaved = source

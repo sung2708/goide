@@ -548,11 +548,19 @@ pub async fn get_active_file_diagnostics(
         return ApiResponse::err("diagnostics_invalid_input", &message);
     }
 
-    let result = tauri::async_runtime::spawn_blocking(move || {
-        match buffers {
-            Some(buffers) => crate::integration::editor_diagnostics::diagnostics(crate::integration::language::Query { workspace_root, relative_path, buffers, request_id, line: 1, column: 1, kind: crate::integration::language::QueryKind::Hover }),
-            None => gopls::analyze_file_diagnostics(&workspace_root, &relative_path),
-        }
+    let result = tauri::async_runtime::spawn_blocking(move || match buffers {
+        Some(buffers) => crate::integration::editor_diagnostics::diagnostics(
+            crate::integration::language::Query {
+                workspace_root,
+                relative_path,
+                buffers,
+                request_id,
+                line: 1,
+                column: 1,
+                kind: crate::integration::language::QueryKind::Hover,
+            },
+        ),
+        None => gopls::analyze_file_diagnostics(&workspace_root, &relative_path),
     })
     .await;
 
