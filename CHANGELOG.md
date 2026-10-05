@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Editor migration (develop; not yet published)
 
+- Report local parser syntax errors on source rows and route operational errors to the status bar and Problems dock. Start new windows centered at 1200 × 720 without maximizing.
+
 - Replace CodeMirror with Monaco ESM and locally bundled workers; remove the old editor adapters and dependencies. Keep Goro's save, workspace edit review, navigation, run/test/debug and filesystem ownership.
 - Retain per-file models, undo history and view state across tabs, with disposal on close/workspace change and UTF-16 positions for Unicode paths and source.
 - Carry gopls completion metadata and import edits into Monaco; synchronize unsaved Go tabs and reject cancelled or obsolete language results. Add Monaco hover/signature providers and retain semantic outline, folding and Run/Debug entry actions.

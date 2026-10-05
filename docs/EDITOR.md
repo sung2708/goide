@@ -88,6 +88,16 @@ ownership and must not execute a save or run twice.
 
 ## Themes and runtime
 
+Go syntax errors also come from the existing local parser worker, with a 60 ms
+typing debounce (120 ms for files larger than 256 KiB). Results apply only to the
+exact active source snapshot and appear on their source rows. Native gopls
+diagnostics retain type-checking coverage; race and test markers stay independent.
+
+Operational failures appear in the status bar and the Application errors section
+of Problems. Open the status error button for full details or dismiss the error
+from Problems. Debug launch failures use this dock instead of a blocking dialog.
+New windows start centered at 1200 × 720, resizable and not maximized.
+
 All stored theme IDs and palettes remain intact. `kott` is displayed as Goro Dark
 and `light` as Goro Light. Monaco resolves existing CSS color tokens; do not add
 a replacement palette. Workbench controls use short hover/press/focus feedback;
