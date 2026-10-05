@@ -122,7 +122,7 @@ describe("EditorShell document safety", () => {
     openMock.mockResolvedValue("C:/missing");
     entriesMock.mockResolvedValue({ ok: false, error: { message: "Workspace permission denied" } });
     fireEvent.click(screen.getAllByRole("button", { name: /open workspace/i })[0]);
-    await screen.findByText("Workspace permission denied");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("Workspace permission denied"));
     expect(screen.getByTestId("workspace")).toHaveTextContent("C:/workspace");
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
     expect(writeMock).not.toHaveBeenCalled();
@@ -175,7 +175,7 @@ describe("EditorShell document safety", () => {
   it("retains the dirty tab after a failed close-save and closes after a successful retry", async () => {
     await openMain("off"); edit("valuable edits"); writeMock.mockResolvedValueOnce({ ok: false, error: { code: "denied", message: "Permission denied" } });
     fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
-    await screen.findByText("Permission denied"); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("Permission denied")); expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("valuable edits");
     fireEvent.click(screen.getByRole("button", { name: "Close main.go" })); fireEvent.click(await screen.findByRole("button", { name: "Save" }));
     await waitFor(() => expect(screen.queryByRole("tab", { name: /main.go/ })).toBeNull());
     expect(writeMock).toHaveBeenLastCalledWith("C:/workspace", "main.go", "valuable edits", "original");
@@ -225,7 +225,7 @@ describe("EditorShell document safety", () => {
     await openMain();
     readMock.mockResolvedValue({ ok: false, error: { code: "read_failed", message: "Permission denied" } });
     fireEvent.click(screen.getByRole("button", { name: "Open Other" }));
-    await screen.findByText("Permission denied");
+    await waitFor(() => expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("Permission denied"));
     expect(screen.getByRole("textbox", { name: "Document" })).toHaveValue("original");
   });
 
