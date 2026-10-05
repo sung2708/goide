@@ -14,29 +14,38 @@ Automatic develop-to-main promotion is specified but is not implemented/enabled.
 
 ## Required acceptance
 
-### Monaco develop candidate
+### Monaco alpha.2 candidate
 
-The editor migration is not accepted for release yet. Keep these gates open:
+Experimental candidate `47d6955294871949736f9ca04e2599fad61dd6e1` was
+validated on develop and fast-forwarded to main. Tag `v0.5.0-alpha.2` retains that
+identity. Published on 2026-10-05; successful source/package checks are distinct
+from installed-app acceptance.
 
-User testing on 2026-10-05 reported missing completion,
-save-preparation races and gopls parser errors shown as banners. The previous 821
-frontend passes predate these regression fixes; verify the updated candidate again.
+| Check | Result and exact-candidate evidence |
+| --- | --- |
+| Develop CI and security | Passed: Actions 37248897148 and 37248897153; frontend 838 tests / 135 files, release contracts, Rust checks/tests on all four targets |
+| Main CI and security | Passed: Actions 37249955832 and 37249955865 on the same SHA |
+| Managed tools | Passed: Actions 37249330359, real managed setup, project creation, Run/Test/diagnostics/Delve on all four targets |
+| Windows complete native fixtures | Passed: 303 tests, zero failures, 854.75s with `--include-ignored --skip real_managed_setup`; the filtered fixture is covered by the managed matrix above |
+| Candidate packages | Passed: candidate-only Release 37250005976, all four platform builds and version/checksum/updater-signature/notices verification; publication and Pages intentionally skipped |
+| Manual dev application | Maintainer reported successful testing on 2026-10-05; independent native UI coverage could not be completed because Computer Use capture/control failed |
+| Public distribution | Passed: Release 37251306415 attempt 2 (28m53s), all four builds, public byte/checksum verification and Pages deployment; anonymous alpha.2 feed/CORS/cache/web-updater contracts and SHA256SUMS HTTP 200 verified |
 
-Completion fixes now separate React text commits from request ownership, cancel
-only requests for older model versions, refresh prefix suggestions, avoid native
-waits for declaration snippets and prevent duplicate bodies in name placeholders.
-Autosave writes exact drafts; explicit Save accepts recognized gopls parser errors
-without losing incomplete code. Focused checks and a real-gopls incomplete-code
-fixture pass. Native interactive popup latency and the full release matrix remain
-open; browser snippet/tab-stop checks do not close those gates.
+The Windows native run used Go 1.26.5, gopls 0.23.0 and Delve 1.27.2.
+It exercises real completion, diagnostics, format/import/rename/code actions,
+signature queries, execution and debugger fixtures. Ignored system-tool fixtures
+on the other targets have not been independently run; managed acceptance is a
+separate matrix, not a replacement for every existing/custom tool combination.
 
-- Final full frontend/native suites on a fixed candidate, including real gopls
-  completion, diagnostics, format/import/rename/code-action and Delve fixtures.
-- Native save → Run, Test/Debug, dirty multi-tab transitions, breakpoint/race
-  navigation, Vim mappings and Markdown row hover; screenshots of the native app.
-- Cold/warm completion and typing/scroll latency, memory after repeated tab/workspace
-  cycles, large/long-line files, Vietnamese IME and keyboard/accessibility checks.
-- The same candidate's declared platform, installer and distribution gates below.
+Completion regression fixes separate React text commits from request ownership,
+cancel only older model versions, refresh prefixes and prevent duplicate snippet
+bodies. Autosave writes exact drafts; explicit Save preserves incomplete Go on
+recognized parser errors. Local syntax markers are tied to exact source rows;
+operational errors use the status bar and Problems dock.
+
+Keep installed save/Run/Test/Debug, dirty multi-tab, Vim and Markdown interaction
+coverage, cold/warm measured latency, repeated workspace memory checks, large and
+long-line files, Vietnamese IME and accessibility acceptance open.
 
 Development browser previews exercise the actual frontend editor with fixture
 callbacks. They are not native filesystem/tooling or installer acceptance.
@@ -67,18 +76,13 @@ required. Unix PTY descendant containment needs explicit verification; source
 cleanup tests alone do not close it. Security informational warnings, shipped
 license notices and platform publisher trust also require documented disposition.
 
-The Monaco migration's broad native integration run reported 210 passing and
-four failing tests. Code-action and two process-lifecycle fixtures passed isolated
-retries, but that does not replace the failing broad run. The managed no-system-Go
-setup fixture failed its isolated retry with a native execution deadline; managed
-tool installation and the dependent Run/Test/Debug acceptance gate remain open.
-The fresh Windows 10 x64 frontend run passed all 821 tests across 133 files with
-successful runner shutdown and an unchanged source digest. TypeScript/build,
-documentation links, release-contract tests and version synchronization also pass
-locally. These checks cover uncommitted develop source; they do not establish an
-immutable release candidate or replace the failing native and unverified platform,
-installed-app, IME and measured-performance gates. Verify the complete committed
-candidate before promotion.
+Earlier development runs had 821 frontend passes and a native run with four
+failures, including a managed setup deadline. They predate the current candidate:
+Windows now passes the complete 303-test native run and managed setup passes on
+all four targets. Historical retries are not counted as current full-suite
+coverage. The exact-candidate checks above supersede those source test results;
+they do not close installed recovery, platform publisher trust, signed upgrade,
+IME/accessibility or measured performance gates.
 Do not remove a gate simply because its investigation log was moved to local files.
 
 Durable behavior contracts: [document recovery](DOCUMENT_RECOVERY.md),

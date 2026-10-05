@@ -4,7 +4,7 @@ Maintainer policy, 2026-10-04: validate the complete candidate on develop before
 automatically promoting it to main and releasing from main. The immediate release
 hold was lifted by the maintainer on 2026-10-04, with an explicit request to merge
 develop into main and publish. Current preparation is experimental
-`0.5.0-alpha.1`, not a beta/stable acceptance claim. Required source checks still
+`0.5.0-alpha.2`, following the published alpha.1; neither is a beta/stable acceptance claim. Required source checks still
 must pass for the exact candidate; native acceptance limitations stay explicit.
 
 ## Required gates and order
