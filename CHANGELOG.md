@@ -13,6 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0-alpha.2] - pending publication
+
 ### Editor migration (develop; not yet published)
 
 - Report local parser syntax errors on source rows and route operational errors to the status bar and Problems dock. Start new windows centered at 1200 × 720 without maximizing.
