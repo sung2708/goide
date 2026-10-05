@@ -150,5 +150,6 @@ export function useBranchTransition(params: Params) {
     pendingTargetBranch, isBranchDialogOpen, branchSwitchLoading, branchSwitchError,
     isBranchMutationInProgress, branchMutationRef,
     handleBranchSelect, handleBranchSwitchConfirm, cancelBranchSwitch,
+    clearBranchSwitchError: () => setBranchSwitchError(null),
   };
 }

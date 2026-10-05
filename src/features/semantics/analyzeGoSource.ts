@@ -3,6 +3,7 @@ import runtimeWasmUrl from "web-tree-sitter/web-tree-sitter.wasm?url";
 import goLanguageWasmUrl from "@vscode/tree-sitter-wasm/wasm/tree-sitter-go.wasm?url";
 import type { SemanticAnalysisResult } from "./types";
 import { extractGoSemanticData } from "./extractGoSemanticData";
+import { extractGoSyntaxDiagnostics } from "./extractGoSyntaxDiagnostics";
 
 type AnalyzeGoSourceInput = {
   filePath: string;
@@ -57,6 +58,7 @@ export async function analyzeGoSource(
       filePath: input.filePath,
       version: input.version,
       ...extracted,
+      syntaxDiagnostics: extractGoSyntaxDiagnostics(tree.rootNode),
     };
   } finally {
     tree.delete();

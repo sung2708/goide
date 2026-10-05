@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { createLogger, defineConfig } from "vite";
 import { configDefaults } from "vitest/config";
 import react from "@vitejs/plugin-react";
@@ -53,6 +54,9 @@ function shimWebTreeSitterNodeImports() {
 export default defineConfig(async () => ({
   customLogger: logger,
   plugins: [shimWebTreeSitterNodeImports(), tailwindcss(), react()],
+  // The package's browser UMD embeds an old Monaco implementation. Use its
+  // ESM entry so Vim shares Goro's single Monaco instance and public options.
+  resolve: { alias: [{ find: /^monaco-vim$/, replacement: fileURLToPath(new URL("./node_modules/monaco-vim/dist/index.mjs", import.meta.url)) }] },
   worker: {
     format: "es",
     plugins: () => [shimWebTreeSitterNodeImports()],
@@ -61,11 +65,12 @@ export default defineConfig(async () => ({
     environment: "jsdom",
     globals: false,
     setupFiles: ["src/test/setup.ts"],
+    server: { deps: { inline: ["monaco-editor", "monaco-vim"] } },
     // Full workbench suites compete for CPU in jsdom and can exhaust their
     // unchanged deadlines with two workers. Serialize files; individual tests
     // still exercise intentionally overlapping requests and transitions.
     maxWorkers: 1,
-    exclude: [...configDefaults.exclude, ".worktrees/**"],
+    exclude: [...configDefaults.exclude, ".worktrees/**", ".local/**"],
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
@@ -101,13 +106,6 @@ export default defineConfig(async () => ({
               normalizedId.includes("/node_modules/react-dom/")
             ) {
               return "react";
-            }
-
-            if (
-              normalizedId.includes("/node_modules/@codemirror/") ||
-              normalizedId.includes("/node_modules/@uiw/react-codemirror/")
-            ) {
-              return "codemirror";
             }
 
             if (

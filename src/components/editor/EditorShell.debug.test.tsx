@@ -244,7 +244,7 @@ describe("EditorShell debug controller", () => {
     expect(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i })).toBeEnabled();
   });
 
-  it("shows a dedicated debug failure modal when debug start fails", async () => {
+  it("reports debug startup failure in the error dock without covering the editor", async () => {
     const user = userEvent.setup();
     vi.mocked(startDebugSession).mockResolvedValue({
       ok: false,
@@ -261,11 +261,12 @@ describe("EditorShell debug controller", () => {
 
     await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
-    expect(await screen.findByRole("dialog", { name: /unable to start debug session/i })).toBeInTheDocument();
-    expect(screen.getByText(/Delve is not installed/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Show application error" }));
+    expect(await screen.findByRole("region", { name: "Application errors" })).toHaveTextContent("Delve is not installed");
+    expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
   });
 
-  it("shows the failure modal when debug start throws", async () => {
+  it("reports thrown debug startup failures in the error dock", async () => {
     const user = userEvent.setup();
     vi.mocked(startDebugSession).mockRejectedValue(new Error("Transport unavailable"));
 
@@ -275,13 +276,11 @@ describe("EditorShell debug controller", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
-    expect(
-      await screen.findByRole("dialog", { name: /unable to start debug session/i })
-    ).toBeInTheDocument();
-    expect(screen.getByText(/transport unavailable/i)).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Show application error" }));
+    expect(await screen.findByRole("region", { name: "Application errors" })).toHaveTextContent("Transport unavailable");
   });
 
-  it("sets debugUiState back to idle when the failure dialog is dismissed", async () => {
+  it("sets debugUiState back to idle when its docked error is dismissed", async () => {
     const user = userEvent.setup();
     vi.mocked(startDebugSession).mockResolvedValue({
       ok: false,
@@ -297,12 +296,11 @@ describe("EditorShell debug controller", () => {
     await user.click(await screen.findByRole("button", { name: /open mock file/i }));
     await user.click(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i }));
 
-    const dialog = await screen.findByRole("dialog", { name: /unable to start debug session/i });
-    expect(dialog).toBeInTheDocument();
-
-    await user.click(within(dialog).getByRole("button", { name: /close/i }));
+    await user.click(await screen.findByRole("button", { name: "Show application error" }));
+    await user.click(await screen.findByRole("button", { name: "Dismiss error" }));
 
     expect(screen.queryByRole("dialog", { name: /unable to start debug session/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Show application error" })).toBeNull();
 
     // The debug button should be re-enabled (not starting state)
     expect(within(screen.getByTestId("editor-workbench")).getByRole("button", { name: /debug active go file/i })).not.toBeDisabled();

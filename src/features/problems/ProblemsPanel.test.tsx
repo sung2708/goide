@@ -2,6 +2,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import ProblemsPanel from "./ProblemsPanel";
 import { buildProblems, diagnosticProblems } from "./model";
+it("keeps operational errors separate from code rows and supports dismissing", () => {
+  const dismiss = vi.fn(), navigate = vi.fn();
+  render(<ProblemsPanel problems={[]} onNavigate={navigate} operationError="Disk permission denied" onDismissError={dismiss} />);
+  expect(screen.getByRole("region", { name: "Application errors" })).toHaveTextContent("Disk permission denied");
+  fireEvent.click(screen.getByRole("button", { name: "Dismiss error" }));
+  expect(dismiss).toHaveBeenCalledOnce(); expect(navigate).not.toHaveBeenCalled();
+});
 it("maps real diagnostic coordinates and codes without inventing fields", () => {
   expect(diagnosticProblems("main.go", [{ severity: "warning", message: "unused", code: "UnusedVar", range: { startLine: 3, startColumn: 8, endLine: 3, endColumn: 9 } }])[0]).toMatchObject({ file: "main.go", line: 3, column: 8, source: "gopls", severity: "warning", code: "UnusedVar" });
 });

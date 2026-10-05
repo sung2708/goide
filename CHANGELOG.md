@@ -13,13 +13,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Editor migration (develop; not yet published)
+
+- Replace CodeMirror with Monaco ESM and locally bundled workers; remove the old editor adapters and dependencies. Keep Goro's save, workspace edit review, navigation, run/test/debug and filesystem ownership.
+- Retain per-file models, undo history and view state across tabs, with disposal on close/workspace change and UTF-16 positions for Unicode paths and source.
+- Carry gopls completion metadata and import edits into Monaco; synchronize unsaved Go tabs and reject cancelled or obsolete language results. Add Monaco hover/signature providers and retain semantic outline, folding and Run/Debug entry actions.
+- Fix completion cancellation when React commits a just-typed buffer, refresh gopls suggestions as prefixes grow, and enable package-member previews for Monaco automatic Invoke requests.
+- Keep quick suggestions active inside snippet placeholders; avoid native waits for function-declaration snippets and reuse identical recent completion results without carrying edits across model versions or cursor changes.
+- Autosave exact drafts without asynchronous format/import preparation. Explicit saves retain preparation preferences and persist incomplete Go unchanged when gopls reports a parser error, while preserving stale-edit and operational-error guards.
+- Request diagnostics from live buffers after a short debounce, fix the initial-open snapshot race, and keep saves independent from diagnostics. Preserve independent language, race and test markers and inline error messages.
+- Preserve bounded Find/Replace; stop ordinary rescans from moving the caret. Keep replacement undo groups and stale/read-only/regex-limit guards.
+- Keep BOM and LF/CRLF through editor serialization and undoable external reloads. Correct special-key Vim mappings and sanitize Markdown resource URLs before DOM insertion.
+- Add configurable Vim motions and sanitized Markdown row previews. Render boolean Settings as accessible switches. Rename displayed Kott themes to Goro Dark/Light while retaining stored IDs and all palettes.
+- Add restrained workbench hover, press and keyboard focus feedback; use existing glass tokens on dialogs/menus. Space square Run/Debug buttons and align them with their source row.
+- Release acceptance remains pending: full suite, real native workflows, screenshots, platform/installer and measured editor-performance gates must pass before promotion.
+
 ### Changed
 - Rename the public product to **Goro**, inspired by goroutines, with the brand line **Understand Go in motion.** Repository URLs, npm/Cargo package names, and the application identifier remain `goide`.
 - Replace legacy branding with the runtime gopher, original Goro wordmark, light/dark/monochrome logos, simplified favicons, and native application icons. Update README, product/brand documentation, welcome screen, window title, and release names.
 
 ### Added
 - Kott-inspired graphite workbench styling, an editorial welcome screen, and a title-bar file picker shortcut.
-- A persistent color-theme selector with Black & White as the default for users without a saved preference, plus Kott Graphite, Kott Light, VS Code Dark, Nord, Tokyo Night/Storm/Light, and Catppuccin Latte/Frappé/Macchiato/Mocha.
+- A persistent color-theme selector with Black & White as the default for users without a saved preference, plus Goro Dark, Goro Light, VS Code Dark, Nord, Tokyo Night/Storm/Light, and Catppuccin Latte/Frappé/Macchiato/Mocha. The existing `kott` and `light` preference IDs remain intact.
 - Live terminal palette updates that preserve the existing shell session and output.
 
 ### Known Issues

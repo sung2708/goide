@@ -27,6 +27,7 @@ export type SemanticEntryAction = {
 };
 
 export type SemanticAnalysisResult = {
+  syntaxDiagnostics?: import("./extractGoSyntaxDiagnostics").GoSyntaxDiagnostic[];
   entryActions?: SemanticEntryAction[];
   /** Added by the client from the exact synced version, never inferred from a later buffer. */
   sourceText?: string;

@@ -455,7 +455,7 @@ describe("EditorShell branch switching", () => {
 
     // The error message from the backend error.message should be displayed.
     await waitFor(() => {
-      expect(screen.getByText("git command failed: branch not found")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Show application error" })).toHaveTextContent("git command failed: branch not found");
     });
 
     // The internal code prefix must not leak through as a standalone token.

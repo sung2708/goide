@@ -1,9 +1,48 @@
 import { act, renderHook } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { useCompletionState } from "./useCompletionState";
+import { DocumentSession } from "../../features/documents/DocumentSession";
 const fetchMock = vi.hoisted(() => vi.fn());
 const cancelMock = vi.hoisted(() => vi.fn().mockResolvedValue({ ok: true, data: true }));
 vi.mock("../../lib/ipc/client", () => ({ fetchWorkspaceCompletions: fetchMock, cancelLanguageRequest: cancelMock }));
+it("invalidates completion reuse and rejects pending results when another Go buffer changes", async () => {
+  fetchMock.mockReset();
+  const session = new DocumentSession(); session.reset("C:/original");
+  const other = session.open("other.go", "package main\nvar Old = 1\n"); const main = session.open("main.go", "package main\nfunc main(){}\n");
+  let resolve!: (value: unknown) => void;
+  fetchMock.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const workspacePathRef = { current: "C:/original" }, activeFilePathRef = { current: "main.go" }, latestEditorContentRef = { current: main.text };
+  const hook = renderHook(({ snapshot }) => useCompletionState({ documentSnapshot: snapshot, workspacePathRef, activeFilePathRef, latestEditorContentRef, activeFileContent: main.text }), { initialProps: { snapshot: session.snapshot() } });
+  const previous = hook.result.current.handleRequestCompletions; let pending!: Promise<unknown>;
+  act(() => { pending = previous({ line: 2, column: 1, explicit: true }); });
+  session.edit(other.id, "package main\nvar New = 2\n"); hook.rerender({ snapshot: session.snapshot() });
+  expect(hook.result.current.handleRequestCompletions).not.toBe(previous);
+  await act(async () => { resolve({ ok: true, data: [{ label: "Old", insertText: "Old" }] }); expect(await pending).toEqual([]); });
+  hook.unmount();
+});
+it("does not cancel a fresh model request when React commits the same keystroke", async () => {
+  fetchMock.mockReset(); cancelMock.mockClear();
+  let resolve!: (value: unknown) => void;
+  fetchMock.mockImplementation(() => new Promise(done => { resolve = done; }));
+  const workspacePathRef = { current: "C:/original" }, activeFilePathRef = { current: "main.go" };
+  const latestEditorContentRef = { current: "package main\nfunc main(){fmt.}" };
+  const hook = renderHook(({ content }) => useCompletionState({ workspacePathRef, activeFilePathRef, latestEditorContentRef, activeFileContent: content }), { initialProps: { content: "package main\nfunc main(){fmt}" } });
+  let pending!: Promise<unknown>;
+  act(() => { pending = hook.result.current.handleRequestCompletions({ line: 2, column: 17, explicit: false, fileContent: latestEditorContentRef.current }); });
+  hook.rerender({ content: latestEditorContentRef.current });
+  expect(cancelMock).not.toHaveBeenCalled();
+  await act(async () => { resolve({ ok: true, data: [{ label: "Println", insertText: "Println" }] }); expect(await pending).toEqual([{ label: "Println", insertText: "Println" }]); });
+  hook.unmount();
+});
+it("sends exact unsaved Go tabs and a virtual completion buffer without saving", async () => {
+  fetchMock.mockReset().mockResolvedValue({ ok: true, data: [] });
+  const session = new DocumentSession(); session.reset("C:/original");
+  session.open("other.go", "package main\nvar Unsaved = 1\n"); session.open("README.md", "# notes"); session.open("main.go", "package main\nfunc main() {}\n");
+  const hook = renderHook(() => useCompletionState({ documentSnapshot: session.snapshot(), workspacePathRef: { current: "C:/original" }, activeFilePathRef: { current: "main.go" }, latestEditorContentRef: { current: session.active!.text }, activeFileContent: session.active!.text }));
+  await act(async () => { await hook.result.current.handleRequestCompletions({ line: 3, column: 8, explicit: false, fileContent: 'package main\nimport "fmt"\nfmt.\n' }); });
+  expect(fetchMock).toHaveBeenCalledWith(expect.objectContaining({ buffers: [{ path: "other.go", content: "package main\nvar Unsaved = 1\n" }, { path: "main.go", content: 'package main\nimport "fmt"\nfmt.\n' }] }));
+  expect(session.active!.text).toBe("package main\nfunc main() {}\n"); hook.unmount();
+});
 
 it("cancels an aborted popup request immediately without cancelling its successor", async () => {
   fetchMock.mockClear(); cancelMock.mockClear();

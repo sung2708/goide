@@ -5,6 +5,16 @@ import { DEFAULT_SETTINGS } from "../settings/model";
 import { useSavePreparation } from "./useSavePreparation";
 const mocks = vi.hoisted(() => ({ format: vi.fn(), imports: vi.fn(), cancel: vi.fn().mockResolvedValue({ ok: true, data: true }) }));
 vi.mock("../../lib/ipc/client", () => ({ formatWorkspaceDocument: mocks.format, organizeWorkspaceImports: mocks.imports, cancelLanguageRequest: mocks.cancel }));
+it("saves incomplete Go unchanged when gopls formatting reports a parser error", async () => {
+  const documents = new DocumentSession(); documents.reset("repo"); const document = documents.open("main.go", "package main\n");
+  const draft = "package main\nfunc main(){\n"; documents.edit(document.id, draft);
+  mocks.format.mockResolvedValue({ ok: false, error: { message: `LSP error: ${JSON.stringify({ code: 0, message: "4:7: expected '}', found 'EOF'" })}` } });
+  const hook = renderHook(() => useSavePreparation(documents, documents.snapshot(), { ...DEFAULT_SETTINGS, "go.formatOnSave": true }));
+  const writer = vi.fn().mockResolvedValue({ ok: true });
+  await act(() => documents.save(document.id, writer, hook.result.current.prepare));
+  expect(writer).toHaveBeenCalledWith("repo", "main.go", draft, "package main\n");
+  expect(documents.active?.text).toBe(draft); expect(documents.dirty).toBe(false);
+});
 it("runs imports then formatting once and writes against the original baseline", async () => {
   const documents = new DocumentSession(); documents.reset("repo"); const document = documents.open("main.go", "disk"); documents.edit(document.id, "source");
   mocks.imports.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before: "source", after: "with imports", readOnly: false }] } });

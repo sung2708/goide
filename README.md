@@ -36,7 +36,7 @@ Go source tells you what a program can do. Understanding a concurrent program al
 
 Goro brings those questions into the workbench:
 
-- **Write Go with context**: CodeMirror editing and `gopls` language intelligence, backed by your local Go toolchain.
+- **Write Go with context**: Monaco editing and `gopls` language intelligence, backed by your local Go toolchain.
 - **Follow execution**: Native terminal sessions and Delve debugging alongside the source.
 - **Investigate concurrency**: `go run -race` findings, sampled runtime signals, and channel counterpart navigation.
 - **Keep the workbench focused**: Tauri v2 and React 19 provide a native-backed desktop environment dedicated to Go.
@@ -48,7 +48,7 @@ Runtime inspection combines observations and heuristic analysis; it is not a com
 ## Key Capabilities
 
 ### Implemented & Ready for Testing
-- **Go Source Editing**: CodeMirror 6 editor engine with Go syntax highlighting, bracket pairing, smart indentation, and in-file find/replace (`FindWidget`).
+- **Go Source Editing**: Monaco editor engine with Go syntax highlighting, bracket pairing, smart indentation, and in-file find/replace (`FindWidget`).
 - **Language Intelligence**: Auto-completion, hover hints, parameter documentation, and symbol navigation powered by `gopls`.
 - **Delve DAP Debugger**: Start debug sessions, set/toggle breakpoints, pause, continue, and step into/over/out with Delve.
 - **Race Detector Integration**: Direct `go run -race` execution with findings surfaced inline in the editor and terminal output.

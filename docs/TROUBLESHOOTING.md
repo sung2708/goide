@@ -18,7 +18,7 @@ Goro runs preflight checks on startup. Missing external tools are surfaced in th
 
 ### Editor navigation and focus (develop)
 
-Wheel and trackpad input use native scrolling, including momentum and horizontal movement. Overlay positions are measured through CodeMirror's measurement scheduler. Parent renders do not restart semantic analysis or rebuild the editor's change callback. Editor text and line numbers follow the configured font size.
+Wheel and trackpad input use native scrolling, including momentum and horizontal movement. Overlay positions use Monaco public visible-position and layout APIs, coalesced through requestAnimationFrame. Parent renders do not restart semantic analysis or rebuild the editor's change callback. Editor text and line numbers follow the configured font size.
 
 Use **Focus** in the title bar, **Toggle Focus Mode** in the command palette, or `Ctrl+Shift+Enter` (`Cmd+Shift+Enter` on macOS) to temporarily hide the sidebar and terminal. Exiting restores their layout; documents and terminal sessions stay mounted. Selecting a workspace view or invoking workspace search leaves Focus Mode.
 
@@ -114,8 +114,7 @@ requirements of the currently published alpha installer.
 
 ### Completion responsiveness (develop)
 
-Typing starts a completion query after 50 ms of inactivity (previously the
-CodeMirror default of 100 ms). Local snippets can appear while gopls is pending.
+Monaco automatic completion uses a zero-millisecond editor delay. Local snippets can appear while gopls is pending.
 Editing again aborts the old popup query and its native request; the next query
 uses the latest buffer without waiting for the old response. Closing the popup
 also cancels its request. Cancelled responses do not mark completion unavailable
@@ -128,11 +127,7 @@ the same version are skipped. Late editor subscribers receive the current
 result; editing invalidates it immediately, and disposing the editor cancels
 queued work. These background results never override a newer buffer.
 
-Regression checks use a real CodeMirror editor to verify that a second query
-starts after 50 ms even when the first promise is unresolved, and that a late
-response cannot replace its suggestions. A worker test verifies that ten rapid
-edits produce one subsequent analysis rather than ten. These are scheduling
-checks, not measurements of native gopls latency or editor frame rate.
+Provider tests verify automatic/explicit triggers, UTF-16 edits, metadata and cancellation on edits, tab changes and disposal. Real Monaco model tests cover CRLF, undo/redo and model disposal. These checks do not measure native gopls latency or editor frame rate.
 
 If completion remains slow, inspect **Go: Inspect Toolchain** first. Cold gopls
 startup and dependency loading can still delay the first request; reducing the

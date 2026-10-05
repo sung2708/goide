@@ -476,6 +476,8 @@ pub struct SwitchWorkspaceBranchRequestDto {
 #[serde(rename_all = "camelCase")]
 pub struct CompletionRequestDto {
     #[serde(default)]
+    pub buffers: Option<Vec<crate::integration::language::Buffer>>,
+    #[serde(default)]
     pub request_id: Option<String>,
     pub workspace_root: String,
     pub relative_path: String,
@@ -511,6 +513,12 @@ pub struct CompletionItemDto {
     pub insert_text: String,
     pub range: Option<CompletionRangeDto>,
     pub additional_text_edits: Vec<CompletionTextEditDto>,
+    pub sort_text: Option<String>,
+    pub filter_text: Option<String>,
+    #[serde(default)]
+    pub preselect: bool,
+    #[serde(default)]
+    pub commit_characters: Vec<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -519,6 +527,7 @@ pub enum DiagnosticSeverityDto {
     Error,
     Warning,
     Info,
+    Hint,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]

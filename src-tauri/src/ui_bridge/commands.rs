@@ -541,13 +541,18 @@ pub async fn analyze_active_file_concurrency(
 pub async fn get_active_file_diagnostics(
     workspace_root: String,
     relative_path: String,
+    buffers: Option<Vec<crate::integration::language::Buffer>>,
+    request_id: Option<String>,
 ) -> ApiResponse<DiagnosticsResponseDto> {
     if let Err(message) = validate_go_diagnostics_path(&relative_path) {
         return ApiResponse::err("diagnostics_invalid_input", &message);
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
-        gopls::analyze_file_diagnostics(&workspace_root, &relative_path)
+        match buffers {
+            Some(buffers) => crate::integration::editor_diagnostics::diagnostics(crate::integration::language::Query { workspace_root, relative_path, buffers, request_id, line: 1, column: 1, kind: crate::integration::language::QueryKind::Hover }),
+            None => gopls::analyze_file_diagnostics(&workspace_root, &relative_path),
+        }
     })
     .await;
 
@@ -561,6 +566,7 @@ pub async fn get_active_file_diagnostics(
                         gopls::DiagnosticSeverity::Error => DiagnosticSeverityDto::Error,
                         gopls::DiagnosticSeverity::Warning => DiagnosticSeverityDto::Warning,
                         gopls::DiagnosticSeverity::Info => DiagnosticSeverityDto::Info,
+                        gopls::DiagnosticSeverity::Hint => DiagnosticSeverityDto::Hint,
                     },
                     message: item.message,
                     source: item.source,
@@ -603,6 +609,23 @@ pub async fn get_active_file_completions(
     }
 
     let result = tauri::async_runtime::spawn_blocking(move || {
+        if let Some(buffers) = request.buffers {
+            let line = request.line;
+            let column = request.column;
+            let trigger = request.trigger_character;
+            return crate::integration::language::with_documents(crate::integration::language::Query {
+                request_id: request.request_id, workspace_root: request.workspace_root,
+                relative_path: request.relative_path, line, column,
+                kind: crate::integration::language::QueryKind::Hover, buffers,
+            }, |_root, session, target, _content| {
+                let response = crate::integration::language::request_method(session, "textDocument/completion", serde_json::json!({
+                    "textDocument": { "uri": crate::integration::lsp_manager::path_to_file_uri(target)? },
+                    "position": { "line": line - 1, "character": column - 1 },
+                    "context": if let Some(character) = trigger { serde_json::json!({"triggerKind": 2, "triggerCharacter": character}) } else { serde_json::json!({"triggerKind": 1}) }
+                }))?;
+                Ok(gopls::parse_lsp_completion_response(&serde_json::json!({"result": response})))
+            });
+        }
         let root = crate::integration::gopls::normalize_platform_pathbuf(
             std::path::Path::new(&request.workspace_root).canonicalize()?,
         );
@@ -629,6 +652,10 @@ pub async fn get_active_file_completions(
                     documentation: item.documentation,
                     kind: item.kind,
                     insert_text: item.insert_text,
+                    sort_text: item.sort_text,
+                    filter_text: item.filter_text,
+                    preselect: item.preselect,
+                    commit_characters: item.commit_characters,
                     range: item.range.map(|range| CompletionRangeDto {
                         start_line: range.start_line,
                         start_column: range.start_column,

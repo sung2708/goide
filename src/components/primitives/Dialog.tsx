@@ -96,7 +96,7 @@ function Dialog({
         }
       }}
     >
-      <div className={panelClassName}>{children}</div>
+      <div className={`goro-dialog-panel ${panelClassName ?? ""}`}>{children}</div>
     </dialog>,
     document.body
   );

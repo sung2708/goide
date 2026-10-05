@@ -121,7 +121,6 @@ import { useRunOutputState, type RunMode } from "./useRunOutputState";
 const DEBUG_UI_ENABLED = true;
 const LazyBottomPanel = lazy(() => import("../panels/BottomPanel"));
 const LazyRuntimeTopologyPanel = lazy(() => import("../panels/RuntimeTopologyPanel"));
-const LazyDebugFailureDialog = lazy(() => import("../panels/DebugFailureDialog"));
 
 const KIND_LABELS: Record<LensConstructKind, string> = {
   channel: "Channel Op",
@@ -527,6 +526,8 @@ function EditorShell() {
     refreshDiagnosticsForFile,
     scheduleDiagnosticsRefresh,
   } = useDiagnosticsState({
+    getDocumentSnapshot: documents.snapshot,
+    documentSnapshot,
     workspacePathRef,
     activeFilePathRef,
   });
@@ -537,6 +538,7 @@ function EditorShell() {
     resetCompletionAvailability,
     handleRequestCompletions,
   } = useCompletionState({
+    documentSnapshot,
     workspacePathRef,
     activeFilePathRef,
     activeFileContent,
@@ -1156,7 +1158,7 @@ function EditorShell() {
   ]);
 
   const persistActiveFileContent = useCallback(
-    async (content: string): Promise<boolean> => {
+    async (content: string, automatic = false): Promise<boolean> => {
       const currentPath = activeFilePath;
       if (!workspacePath || !currentPath) {
         return false;
@@ -1184,7 +1186,9 @@ function EditorShell() {
       try {
         const document = documents.active;
         if (!document || document.path !== currentPath || document.text !== content) throw new Error("Editor changed before save. Save again.");
-        await documents.save(document.id, writeWorkspaceFile, savePreparation.prepare);
+        // Autosave persists drafts, including incomplete Go, without waiting on
+        // format/import queries that would race the next keystroke.
+        await documents.save(document.id, writeWorkspaceFile, automatic ? undefined : savePreparation.prepare);
         if (!editorMountedRef.current || workspacePathRef.current !== saveWorkspacePath || activeFilePathRef.current !== saveFilePath) return false;
         didWrite = true;
         const writtenContent = documents.active?.baseline ?? content;
@@ -1192,7 +1196,7 @@ function EditorShell() {
         const hasNewerEdits = latestEditorContentRef.current !== writtenContent;
         setSaveStatus(hasNewerEdits ? "idle" : "saved");
         if (!hasNewerEdits) saveStatusTimerRef.current = setTimeout(() => setSaveStatus("idle"), 3000);
-        await refreshDiagnosticsForFile(saveWorkspacePath, saveFilePath);
+        void refreshDiagnosticsForFile(saveWorkspacePath, saveFilePath);
         if (editorMountedRef.current && workspacePathRef.current === saveWorkspacePath && activeFilePathRef.current === saveFilePath) setAnalysisRevision(current => current + 1);
         return true;
       } catch (error) {
@@ -1228,7 +1232,7 @@ function EditorShell() {
               latestEditorContentRef.current === newerContent &&
               savedContentRef.current !== newerContent
             ) {
-              void persistActiveFileContent(newerContent);
+              void persistActiveFileContent(newerContent, true);
             }
           }, settingsRef.current["files.autoSaveDelay"]);
         }
@@ -1239,10 +1243,10 @@ function EditorShell() {
 
   const handleSaveFile = useCallback(
     async (content: string) => {
-      if (branchMutationRef.current) return;
+      if (branchMutationRef.current) return false;
       // The explicit save command carries the editor's current buffer.
       latestEditorContentRef.current = content;
-      await persistActiveFileContent(content);
+      return persistActiveFileContent(content);
     },
     [persistActiveFileContent]
   );
@@ -1315,6 +1319,11 @@ function EditorShell() {
       return;
     }
     if (!workspacePath || !activeFilePath) return;
+    const buffer = latestEditorContentRef.current;
+    const activeDocument = documents.active;
+    if (buffer !== null && activeDocument?.text !== buffer && !activeDocument?.readOnly) {
+      if (!(await handleSaveFile(buffer))) return;
+    }
     const isRaceRun = modeToRun === "race";
     const runId = globalThis.crypto.randomUUID();
     activeRunIdRef.current = runId;
@@ -1367,7 +1376,7 @@ function EditorShell() {
         stream: "stderr"
       }]);
     }
-  }, [workspacePath, activeFilePath, executionPreparation.prepare, debugUiState]);
+  }, [workspacePath, activeFilePath, executionPreparation.prepare, debugUiState, documents.active, handleSaveFile]);
 
   const handleRunFileStandard = useCallback(() => {
     void handleRunFile("standard");
@@ -1691,7 +1700,7 @@ function EditorShell() {
         latestEditorContentRef.current === value &&
         savedContentRef.current !== value
       ) {
-        void persistActiveFileContent(value);
+        void persistActiveFileContent(value, true);
       }
     }, settingsRef.current["files.autoSaveDelay"]);
   }, [documents, forgetDiagnostics, clearDiagnostics, invalidateDiagnosticsRequests, persistActiveFileContent, workspacePath, activeFilePath]);
@@ -1703,10 +1712,10 @@ function EditorShell() {
     const saveOnBlur = () => {
       if (settingsRef.current["files.autoSave"] !== "onFocusChange" || documentTransitionRef.current || branchMutationRef.current || isSavingRef.current) return;
       const content = latestEditorContentRef.current;
-      if (content !== null && content !== savedContentRef.current && !documents.active?.readOnly) void persistActiveFileContent(content);
+      if (content !== null && content !== savedContentRef.current && !documents.active?.readOnly) void persistActiveFileContent(content, true);
     };
     const focusOut = (event: FocusEvent) => {
-      const editor = event.target instanceof HTMLElement ? event.target.closest(".cm-editor") : null;
+      const editor = event.target instanceof HTMLElement ? event.target.closest(".goro-editor") : null;
       if (editor && (!(event.relatedTarget instanceof HTMLElement) || !editor.contains(event.relatedTarget))) saveOnBlur();
     };
     window.addEventListener("blur", saveOnBlur); window.addEventListener("focusout", focusOut);
@@ -2058,7 +2067,7 @@ function EditorShell() {
 
   const {
     pendingTargetBranch, isBranchDialogOpen, branchSwitchLoading, branchSwitchError,
-    isBranchMutationInProgress, handleBranchSelect, handleBranchSwitchConfirm, cancelBranchSwitch,
+    isBranchMutationInProgress, handleBranchSelect, handleBranchSwitchConfirm, cancelBranchSwitch, clearBranchSwitchError,
   } = useBranchTransition({
     workspacePathRef, documentTransitionRef, branchMutationRef,
     branchSnapshot, setBranchSnapshot, refreshBranchSnapshot,
@@ -2068,6 +2077,9 @@ function EditorShell() {
     getBlockReason: () => runStatus === "running" || ["starting", "running", "paused", "stopping"].includes(debugUiState)
       ? "Stop the active run or debug session before switching branches." : null,
   });
+  const debugError = debugFailure ? [debugFailure.title, debugFailure.message, debugFailure.details].filter(Boolean).join("\n") : null;
+  const operationError = [fileError, fsSyncError, branchSwitchError, debugError].filter(Boolean).join("\n\n") || null;
+  const dismissOperationError = () => { setFileError(null); setFsSyncError(null); clearBranchSwitchError(); if (debugFailure) { setDebugFailure(null); setDebugUiState("idle"); } };
   const handleQuickOpenSelect = useCallback(
     (relativePath: string) => {
       setIsQuickOpenOpen(false);
@@ -2587,6 +2599,8 @@ function EditorShell() {
                 {hasLoadedBottomPanel ? (
                   <Suspense fallback={<div className="h-full min-h-0 min-w-0" />}>
                     <LazyBottomPanel
+                      operationError={operationError}
+                      onDismissError={dismissOperationError}
                       problems={problems}
                       onNavigateProblem={navigateProblem}
                       activeTab={bottomPanelTab}
@@ -2720,9 +2734,6 @@ function EditorShell() {
                 data-testid="editor-content-region"
                 className="flex min-h-0 flex-1 flex-col overflow-hidden bg-(--crust)"
               >
-                {workspacePath && fsSyncError && (
-                  <p role="status" className="px-3 py-2 text-xs text-[var(--yellow)]">{fsSyncError}</p>
-                )}
                 {inactiveDiskConflicts.length > 0 && <div role="status" aria-label="External changes in open tabs" className="flex flex-wrap gap-2 border-b border-(--border) px-3 py-2 text-xs text-(--yellow)">
                   <span>Open tabs changed on disk:</span>
                   {inactiveDiskConflicts.map(conflict => <button key={conflict.id} type="button" disabled={gitOperationBusy || explorerOperationBusy || isReading || documents.saving} onClick={() => void handleOpenFile(conflict.path)} className="underline">Review {conflict.path}{conflict.exists ? "" : " (deleted)"}</button>)}
@@ -2750,11 +2761,6 @@ function EditorShell() {
                     {isBranchMutationInProgress && (
                       <div className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--base)]/60 backdrop-blur-[2px]" aria-hidden="true">
                         <span className="text-xs text-[var(--overlay1)]">Switching branch...</span>
-                      </div>
-                    )}
-                    {fileError && (
-                      <div className="absolute left-0 right-0 top-0 z-10 mx-3 mt-2 rounded border border-[var(--red)] bg-[var(--crust)] px-3 py-2 text-xs text-[var(--red)]">
-                        {fileError}
                       </div>
                     )}
                     {externalFile.conflict && <ExternalFileConflict exists={externalFile.conflict.exists} disk={externalFile.conflict.content} editor={latestEditorContentRef.current ?? ""}
@@ -2816,10 +2822,8 @@ function EditorShell() {
                         />
                         {activeFileContent !== null ? (
                           <CodeEditor
-                            key={documentSnapshot.activeId}
-                            sessionState={documentSnapshot.activeId !== null ? documents.editor(documentSnapshot.activeId) : undefined}
+                            documentSnapshot={documentSnapshot}
                             onCommandsChange={onEditorCommands}
-                            onSessionDispose={state => { if (documentSnapshot.activeId !== null) documents.retainEditor(documentSnapshot.activeId, state); }}
                             editable={!documents.active?.readOnly && !isBranchMutationInProgress && !gitOperationBusy && !explorerOperationBusy}
                             value={activeFileContent}
                             filePath={activeFilePath}
@@ -2910,6 +2914,8 @@ function EditorShell() {
       )}
 
       <StatusBar
+        operationError={operationError}
+        onOpenErrors={() => { setIsFocusMode(false); setHasLoadedBottomPanel(true); setIsBottomPanelOpen(true); setBottomPanelTab("problems"); }}
         workspacePath={workspacePath}
         activeFilePath={activeFilePath}
         activeSymbol={activeDocumentSymbol}
@@ -2954,26 +2960,7 @@ function EditorShell() {
         </div>
       )}
 
-      {branchSwitchError && (
-        <div role="alert" className="absolute bottom-10 left-1/2 z-50 -translate-x-1/2 rounded border border-[var(--red)] bg-[var(--mantle)] px-4 py-2 text-xs text-[var(--red)]">
-          {branchSwitchError}
-        </div>
-      )}
 
-      {debugFailure !== null ? (
-        <Suspense fallback={null}>
-          <LazyDebugFailureDialog
-            open
-            title={debugFailure.title}
-            message={debugFailure.message}
-            details={debugFailure.details ?? null}
-            onClose={() => {
-              setDebugFailure(null);
-              setDebugUiState("idle");
-            }}
-          />
-        </Suspense>
-      ) : null}
       <UpdateNotice />
       {safeCloseDialog}
       {replacementReview.dialog}

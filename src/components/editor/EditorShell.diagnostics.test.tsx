@@ -254,7 +254,7 @@ describe("EditorShell diagnostics", () => {
     formatWorkspaceDocumentMock.mockResolvedValue({ ok: true, data: { files: [{ path: "main.go", before, after, readOnly: false }] } });
     render(<EditorShell />); await openWorkspaceAndShowExplorer(user); await user.click(await screen.findByRole("button", { name: /open main/i }));
     fireEvent.keyDown(window, { key: ",", ctrlKey: true }); const preferences = await screen.findByRole("dialog", { name: "Settings" });
-    await user.click(within(preferences).getByRole("checkbox", { name: "Format on Save" }));
+    await user.click(within(preferences).getByRole("switch", { name: "Format on Save" }));
     await user.click(within(preferences).getByRole("button", { name: "Close" })); fireEvent.keyDown(window, { key: "s", ctrlKey: true });
     await waitFor(() => expect(writeWorkspaceFileMock).toHaveBeenCalledWith("C:/workspace", "main.go", after, before));
     expect(formatWorkspaceDocumentMock).toHaveBeenCalledOnce(); expect(screen.getByTestId("editor-value").textContent).toBe(after);
@@ -341,6 +341,7 @@ describe("EditorShell diagnostics", () => {
   });
 
   it("offers review for a dirty inactive tab changed externally and keeps its edits", async () => {
+    settingsStore.update("files.autoSave", "off");
     const user = userEvent.setup();
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
@@ -397,7 +398,8 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() =>
       expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
         "C:/workspace",
-        "main.go"
+        "main.go",
+        expect.objectContaining({ requestId: expect.any(String), buffers: expect.arrayContaining([expect.objectContaining({ path: "main.go", content: expect.any(String) })]) })
       )
     );
     expect(screen.getByTestId("diagnostic-message")).toHaveTextContent(
@@ -438,7 +440,8 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() =>
       expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
         "C:/workspace",
-        "main.go"
+        "main.go",
+        expect.objectContaining({ requestId: expect.any(String), buffers: expect.arrayContaining([expect.objectContaining({ path: "main.go", content: expect.any(String) })]) })
       )
     );
     expect(screen.getByTestId("diagnostic-message")).toHaveTextContent(
@@ -530,7 +533,8 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() =>
       expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
         "C:/workspace",
-        "main.go"
+        "main.go",
+        expect.objectContaining({ requestId: expect.any(String), buffers: expect.arrayContaining([expect.objectContaining({ path: "main.go", content: expect.any(String) })]) })
       )
     );
 
@@ -560,7 +564,8 @@ describe("EditorShell diagnostics", () => {
     await waitFor(() =>
       expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledWith(
         "C:/workspace",
-        "main.go"
+        "main.go",
+        expect.objectContaining({ requestId: expect.any(String), buffers: expect.arrayContaining([expect.objectContaining({ path: "main.go", content: expect.any(String) })]) })
       )
     );
 
@@ -570,7 +575,9 @@ describe("EditorShell diagnostics", () => {
     ).toBeInTheDocument();
   });
 
-  it("autosaves after 2.5 seconds of typing inactivity", async () => {
+  it("autosaves after the configured default delay of typing inactivity", async () => {
+    settingsStore.update("go.formatOnSave", true);
+    settingsStore.update("go.organizeImportsOnSave", true);
     openMock.mockResolvedValue("C:/workspace");
     readWorkspaceFileMock.mockResolvedValue({ ok: true, data: "package main\n" });
     writeWorkspaceFileMock.mockResolvedValue({ ok: true });
@@ -592,7 +599,7 @@ describe("EditorShell diagnostics", () => {
     expect(writeWorkspaceFileMock).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(2500);
+      vi.advanceTimersByTime(500);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -603,6 +610,8 @@ describe("EditorShell diagnostics", () => {
       "package main\nfunc main() {\n",
       "package main\n"
     );
+    expect(formatWorkspaceDocumentMock).not.toHaveBeenCalled();
+    expect(organizeWorkspaceImportsMock).not.toHaveBeenCalled();
   }, 15000);
 
   it("rechecks diagnostics after autosave until errors clear", async () => {
@@ -649,7 +658,7 @@ describe("EditorShell diagnostics", () => {
     fireEvent.click(typeInvalidButton);
 
     await act(async () => {
-      vi.advanceTimersByTime(2500);
+      vi.advanceTimersByTime(180);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -657,12 +666,14 @@ describe("EditorShell diagnostics", () => {
     expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledTimes(2);
 
     await act(async () => {
-      vi.advanceTimersByTime(1200);
+      vi.advanceTimersByTime(320);
       await Promise.resolve();
       await Promise.resolve();
     });
 
     expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledTimes(3);
     expect(screen.getByTestId("diagnostic-message")).toHaveTextContent("no diagnostics");
+    await act(async () => { vi.advanceTimersByTime(1200); });
+    expect(fetchWorkspaceDiagnosticsMock).toHaveBeenCalledTimes(3);
   }, 15000);
 });

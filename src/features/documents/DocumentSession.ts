@@ -1,5 +1,4 @@
 import type { ApiResponse } from "../../lib/ipc/types";
-import type { EditorSessionState } from "./editorSession";
 
 export type DocumentView = { anchor: number; head: number; scrollTop: number; scrollLeft: number };
 export type OpenDocument = Readonly<{
@@ -12,17 +11,12 @@ export type SavePreparation = (document: OpenDocument, root: string) => Promise<
 type Writer = (root: string, path: string, text: string, baseline: string) => Promise<ApiResponse<unknown>>;
 export const isDocumentDirty = (document: OpenDocument) => document.text !== document.baseline;
 
-/** Owns document buffers; React and CodeMirror render this session's snapshots. */
+/** Owns document buffers; React and Monaco render this session's snapshots. */
 export class DocumentSession {
   private state: DocumentSnapshot = { root: null, activeId: null, documents: [] };
   private listeners = new Set<() => void>();
   private pending = new Set<number>();
   private nextId = 0;
-  private editors = new Map<number, EditorSessionState>();
-  editor(id: number) { return this.editors.get(id); }
-  retainEditor(id: number, state: EditorSessionState) {
-    if (this.state.documents.some(document => document.id === id)) this.editors.set(id, state);
-  }
   subscribe = (listener: () => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   snapshot = () => this.state;
   private publish(state: DocumentSnapshot) { this.state = state; this.listeners.forEach(listener => listener()); }
@@ -32,7 +26,7 @@ export class DocumentSession {
   reset(root: string | null, discard = false) {
     if (this.saving) throw new Error("Wait for document saves before changing workspace.");
     if (this.dirty && !discard) throw new Error("Save or explicitly discard all dirty documents before changing workspace.");
-    this.editors.clear(); this.publish({ root, activeId: null, documents: [] });
+    this.publish({ root, activeId: null, documents: [] });
   }
   open(path: string, text: string, readOnly = false, activate = true) {
     if (!this.state.root) throw new Error("Open a workspace first.");
@@ -119,7 +113,6 @@ export class DocumentSession {
     if (this.pending.has(id)) throw new Error("Wait for the pending document save.");
     if (isDocumentDirty(document) && !discard) throw new Error("Save or explicitly discard this document before closing.");
     const documents = this.state.documents.filter(item => item.id !== id);
-    this.editors.delete(id);
     this.publish({ ...this.state, documents, activeId: this.state.activeId === id ? documents[documents.length - 1]?.id ?? null : this.state.activeId });
   }
   async save(id: number, writer: Writer, prepare?: SavePreparation): Promise<void> {

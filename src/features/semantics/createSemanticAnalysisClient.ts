@@ -90,7 +90,8 @@ export function createSemanticAnalysisClient(
       }
       const previous = pendingAnalysis.get(filePath);
       if (previous !== undefined) clearTimeout(previous);
-      pendingAnalysis.set(filePath, setTimeout(() => analyze(filePath), 120));
+      const delay = (sourcesByFile.get(filePath)?.length ?? 0) > 256 * 1024 ? 120 : 60;
+      pendingAnalysis.set(filePath, setTimeout(() => analyze(filePath), delay));
     },
     subscribe(listener) {
       listeners.add(listener);

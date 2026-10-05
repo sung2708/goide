@@ -7,7 +7,7 @@ This document describes the real architecture of Goro as implemented in the code
 ## 1. System Overview
 
 Goro is structured into two primary tiers:
-1. **Frontend Tier (Webview)**: A React 19 and TypeScript application that manages the workbench UI, CodeMirror editor, terminal views, and user interactions.
+1. **Frontend Tier (Webview)**: A React 19 and TypeScript application that manages the workbench UI, Monaco editor, terminal views, and user interactions.
 2. **Backend Tier (Native Host)**: A Rust application powered by Tauri v2 that owns operating system interactions, process execution, PTY sessions, file operations, and developer tooling bridges (`gopls`, `dlv`).
 
 Communication between tiers is strictly mediated through **typed Tauri IPC commands** returning structured `ApiResponse<T>` envelopes.
@@ -16,7 +16,7 @@ Communication between tiers is strictly mediated through **typed Tauri IPC comma
 graph TD
     subgraph Frontend ["Frontend (Webview - React 19 / TypeScript)"]
         UI[EditorShell Workbench]
-        CM[CodeMirror 6 Editor]
+        CM[Monaco Editor]
         Find[FindWidget]
         TermUI[xterm.js Terminal Views]
         Worker[web-tree-sitter Worker]
@@ -72,14 +72,14 @@ graph TD
 ### Technology Stack
 - **Framework**: React 19, TypeScript (~5.8), Vite 7
 - **Styling**: Tailwind CSS v4, custom CSS variables in `src/styles/global.css`
-- **Editor**: CodeMirror 6 via `@uiw/react-codemirror`, `@codemirror/lang-go`, `@codemirror/state`, `@codemirror/view`
+- **Editor**: Monaco Editor ESM with local workers; `monaco-vim` uses the ESM entry and the same Monaco instance
 - **Terminal**: `@xterm/xterm` with `@xterm/addon-fit`
 - **AST Parsing**: `@vscode/tree-sitter-wasm` and `web-tree-sitter` in a dedicated Web Worker (`src/features/semantics/semanticAnalysisWorker.ts`)
 
 ### Key Components & Layout
 - **`src/components/editor/EditorShell.tsx`**: The root workbench component coordinating panels, sidebar, status bar, and active editor state.
 - **`src/components/editor/useBranchTransition.ts`**: Owns the active-buffer save, Git status inspection, explicit dirty-worktree decision, checkout and reload transaction. Shares the document-transition lock with file/workspace navigation; a synchronous mutation ref guards editor callbacks before the read-only render. Failed saves/new edits prevent checkout, and disk reload never routes through a post-checkout buffer save. Native Git invocation remains behind typed backend IPC.
-- **`src/components/editor/CodeEditor.tsx`**: CodeMirror 6 wrapper integrating bracket matching, syntax highlighting, gutter markers, hover hints, and inline trace indicators.
+- **`src/components/editor/CodeEditor.tsx`**: Monaco wrapper integrating bracket matching, syntax highlighting, gutter markers, hover hints, and inline trace indicators.
 - **`src/components/editor/FindWidget.tsx`**: Integrated search-and-replace overlay inside the active editor supporting case matching, whole-word matching, and regex queries.
 - **`src/components/panels/BottomPanel.tsx`**: Tabbed dock hosting the interactive Shell, process Logs and Problems. Search, Source Control and runtime views have separate workbench owners.
 - **`src/components/sidebar/Explorer.tsx`**: Hierarchical filesystem tree with dirty file state badges and context actions.
@@ -193,7 +193,7 @@ features/commands owns shortcut matching and command execution. Each command has
 
 ## Document Session Ownership
 
-features/documents owns the single document snapshot consumed by EditorShell through useSyncExternalStore. Documents have stable IDs, text, baseline, version, read-only state and view state. Existing lifecycle ref adapters access that session directly. A save acknowledges only its written snapshot; edits made while awaiting the write remain dirty. Save All writes serially and does not imply atomic batch persistence. The session keeps at most 100 tabs. CodeMirror session serialization retains history and selection; restoration requires matching text so external reloads cannot restore stale content. Native file metadata supplies size and read-only status; backend writes independently reject read-only targets. The current session is in memory and is not crash recovery. Branch transitions preserve all dirty documents before retiring the previous branch's tabs.
+features/documents owns the single document snapshot consumed by EditorShell through useSyncExternalStore. Documents have stable IDs, text, baseline, version, read-only state and view state. Existing lifecycle ref adapters access that session directly. A save acknowledges only its written snapshot; edits made while awaiting the write remain dirty. Save All writes serially and does not imply atomic batch persistence. The session keeps at most 100 tabs. Monaco session serialization retains history and selection; restoration requires matching text so external reloads cannot restore stale content. Native file metadata supplies size and read-only status; backend writes independently reject read-only targets. The current session is in memory and is not crash recovery. Branch transitions preserve all dirty documents before retiring the previous branch's tabs.
 
 ## Problems result ownership
 
@@ -209,7 +209,7 @@ The persistent gopls process now owns its process tree through a synchronous nat
 
 Go to Definition (F12), Find References (Shift+F12), and Show Symbol Information are available through the shared command palette. They query the owned persistent gopls session, synchronize all open Go buffers including unsaved text, and close retired overlays. Located results open a workspace file at its reported UTF-16 line/column. Symbol information is displayed as plain text, including protocol Markdown, without executing markup. Edits, tab/workspace changes, closing results, and unmounting reject late frontend responses.
 
-Requests validate scoped Go files and positions, limit the synchronized set to 100 documents / 4 MiB, bound returned locations, and share a 45-second query deadline to accommodate cold package loading. Tooling errors are visible. Locations outside the workspace are counted explicitly and cannot be opened by this view yet. Automatic hover tooltips, signature help, rename, formatting/imports, code actions, navigation history, and native query cancellation remain unfinished; this milestone does not complete the language-feature P0 or release gates.
+Requests validate scoped Go files and positions, limit the synchronized set to 100 documents / 4 MiB, bound returned locations, and share a 45-second query deadline to accommodate cold package loading. Tooling errors are visible. Locations outside the workspace are counted explicitly and cannot be opened by this view yet. Hover, signature help, reviewed edits, code actions, navigation history and UUID cancellation are implemented in subsequent sections. Native/platform release gates remain open.
 
 Validation includes real gopls definition/reference/hover queries over unsaved changes across two files without writing disk, protocol content/location parsing, Windows URI normalization, frontend stale-response/error handling, and EditorShell F12 navigation to the returned file/detailed position. The implementation follows the [LSP 3.17 language feature specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#languageFeatures).
 
@@ -218,14 +218,14 @@ Validation includes real gopls definition/reference/hover queries over unsaved c
 
 Format Document (Shift+Alt+F, also in the command palette) requests actual gopls formatting edits for the current unsaved Go buffer. A review dialog shows complete before/after source. Cancel leaves the buffer unchanged; Apply marks the edited buffer dirty without writing disk or changing its saved baseline. A later Save/Save All retains optimistic conflict checks. The shared document edit operation validates an entire proposed set before publishing any change, refuses changed snapshots/read-only files/invalid or duplicate paths/pending saves, and retains baselines for already-open and newly opened documents.
 
-Native edit conversion validates UTF-16 positions, Unicode scalar boundaries, range ordering and overlaps, and the existing size limits. Reviewed controlled values synchronize immediately before the editor wrapper can defer them behind a typing timer. CodeMirror changes retain cursor placement through whitespace-only formatting and support Undo; other changes conservatively retain a clamped line/column. Applying a format retires stale diagnostics and completion requests. Tests cover real gopls formatting without disk writes, CRLF/Unicode/range safety, review cancellation and stale results, multi-file atomicity and baseline retention, real CodeMirror cursor/Undo behavior, and EditorShell format-review-save integration. Format on Save, Organize Imports, Rename and Code Actions remain unfinished. This milestone does not complete the addendum or release gates.
+Native edit conversion validates UTF-16 positions, Unicode scalar boundaries, range ordering and overlaps, and the existing size limits. Reviewed controlled values synchronize in the editor layout effect without a typing timer. Monaco changes retain cursor placement through whitespace-only formatting and support Undo; other changes conservatively retain a clamped line/column. Applying a format retires stale diagnostics and completion requests. Tests cover real gopls formatting without disk writes, CRLF/Unicode/range safety, review cancellation and stale results, multi-file atomicity and baseline retention, real Monaco cursor/Undo behavior, and EditorShell format-review-save integration. Format on Save, Organize Imports, Rename and Code Actions use the shared reviewed-edit/save contracts described below. This does not close native or platform release gates.
 
 
 ## Reviewed Organize Imports milestone
 
 Organize Imports is available in the shared command palette and requests the actual `source.organizeImports` gopls code action for the current unsaved Go buffer. The same complete before/after review, Cancel, Apply-to-Editor, dirty-state and saved-baseline rules used by Format Document apply. No handwritten import sorter or implicit disk write is used. Empty returned edits are described as no changes returned by gopls.
 
-The persistent session tracks the versions it sends for each open document. Both WorkspaceEdit `changes` and versioned `documentChanges` are accepted for the requested file; stale versions, other files, overlaps and resource operations are rejected before applying. Disabled actions show their returned reason. Unresolved actions may be resolved through gopls; actions requiring unsupported command execution or multiple-choice selection report that limitation. Automatic import organization on Save and the broader Code Actions chooser remain unfinished.
+The persistent session tracks the versions it sends for each open document. Both WorkspaceEdit `changes` and versioned `documentChanges` are accepted for the requested file; stale versions, other files, overlaps and resource operations are rejected before applying. Disabled actions show their returned reason. Unresolved actions may be resolved through gopls; actions requiring unsupported command execution or multiple-choice selection report that limitation. Import organization on Save and the Code Actions chooser use the shared document snapshot and conflict checks. Unsupported commands/resource operations remain explicit errors.
 
 Validation includes real gopls adding a missing fmt import and removing an unused os import from unsaved text without writing disk, version/path/resource-operation rejection, palette review/Cancel/Apply integration, and completion/server-teardown compatibility. See the official [gopls code transformation documentation](https://go.dev/gopls/features/transformation).
 
@@ -258,7 +258,7 @@ Real repository tests cover literal regexp metacharacters, full-body matches, au
 
 Each Source Control status row offers History, which opens a native file-history search and existing commit details/parent diff workflow. File paths remain literal Git pathspecs, preserve significant spaces, and reject traversal/root aliases; they are not glob patterns. Git follows detectable renames and supports deleted files. Results retain the existing pinned scope, pagination, stale-response protection and safety limits. History actions never save, stage or change files. The searchable history list preserves the full graph layout instead of inventing edges among filtered commits.
 
-Real repository tests cover renames, deletion, skipped-result pagination and a bracket-name glob collision. UI tests verify exact row-to-request routing without a mutation or save transaction. Broader Git actions, PTY teardown, native language cancellation and other addendum requirements remain unfinished; no release/tag is authorized.
+Real repository tests cover renames, deletion, skipped-result pagination and a bracket-name glob collision. UI tests verify exact row-to-request routing without a mutation or save transaction. Broader Git actions, PTY teardown and native language cancellation are described in their current ownership sections. Their cross-platform acceptance gates remain open; no release/tag is authorized.
 
 ### Failed and pending shell teardown — 2026-10-03
 
@@ -268,7 +268,7 @@ Native tests cover stop failure/retry with preserved output, pending reaping acr
 
 ### Scoped cancellation for reviewed language operations (2026-10-03)
 
-Definition, references, explicit symbol information, Format Document, Organize Imports and Rename Symbol now carry a UUID and captured canonical workspace identity. Native cancellation uses an independent bounded registry, so it can stop an operation waiting for the shared gopls lock. A bounded five-minute tombstone covers cancellation that precedes worker registration. Each operation shares a 45-second deadline across protocol retries and rename preparation. Protocol waits observe cancellation and send $/cancelRequest for the current wire request; cancelled operations retain a usable server rather than dropping it. Frontend snapshot, supersession, review close and unmount cancel the captured request while retaining stale-result guards. Cancellation IPC failures reach the editor error surface. Automatic completion and other legacy tool paths are not covered by this UUID contract yet.
+Definition, references, explicit symbol information, Format Document, Organize Imports and Rename Symbol now carry a UUID and captured canonical workspace identity. Native cancellation uses an independent bounded registry, so it can stop an operation waiting for the shared gopls lock. A bounded five-minute tombstone covers cancellation that precedes worker registration. Each operation shares a 45-second deadline across protocol retries and rename preparation. Protocol waits observe cancellation and send $/cancelRequest for the current wire request; cancelled operations retain a usable server rather than dropping it. Frontend snapshot, supersession, review close and unmount cancel the captured request while retaining stale-result guards. Cancellation IPC failures reach the editor error surface. Monaco completion, hover, signature and live diagnostics also use UUID cancellation and reject stale model versions. Other tool paths retain their documented ownership contracts.
 
 ### Terminal process ownership and joined readers (2026-10-03)
 
@@ -280,11 +280,11 @@ Automatic completion now carries a captured workspace UUID through typed IPC and
 
 ### Editor hover information (2026-10-03)
 
-Editor hover now requests actual gopls information after a 450 ms pointer dwell. It captures the live CodeMirror buffer plus other open unsaved Go documents, uses UTF-16 positions and the existing UUID cancellation scope, and rejects superseded or changed-document results. Mouse movement/leave, Escape, selection/document changes and view destruction abort pending requests. The tooltip anchors to the hovered word, renders text rather than project-controlled HTML, bounds visible content with an explicit truncation message, and displays actual tooling failures. The existing keyboard Symbol Information command remains available. Signature help is still a separate incomplete P0 workflow.
+Monaco hover requests gopls after a 450 ms pointer dwell, with the live model and open unsaved Go overlays. Requests use UTF-16 and UUID cancellation; changed models, tabs and cancellation reject late responses. Documentation is rendered as untrusted Markdown, without enabling project-controlled HTML or trusted commands. The keyboard Symbol Information command remains available. See [Editor](EDITOR.md) for the current provider contract.
 
 ### Signature Help checkpoint (2026-10-03)
 
-Signature Help uses a dedicated typed native command over the owned gopls session and immutable unsaved-document overlay. Native parsing bounds signatures, parameters and documentation, honors the server's active-signature/active-parameter defaults and overrides, and validates UTF-16 label offsets including surrogate boundaries. Ambiguous string labels remain separate parameter text instead of inventing a highlight range. The editor queries after opening-parenthesis/comma triggers and updates while help is active; it debounces requests, exposes loading/errors, aborts superseded work and dismisses on Escape, blur, view destruction or a null server response. Show Signature Help is a shared command with platform Mod+Shift+Space, and the editor supports direct invocation. Stable hook callbacks and memoized extensions preserve the debounce owner through editor reconfiguration. Content is rendered as bounded text. Full desktop/manual/platform validation is still required before release.
+Signature Help uses a dedicated typed native command over the owned gopls session and immutable unsaved-document overlay. Native parsing bounds signatures, parameters and documentation, honors the server's active-signature/active-parameter defaults and overrides, and validates UTF-16 label offsets including surrogate boundaries. Ambiguous string labels remain separate parameter text instead of inventing a highlight range. The editor queries after opening-parenthesis/comma triggers and updates while help is active; it debounces requests, exposes loading/errors, aborts superseded work and dismisses on Escape, blur, view destruction or a null server response. Show Signature Help is a shared command with platform Mod+Shift+Space, and the editor supports direct invocation. The Monaco provider uses current callback refs and disposes cancellation listeners; changing a theme does not recreate its owner. Native parsing bounds returned content. Full desktop/manual/platform validation is still required before release.
 
 ## Terminal workspace ownership checkpoint (2026-10-03)
 
@@ -311,8 +311,8 @@ Git command execution uses the same synchronous owner and bounded pipe workers. 
 
 ## Workbench editing configuration
 
-CodeEditor keeps completion, save and selection callbacks behind current refs. Replacing parent callbacks does not rebuild the CodeMirror extension array; actual editability, editor font/tab/wrap preferences and language feature availability still reconfigure it. Save uses the current handler, completion queries use the current native provider, and delayed anchor work ignores a replaced view. Theme changes use CSS tokens rather than rebuilding the editor configuration. The compact titlebar and welcome carry static brand marks; the code surface remains unobstructed.
+CodeEditor creates one Monaco editor per mounted workbench and reads callbacks through current refs. `features/editor/MonacoModels` owns one model and view state per canonical file URI. Tab changes switch models without recreating the editor; closed documents and workspace changes dispose models. Settings update public editor options. The existing palette supplies Monaco token colors. Persistence, run/debug, and reviewed workspace edits remain owned by Goro. See [Editor architecture](EDITOR.md).
 
 ## Navigation and search ownership
 
-Quick Pick owns keyboard/focus selection; commands and navigation own ranking/history. File ranking keeps prepared index data inside a bounded worker and coalesces intermediate queries. In-file regex/capture work has a terminable worker and stale-document guards; CodeMirror owns literal search, decorations and isolated Undo transactions. Workspace replacement uses exact returned ranges, explicit preview/file exclusion, dirty-document rejection and atomic baseline writes. See [Navigation and Search](NAVIGATION_SEARCH.md) for contracts and remaining acceptance gates.
+Quick Pick owns keyboard/focus selection; commands and navigation own ranking/history. File ranking keeps prepared index data inside a bounded worker and coalesces intermediate queries. In-file regex/capture work has a terminable worker and stale-document guards; The bounded regex worker handles literal and regex matching; the Monaco adapter owns decorations and isolated undo transactions. Workspace replacement uses exact returned ranges, explicit preview/file exclusion, dirty-document rejection and atomic baseline writes. See [Navigation and Search](NAVIGATION_SEARCH.md) for contracts and remaining acceptance gates.

@@ -12,6 +12,8 @@ import ShellTerminalView from "./ShellTerminalView";
 export type { BottomPanelTab };
 
 type BottomPanelProps = {
+  operationError?: string | null;
+  onDismissError?: () => void;
   problems?: Problem[];
   onNavigateProblem?: (problem: Problem) => void;
   activeTab: BottomPanelTab;
@@ -30,6 +32,7 @@ type BottomPanelProps = {
 };
 
 function BottomPanel({
+  operationError, onDismissError,
   problems = [], onNavigateProblem = () => {},
   activeTab,
   onActiveTabChange,
@@ -176,7 +179,7 @@ function BottomPanel({
           session alive across tab switches. Visibility is toggled via the HTML
           `hidden` attribute rather than conditional rendering. */}
       <div className="relative min-h-0 flex-1 overflow-hidden bg-(--crust)">
-        <div hidden={activeTab !== "problems"} className="absolute inset-0 h-full min-h-0"><ProblemsPanel problems={problems} onNavigate={onNavigateProblem} /></div>
+        <div hidden={activeTab !== "problems"} className="absolute inset-0 h-full min-h-0"><ProblemsPanel problems={problems} onNavigate={onNavigateProblem} operationError={operationError} onDismissError={onDismissError} /></div>
         <div
           aria-hidden={activeTab !== "logs"}
           className={cn(

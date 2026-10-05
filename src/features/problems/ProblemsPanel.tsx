@@ -1,13 +1,15 @@
 import { useMemo, useState } from "react";
 import type { Problem } from "./model";
-type Props = { problems: Problem[]; onNavigate: (problem: Problem) => void };
-export default function ProblemsPanel({ problems, onNavigate }: Props) {
+type Props = { problems: Problem[]; onNavigate: (problem: Problem) => void; operationError?: string | null; onDismissError?: () => void };
+export default function ProblemsPanel({ problems, onNavigate, operationError, onDismissError }: Props) {
   const [query, setQuery] = useState("");
   const [severity, setSeverity] = useState("all");
   const [selected, setSelected] = useState<string | null>(null);
   const filtered = useMemo(() => problems.filter(problem => (severity === "all" || severity === problem.severity) && `${problem.file} ${problem.message} ${problem.source} ${problem.code ?? ""}`.toLowerCase().includes(query.toLowerCase())), [problems, severity, query]);
   const choose = (problem: Problem) => { setSelected(problem.id); onNavigate(problem); };
-  return <section aria-label="Problems" className="flex h-full min-h-0 flex-col text-xs text-(--text)"><div className="flex flex-wrap items-center gap-3 border-b border-(--border-muted) p-2"><span role="status">{problems.filter(problem => problem.severity === "error").length} errors · {problems.filter(problem => problem.severity === "warning").length} warnings · {filtered.length} shown</span><input aria-label="Filter problems" value={query} onChange={event => setQuery(event.target.value)} className="rounded-none bg-(--base) p-1" /><select aria-label="Problem severity" value={severity} onChange={event => setSeverity(event.target.value)} className="rounded-none bg-(--base) p-1">{["all", "error", "warning", "info", "hint"].map(value => <option key={value} value={value}>{value}</option>)}</select></div><div role="list" aria-label="Problem results" className="min-h-0 flex-1 overflow-auto" onKeyDown={event => {
+  return <section aria-label="Problems" className="flex h-full min-h-0 flex-col text-xs text-(--text)">
+    {operationError && <section aria-label="Application errors" className="max-h-36 shrink-0 overflow-auto border-b border-(--border-muted) p-3"><div className="flex items-center justify-between gap-3"><h3 className="font-semibold">Application errors</h3>{onDismissError && <button type="button" onClick={onDismissError} className="border border-(--border-default) px-2 py-1">Dismiss error</button>}</div><p className="mt-2 whitespace-pre-wrap break-words text-(--red)">{operationError}</p></section>}
+    <div className="flex flex-wrap items-center gap-3 border-b border-(--border-muted) p-2"><span role="status">{problems.filter(problem => problem.severity === "error").length} errors · {problems.filter(problem => problem.severity === "warning").length} warnings · {filtered.length} shown</span><input aria-label="Filter problems" value={query} onChange={event => setQuery(event.target.value)} className="rounded-none bg-(--base) p-1" /><select aria-label="Problem severity" value={severity} onChange={event => setSeverity(event.target.value)} className="rounded-none bg-(--base) p-1">{["all", "error", "warning", "info", "hint"].map(value => <option key={value} value={value}>{value}</option>)}</select></div><div role="list" aria-label="Problem results" className="min-h-0 flex-1 overflow-auto" onKeyDown={event => {
     if (!["ArrowDown", "ArrowUp", "Enter"].includes(event.key) || filtered.length === 0) return;
     event.preventDefault(); const index = filtered.findIndex(problem => problem.id === selected);
     const next = event.key === "Enter" ? Math.max(0, index) : index < 0 ? (event.key === "ArrowDown" ? 0 : filtered.length - 1) : (index + (event.key === "ArrowDown" ? 1 : -1) + filtered.length) % filtered.length;

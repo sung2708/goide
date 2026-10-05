@@ -31,14 +31,14 @@ The public product name is **Goro**. The repository remains **goide**, and exist
 ## 4. Core IDE Expectations
 
 - **Rapid Startup target**: An interactive editor state in under 1 second. This is a target; native startup/performance acceptance has not been measured.
-- **Responsive Source Editing**: CodeMirror 6 editor engine with Go syntax highlighting, bracket pairing, smart indentation, and in-file find/replace.
+- **Responsive Source Editing**: Monaco editor engine with Go syntax highlighting, bracket pairing, smart indentation, and in-file find/replace.
 - **Native File Tree Explorer**: Workspace-oriented file explorer supporting file creation, folder creation, renaming, moving, and deletion with filesystem auto-synchronization.
 - **Workspace-Owned Terminal Sessions**: Integrated PTY shell sessions that remain active across file switches and persist splitter geometry across layouts.
 - **Standard Toolchain Integration**: Uses the developer's existing `go`, `gopls`, and `dlv` binaries without proprietary runtime locks.
 
 ### Document Save Behavior
 
-The default Auto Save mode saves after 2.5 seconds without typing; settings can disable it or select focus-change saving. Manual saves cancel the pending autosave. File tabs retain independent dirty buffers and disk baselines. Workspace/close transitions use Save / Don't Save / Cancel and Save All where required; failed saves or newer edits block unsafe transitions and retain drafts. Failed reads retain the current document.
+The default Auto Save mode saves after 500 milliseconds without typing; existing saved delay preferences remain unchanged. Settings can disable it or select focus-change saving. Autosave persists exact drafts without format/import preparation; explicit saves retain those preferences and can save incomplete Go unchanged when gopls formatting reports a parser error. Manual saves cancel the pending autosave. File tabs retain independent dirty buffers and disk baselines. Workspace/close transitions use Save / Don't Save / Cancel and Save All where required; failed saves or newer edits block unsafe transitions and retain drafts. Failed reads retain the current document.
 
 Git branch selection also saves the active buffer before refreshing disk-based Git status. A save failure, pending write or new edit blocks checkout. Changes created by the save require the existing commit/stash/discard decision; confirmation saves any newer buffer again. Editor mutation and document navigation are blocked while Git inspects/changes files. The destination document is reloaded directly, without saving the previous branch's buffer; if unavailable, the old document is retired with an error. Git errors also trigger a reload because a pre-switch action may have already changed disk. Stop an active run/debug session before switching branches.
 
@@ -91,7 +91,7 @@ Direct workspace edits and lazy `gopls.apply_fix` actions with `ResolveEdits=tru
 
 ## Application settings and save actions (2026-10-03)
 
-Settings opens from the title bar, the command palette or Mod+,. A central versioned preference store controls editor font/tab size and wrapping, terminal font size, the existing twelve color palettes and Auto Save (Off, After delay, On focus change). The default remains After delay at 2500 ms. Preferences apply live; invalid or unsupported stored profiles show an error and require an explicit Reset before replacement. Persistence failures preserve session preferences and report the failure.
+Settings opens from the title bar, the command palette or Mod+,. A central versioned preference store controls editor font/tab size and wrapping, terminal font size, the existing twelve color palettes and Auto Save (Off, After delay, On focus change). New profiles default to After delay at 500 ms; existing saved delays remain intact. Boolean preferences use accessible switches. Preferences apply live; invalid or unsupported stored profiles show an error and require an explicit Reset before replacement. Persistence failures preserve session preferences and report the failure.
 
 Format on Save and Organize Imports on Save are explicit opt-ins, both disabled by default. Go saves run imports then formatting once with captured unsaved overlays before the normal baseline-checked write. Source changes, cancellation, unmount or tool errors prevent that write. A failed disk write retains the prepared editor draft and original baseline. Save All and transition/close saves use the same preparation. Debug/Git preferences, executable-path configuration and remaining addendum workflows are not complete.
 

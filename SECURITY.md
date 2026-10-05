@@ -10,7 +10,7 @@ Because Goro is currently on a pre-1.0 stabilization track, security patches are
 
 | Version Track | Supported | Notes |
 |:---|:---:|:---|
-| `main` (latest commit) | :white_check_mark: | Active development |
+| `main` (latest commit) | :white_check_mark: | Release source; promotion requires develop acceptance gates |
 | `0.x.y` pre-releases | :white_check_mark: | Latest published pre-release |
 | Legacy prototype tags (`1.0.x`, `1.1`) | :x: | Obsolete exploratory prototypes |
 
@@ -57,6 +57,12 @@ The application window operates under a strict CSP configured in `src-tauri/taur
 default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost
 ```
 Remote network access from the webview is prohibited; network communication is routed exclusively through native Rust IPC handlers.
+
+Monaco and its editor worker are bundled locally. The migration does not enable
+a CDN loader or `unsafe-eval`. Markdown row previews pass through DOMPurify;
+active HTML, navigation and network resource URLs are removed before preview
+HTML enters the document. Only supported raster data images can remain.
+Language documentation is untrusted Markdown and cannot invoke trusted commands.
 
 ### 2. Process Execution & Command Sanitization
 - Goro executes local binaries (`go`, `gopls`, `dlv`) on behalf of the user.

@@ -35,7 +35,7 @@ vi.mock("@tauri-apps/plugin-dialog", () => ({
 // xterm cannot run in jsdom (no matchMedia / canvas). Mock so BottomPanel
 // → LogsTerminalView → TerminalSurface does not throw.
 vi.mock("@xterm/xterm", () => ({
-  Terminal: vi.fn().mockImplementation(() => ({
+  Terminal: vi.fn().mockImplementation(function () { return ({
     open: vi.fn(),
     write: vi.fn(),
     clear: vi.fn(),
@@ -44,11 +44,11 @@ vi.mock("@xterm/xterm", () => ({
     onData: vi.fn(() => ({ dispose: vi.fn() })),
     cols: 120,
     rows: 40,
-  })),
+  }); }),
 }));
 
 vi.mock("@xterm/addon-fit", () => ({
-  FitAddon: vi.fn().mockImplementation(() => ({ fit: vi.fn() })),
+  FitAddon: vi.fn().mockImplementation(function () { return ({ fit: vi.fn() }); }),
 }));
 
 vi.mock("@tauri-apps/api/event", () => ({
