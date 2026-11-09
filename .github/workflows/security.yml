@@ -11,12 +11,14 @@ on:
       - "src-tauri/Cargo.lock"
       - "tools/update-verifier/Cargo.lock"
       - ".github/workflows/security.yml"
+      - "deny.toml"
   pull_request:
     paths:
       - "package-lock.json"
       - "src-tauri/Cargo.lock"
       - "tools/update-verifier/Cargo.lock"
       - ".github/workflows/security.yml"
+      - "deny.toml"
 
 permissions:
   contents: read
@@ -39,7 +41,7 @@ jobs:
         run: npm audit --audit-level=low
 
   audit-rust:
-    name: Rust Advisory Audit
+    name: Rust Advisory, Licence and Source Audit
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -47,8 +49,8 @@ jobs:
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
       - name: Install the pinned auditor
-        run: cargo install cargo-audit --locked --version 0.22.2 --jobs 2
+        run: cargo install cargo-deny --locked --version 0.20.2 --jobs 2
       - name: Audit application dependencies
-        run: cargo audit --file src-tauri/Cargo.lock
+        run: cargo deny --manifest-path src-tauri/Cargo.toml check advisories licenses sources
       - name: Audit release signature verifier dependencies
-        run: cargo audit --file tools/update-verifier/Cargo.lock
+        run: cargo deny --manifest-path tools/update-verifier/Cargo.toml check advisories licenses sources

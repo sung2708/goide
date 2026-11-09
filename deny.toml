@@ -1,0 +1,58 @@
+# cargo-deny policy for Goro's Rust crates (src-tauri and tools/update-verifier).
+# Advisories are also checked by cargo-audit; this file adds licence and source policy.
+# Run: cargo deny --manifest-path src-tauri/Cargo.toml check
+
+[advisories]
+version = 2
+yanked = "warn"
+# Unmaintained notices are enforced only for crates Goro depends on directly;
+# transitive ones (mostly via Tauri/zbus) are tracked through upstream upgrades.
+unmaintained = "workspace"
+ignore = [
+  # zip 4.6.1 is pulled in only by tauri-plugin-updater 2.12.0 (latest 2.x), whose
+  # Windows path calls ZipArchive::extract on update payloads. Goro uses
+  # createUpdaterArtifacts = true (raw .exe/.msi on Windows, no .zip payloads) and
+  # requireSignedVersion, so only minisign-verified, maintainer-built bytes ever
+  # reach it. Goro's own extractor uses zip 9.x and rejects links. Remove these
+  # when tauri-plugin-updater ships zip >= 9.
+  { id = "RUSTSEC-2026-0367", reason = "updater-only zip 4.x; signed payloads; see comment" },
+  { id = "RUSTSEC-2026-0368", reason = "updater-only zip 4.x; signed payloads; see comment" },
+  { id = "RUSTSEC-2026-0369", reason = "updater-only zip 4.x; signed payloads; see comment" },
+  { id = "RUSTSEC-2026-0429", reason = "updater-only zip 4.x; signed payloads; see comment" },
+]
+
+[licenses]
+version = 2
+confidence-threshold = 0.9
+# One policy covers two lockfiles, so not every licence appears in both.
+unused-allowed-license = "allow"
+allow = [
+  # Permissive licences named in docs/DEVELOPMENT.md
+  "MIT",
+  "Apache-2.0",
+  "Apache-2.0 WITH LLVM-exception",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  # Other permissive licences used by Tauri/ICU/compression dependencies
+  "ISC",
+  "Zlib",
+  "Unicode-3.0",
+  "0BSD",
+  # Weak file-level copyleft, used only through Tauri's HTML parser
+  # (cssparser, selectors, dtoa-short, option-ext). Unmodified, so no source
+  # obligations beyond notices; requires maintainer disposition before 1.0.
+  "MPL-2.0",
+]
+
+# Workspace-internal crates (publish = false or unpublished tools) are ours (MIT).
+[licenses.private]
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

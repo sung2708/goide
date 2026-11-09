@@ -33,7 +33,7 @@ unchecked until native acceptance evidence exists.
 | `OnceLock` → `tauri::State` | Not started | 47 `OnceLock` uses, 2 `tauri::State` uses | Migrate registries |
 | Code signing / notarization | Not started | `release.yml` signs updater payloads only | Authenticode + Apple notarization |
 | Automated installed-app (E2E) tests | Not started | No WebDriver harness | WebdriverIO + `@wdio/tauri-service` |
-| Rust advisory/licence audit in CI | Not started | Security workflow runs `npm audit` only | `cargo-deny` |
+| Rust advisory/licence audit in CI | Implemented | `cargo deny` in security workflow, `deny.toml` | MPL-2.0 (Tauri HTML parser) and updater-only zip 4.x advisories need maintainer disposition |
 
 ---
 

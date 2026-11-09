@@ -145,7 +145,7 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 1. **Minimal Dependencies**: Always prefer standard platform APIs and standard library utilities over third-party packages.
 2. **Lockfile Integrity**: Never edit `package-lock.json` or `Cargo.lock` manually. Always update dependencies via `npm` or `cargo`.
-3. **Security Audits**: Dependabot proposes npm, Cargo, and GitHub Actions updates. The weekly security workflow currently runs npm audit; it does not run a Rust advisory audit. A separate Rust advisory check is required before release. New dependencies must be checked for permissive licensing (MIT, Apache 2.0, BSD, CC0).
+3. **Security Audits**: Dependabot proposes npm, Cargo, and GitHub Actions updates. The weekly security workflow runs `npm audit` and `cargo deny` (RustSec advisories, licences and sources; policy and documented exceptions in `deny.toml`) for both Rust lockfiles. Run `cargo deny --manifest-path src-tauri/Cargo.toml check` locally after changing Rust dependencies. New dependencies must be checked for permissive licensing (MIT, Apache 2.0, BSD, CC0).
 
 Run `npm audit --audit-level=high` when changing frontend dependencies. The scheduled security workflow fails at this threshold. Low/moderate findings still require review; do not use forced major upgrades without validating compatibility.
 
