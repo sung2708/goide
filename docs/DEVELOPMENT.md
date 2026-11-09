@@ -96,7 +96,10 @@ Signal breaking changes by adding `!` after the type/scope or adding `BREAKING C
 
 ## 4. Verification & Quality Gates
 
-Before opening a pull request or pushing commits, execute all quality gates locally:
+Before opening a pull request or pushing commits, execute all quality gates locally.
+`npm run verify` runs gates 1–4 in order and `npm run verify:rust` runs the Rust
+format, clippy and test checks. Coding agents use the same commands; see
+[CLAUDE.md](../CLAUDE.md) and the shared skills in `.claude/skills/`.
 
 ### 1. Version Synchronization Check
 Ensures `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` share identical versions:

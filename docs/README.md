@@ -21,7 +21,7 @@ Source capabilities do not imply acceptance of a shipped installer.
 - [Architecture](ARCHITECTURE.md)
 - [Engineering rules](ENGINEERING_RULES.md)
 - [Roadmap and exit criteria](ROADMAP.md)
-- [Repository instructions](../AGENTS.md)
+- [Repository instructions](../AGENTS.md) and [Claude Code guide](../CLAUDE.md)
 - [Security policy](../SECURITY.md)
 
 ## Releasing and website integration

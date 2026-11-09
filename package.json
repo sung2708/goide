@@ -32,7 +32,9 @@
     "version:check": "node scripts/version-manager.mjs check",
     "version:set": "node scripts/version-manager.mjs set",
     "docs:check": "node scripts/validate-docs.mjs",
-    "changelog:generate": "node scripts/generate-changelog.mjs"
+    "changelog:generate": "node scripts/generate-changelog.mjs",
+    "verify": "npm run version:check && npm run docs:check && npm run typecheck && npm test && npm run build",
+    "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings && cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1"
   },
   "dependencies": {
     "@fortawesome/fontawesome-svg-core": "^7.2.0",

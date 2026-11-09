@@ -7,6 +7,34 @@ Use [Release Readiness](RELEASE_READINESS.md) for the current consolidated relea
 > [!NOTE]
 > Historical `v1.x` prototype tags do not indicate product maturity. Goro is currently following a pre-1.0 stabilization track (`0.x.y`) to systematically harden core subsystems before declaring 1.0 stability.
 
+## Source status audit (2026-11-09)
+
+The category checkboxes below were last maintained before the 0.5.0 alpha work and
+under-report the source. This audit records **source implementation with automated
+unit/integration tests only**. It is not native, installer or release acceptance;
+those gates stay in [Release Readiness](RELEASE_READINESS.md). Boxes are left
+unchecked until native acceptance evidence exists.
+
+| Area (P0 unless noted) | Source status | Main evidence | Remaining to reach stable |
+| --- | --- | --- | --- |
+| Command registry | Implemented | `src/features/commands/` | Keybinding inspection/editing (P1) |
+| Problems domain/panel | Implemented | `src/features/problems/` | Native acceptance |
+| Document safety, Save All, drafts | Implemented | `src/features/documents/`, `useSafeWindowClose` | Installed-app crash/restart and quit acceptance |
+| External file changes | Implemented | `useExternalFileState`, `useOpenDocumentDiskSync` | Native acceptance |
+| Process ownership | Implemented | `integration/process_job`, `unix_process_group`, `owned_*` | Unix PTY descendant containment verification |
+| gopls format/imports/rename/actions/hover/signature | Implemented | `src/features/language/`, `integration/{organize_imports,rename_symbol,code_actions,signature_help}` | Real-tool fixtures on all targets |
+| Quick Open, search/replace | Implemented | `src/features/navigation/`, `integration/{search,replacement}` | Measured large-workspace performance |
+| Recent workspaces / restore | Implemented | `src/features/workspaces/` | Native acceptance |
+| Typed settings | Implemented | `src/features/settings/` | Default shell setting is missing |
+| Go modules / go.work / tidy | Implemented | `integration/go_project`, `src/features/goProject/` | Native acceptance |
+| `go test -json` results | Implemented | `integration/go_tests.rs`, `src/features/goTests/` | Test Explorer and coverage (P1) are missing |
+| Debugger goroutines/stack/variables | Implemented | `src/features/debugger/` | Real Delve acceptance on all targets |
+| Decompose `ui_bridge/commands.rs` | Partial | 48 of 91 IPC commands remain in a 4,217-line file | Finish domain split |
+| `OnceLock` → `tauri::State` | Not started | 47 `OnceLock` uses, 2 `tauri::State` uses | Migrate registries |
+| Code signing / notarization | Not started | `release.yml` signs updater payloads only | Authenticode + Apple notarization |
+| Automated installed-app (E2E) tests | Not started | No WebDriver harness | WebdriverIO + `@wdio/tauri-service` |
+| Rust advisory/licence audit in CI | Not started | Security workflow runs `npm audit` only | `cargo-deny` |
+
 ---
 
 ## 1. Roadmap Phases & Exit Criteria

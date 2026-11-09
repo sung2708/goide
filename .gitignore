@@ -60,7 +60,11 @@ scratch/
 .ai/
 .agent/
 .agents/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/skills/
+!.claude/hooks/
+.claude/settings.local.json
 .cortex/
 .codex/
 .gemini/
