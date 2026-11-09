@@ -85,7 +85,8 @@ pub(super) fn extract_zip(bytes: &[u8], root: &Path, cancel: &AtomicBool) -> Res
     for i in 0..archive.len() {
         check(cancel)?;
         let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        let path = archive_path(entry.name())?;
+        let name = entry.name().map_err(|e| e.to_string())?;
+        let path = archive_path(&name)?;
         if !seen.insert(path.to_string_lossy().to_ascii_lowercase()) {
             return Err("Duplicate archive path.".into());
         }

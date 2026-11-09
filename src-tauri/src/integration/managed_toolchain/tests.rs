@@ -53,6 +53,24 @@ fn extraction_checks_cancellation_before_writing_files() {
     std::fs::remove_dir_all(root).unwrap();
 }
 #[test]
+fn extraction_rejects_symlink_entries_without_writing_them() {
+    let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+    archive
+        .add_symlink(
+            "go/bin/link",
+            "../../outside",
+            zip::write::SimpleFileOptions::default(),
+        )
+        .unwrap();
+    let bytes = archive.finish().unwrap().into_inner();
+    let root = std::env::temp_dir().join(format!("goro-symlink-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&root).unwrap();
+    let cancel = std::sync::atomic::AtomicBool::new(false);
+    assert!(extract_zip(&bytes, &root, &cancel).is_err());
+    assert!(std::fs::symlink_metadata(root.join("go/bin/link")).is_err());
+    std::fs::remove_dir_all(root).unwrap();
+}
+#[test]
 fn catalog_is_pinned_and_rejects_unsupported_targets() {
     assert!(catalog_for("windows", "x86_64").is_ok());
     assert!(catalog_for("linux", "aarch64").is_err());
