@@ -34,6 +34,8 @@
     "docs:check": "node scripts/validate-docs.mjs",
     "changelog:generate": "node scripts/generate-changelog.mjs",
     "verify": "npm run version:check && npm run docs:check && npm run typecheck && npm test && npm run build",
+    "e2e:build": "node scripts/e2e-build.mjs",
+    "e2e": "npm --prefix e2e test",
     "verify:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml -- --check && cargo clippy --locked --all-targets --manifest-path src-tauri/Cargo.toml -- -D warnings && cargo test --locked --manifest-path src-tauri/Cargo.toml -- --test-threads=1"
   },
   "dependencies": {
@@ -43,7 +45,7 @@
     "@fortawesome/react-fontawesome": "^3.3.0",
     "@gitgraph/react": "^1.6.0",
     "@tanstack/react-virtual": "^3.13.24",
-    "@tauri-apps/api": "^2",
+    "@tauri-apps/api": "~2.10.1",
     "@tauri-apps/plugin-dialog": "^2",
     "@tauri-apps/plugin-opener": "^2",
     "@vscode/tree-sitter-wasm": "^0.3.1",
@@ -66,6 +68,7 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^4.6.0",
+    "@wdio/tauri-plugin": "1.5.1",
     "jsdom": "^29.0.2",
     "semver": "^7.7.3",
     "tailwindcss": "^4.1.0",

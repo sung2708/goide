@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "identifier": "com.sungp.goide.e2e",
+  "app": {
+    "withGlobalTauri": true,
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost data:; font-src 'self'; connect-src 'self' ipc: http://ipc.localhost",
+      "capabilities": [
+        "default",
+        {
+          "identifier": "e2e-automation",
+          "description": "WebdriverIO automation for --features e2e test builds only",
+          "windows": [
+            "main"
+          ],
+          "permissions": [
+            "wdio:default",
+            "wdio-webdriver:default"
+          ]
+        }
+      ]
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

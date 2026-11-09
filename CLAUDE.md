@@ -15,6 +15,8 @@ in `src-tauri/`. Architecture: docs/ARCHITECTURE.md. Rules: docs/ENGINEERING_RUL
 - One test file: `npx vitest run src/path/File.test.tsx`
 - One Rust test: `cargo test --manifest-path src-tauri/Cargo.toml --locked <name> -- --test-threads=1`
 - Script contract tests: `node --test scripts/*.node-test.mjs`
+- E2E: `npm run e2e:build && npm run e2e` (Linux: `xvfb-run -a npm run e2e`); see docs/TESTING.md.
+  Typed text in specs must be upper case (driver keyCode limitation).
 
 ## Conventions
 

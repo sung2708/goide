@@ -2,13 +2,26 @@ mod core;
 mod integration;
 mod ui_bridge;
 
+/// Registers WebdriverIO automation plugins for `--features e2e` builds only.
+#[cfg(feature = "e2e")]
+fn with_e2e_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+        .plugin(tauri_plugin_wdio::init())
+        .plugin(tauri_plugin_wdio_webdriver::init())
+}
+
+#[cfg(not(feature = "e2e"))]
+fn with_e2e_plugins<R: tauri::Runtime>(builder: tauri::Builder<R>) -> tauri::Builder<R> {
+    builder
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Err(error) = integration::process_job::install() {
         eprintln!("Unable to establish owned process boundary: {error}");
         return;
     }
-    tauri::Builder::default()
+    with_e2e_plugins(tauri::Builder::default())
         .manage(integration::fs_watch::FsWatchService::new())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

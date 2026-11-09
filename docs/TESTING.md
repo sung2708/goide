@@ -111,6 +111,36 @@ Command regressions verify exact Windows/macOS modifier matching, disabled actio
 
 Multi-document regressions exercise independent dirty tab buffers, reread avoidance, Save All baseline isolation and partial failure, newer edits during saves, explicit close/discard/cancel, failed close-save retry, workspace choice safety, native read-only UI, and existing branch release-gate transitions. Monaco model tests retain undo/redo across tabs and dispose closed models; adapter tests reject stale language results. Native filesystem fixtures check read-only metadata and refused writes, scoped paths, binary/non-UTF-8 rejection and oversized text limits. Native multi-document desktop smoke checks and persistent session recovery remain outstanding.
 
+## End-to-end tests
+
+`e2e/` drives a real Goro window with WebdriverIO and `@wdio/tauri-service`
+(embedded WebDriver provider, no external driver). Specs use throwaway Go
+modules in the OS temp directory, never a real project.
+
+```sh
+npm ci && npm ci --prefix e2e
+npm run e2e:build   # debug binary with --features e2e and tauri.e2e.conf.json
+npm run e2e         # Linux: xvfb-run -a npm run e2e
+```
+
+The e2e build is test-only. The `e2e` Cargo feature adds `tauri-plugin-wdio` and
+`tauri-plugin-wdio-webdriver`; `tauri.e2e.conf.json` enables `withGlobalTauri`,
+`'unsafe-eval'` and the automation capability, and uses the separate identifier
+`com.sungp.goide.e2e` so tests never touch a developer's real settings or history.
+`VITE_GORO_E2E=1` loads `@wdio/tauri-plugin` in the frontend; normal builds contain
+none of this. Never ship or sign an e2e build.
+
+Current specs: app startup, and Save / Don't Save / Cancel when closing a dirty
+tab (disk contents asserted after each answer). Workspaces are opened through
+the Recent Workspaces path because WebDriver cannot drive the native folder
+picker. Known driver limitation (tauri-plugin-wdio-webdriver 1.5.1): lowercase
+letters are sent with keyCode equal to their char code, so Monaco reads some as
+function keys; typed text in specs must use upper case, digits and punctuation.
+
+CI runs the suite on Linux (blocking) and on Windows and macOS (non-blocking until
+proven). A passing e2e run covers the scripted flows on a debug build; it is not
+installer, signed-package or manual native acceptance.
+
 ## Native checks and acceptance
 
 Run the standard suite with shared native registries serialized:
