@@ -1,10 +1,12 @@
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** A throwaway Go module on disk; never points at a real project. */
 export function createGoWorkspace(files: Record<string, string> = {}) {
-  const root = mkdtempSync(join(tmpdir(), "goro-e2e-"));
+  // Long, canonical form: Windows runners hand out 8.3 short names (RUNNER~1)
+  // and macOS tmpdir() sits behind the /var -> /private/var symlink.
+  const root = realpathSync.native(mkdtempSync(join(tmpdir(), "goro-e2e-")));
   const all = {
     "go.mod": "module example.com/e2e\n\ngo 1.22\n",
     "main.go": 'package main\n\nfunc main() {\n\tprintln("hello")\n}\n',
@@ -34,7 +36,17 @@ export async function openWorkspace(root: string, settings: Record<string, unkno
     localStorage.setItem("goide.settings.v1", JSON.stringify({ version: 1, values }));
   }, root, settings);
   await browser.refresh();
-  await $(`button[title="${root}"]`).click();
+  // Match the title in JS: Windows backslashes are escapes inside a CSS selector.
+  const recent = await $$('[aria-label="Recent workspaces"] button[title]');
+  let opened = false;
+  for (const button of recent) {
+    if ((await button.getAttribute("title")) === root) {
+      await button.click();
+      opened = true;
+      break;
+    }
+  }
+  if (!opened) throw new Error(`Recent workspaces has no entry for ${root}`);
   await $('[role="treeitem"]').waitForDisplayed();
   await browser.waitUntil(async () => (await $$('[role="treeitem"]').map((item) => item.getText())).some((text) => text.includes("main.go")), {
     timeoutMsg: "Explorer did not list main.go",
