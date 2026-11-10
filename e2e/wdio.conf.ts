@@ -1,14 +1,10 @@
-import { resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-
-const here = fileURLToPath(new URL(".", import.meta.url));
-const binary = process.platform === "win32" ? "Goro.exe" : "Goro";
-const application =
-  process.env.GORO_E2E_APP ?? resolve(here, "../src-tauri/target/debug", binary);
+import { appPath as application } from "./support/app.js";
 
 export const config: WebdriverIO.Config = {
   runner: "local",
-  specs: ["./specs/**/*.e2e.ts"],
+  // Crash specs run last and in order: part 1 kills the app, part 2 relaunches it
+  // on the same profile. Do not run them in parallel or on their own.
+  specs: ["./specs/*.e2e.ts", "./specs/crash/1-kill-with-draft.e2e.ts", "./specs/crash/2-recover-draft.e2e.ts"],
   maxInstances: 1,
   capabilities: [
     {
@@ -31,7 +27,9 @@ export const config: WebdriverIO.Config = {
   mochaOpts: { ui: "bdd", timeout: 120_000 },
   // The e2e build uses its own identifier (com.sungp.goide.e2e), so this only
   // clears test state, never a developer's real Goro settings or history.
-  before: async () => {
+  // Part 2 of the crash specs must see what part 1 left behind.
+  before: async (_capabilities, specs) => {
+    if (specs.some((spec) => spec.includes("2-recover-draft"))) return;
     await browser.execute(() => localStorage.clear());
     await browser.refresh();
   },

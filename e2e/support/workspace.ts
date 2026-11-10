@@ -1,4 +1,6 @@
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, writeFileSync, rmSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { appPath } from "./app.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +22,8 @@ export function createGoWorkspace(files: Record<string, string> = {}) {
   return {
     root,
     read: (path: string) => readFileSync(join(root, path), "utf8"),
+    /** Simulates another program (git, a formatter, another editor) writing the file. */
+    write: (path: string, contents: string) => writeFileSync(join(root, path), contents),
     dispose: () => rmSync(root, { recursive: true, force: true }),
   };
 }
@@ -83,3 +87,49 @@ export async function typeAtEndOfEditor(text: string) {
   }
   await browser.keys("Escape");
 }
+
+/** Opens a file from the Explorer unless it already has a tab, then waits for Monaco. */
+export async function openFile(name: string) {
+  const tab = $(`[aria-label="Open documents"] [title$="${name}"]`);
+  if (!(await tab.isExisting())) await (await explorerItem(name)).click();
+  await $(".monaco-editor textarea").waitForExist();
+}
+
+/** Rendered text of the active editor (visible lines only). */
+export async function editorText() {
+  return $(".monaco-editor .view-lines").getText();
+}
+
+/**
+ * Hard-kills the running Goro e2e app (no shutdown handlers, like a crash or
+ * power loss). The embedded WebDriver dies with it, so this must be the last
+ * step of a spec; the next spec file starts a fresh app on the same profile.
+ */
+export async function crashApp() {
+  // The killed app took the embedded driver with it; ending the session would
+  // fail the spec, so make the runner's final deleteSession a no-op.
+  // deleteSession is a protocol command, so it is missing from the typed
+  // overwrite list even though WebdriverIO accepts it.
+  await browser.overwriteCommand("deleteSession" as "keys", async () => {});
+  // Match the exact e2e binary path so an installed Goro is never touched.
+  if (process.platform === "win32") {
+    const script = `Get-Process | Where-Object { $_.Path -eq $env:GORO_KILL_PATH } | Stop-Process -Force`;
+    execFileSync("powershell", ["-NoProfile", "-Command", script], { env: { ...process.env, GORO_KILL_PATH: appPath }, stdio: "ignore" });
+  } else {
+    execFileSync("pkill", ["-KILL", "-f", `^${appPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`], { stdio: "ignore" });
+  }
+}
+
+/** Hands state from a crash spec to the spec that runs after the relaunch. */
+export const crashState = {
+  file: join(tmpdir(), "goro-e2e-crash-state.json"),
+  save(value: { root: string; original: string }) {
+    writeFileSync(this.file, JSON.stringify(value));
+  },
+  load(): { root: string; original: string } {
+    return JSON.parse(readFileSync(this.file, "utf8"));
+  },
+  clear() {
+    rmSync(this.file, { force: true });
+  },
+};

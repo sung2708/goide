@@ -130,8 +130,19 @@ The e2e build is test-only. The `e2e` Cargo feature adds `tauri-plugin-wdio` and
 `VITE_GORO_E2E=1` loads `@wdio/tauri-plugin` in the frontend; normal builds contain
 none of this. Never ship or sign an e2e build.
 
-Current specs: app startup, and Save / Don't Save / Cancel when closing a dirty
-tab (disk contents asserted after each answer). Workspaces are opened through
+Current specs (disk contents and process state asserted, not just UI):
+
+| Spec | Gate |
+| --- | --- |
+| `smoke` | App starts; WDIO bridge present only in the e2e build |
+| `unsaved-close` | Save / Don't Save / Cancel when closing a dirty tab |
+| `external-change` | Clean tab reloads; dirty tab shows a conflict and never overwrites disk until Keep or Reload is chosen |
+| `run-stop` | Stop ends the `go run` program and its child process (needs Go; fails in CI without it, skips locally) |
+| `crash/1-kill-with-draft`, `crash/2-recover-draft` | SIGKILL / `Stop-Process -Force` with an unsaved edit, then relaunch offers and restores the draft without touching disk |
+
+The crash pair must run in that order on the same profile; `wdio.conf.ts` lists
+them last and skips the storage reset for part 2. `crashApp()` kills only the
+exact e2e binary path, never an installed Goro. Workspaces are opened through
 the Recent Workspaces path because WebDriver cannot drive the native folder
 picker. Known driver limitation (tauri-plugin-wdio-webdriver 1.5.1): lowercase
 letters are sent with keyCode equal to their char code, so Monaco reads some as

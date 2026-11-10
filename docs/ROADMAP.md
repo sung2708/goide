@@ -32,7 +32,7 @@ unchecked until native acceptance evidence exists.
 | Decompose `ui_bridge/commands.rs` | Partial | 48 of 91 IPC commands remain in a 4,217-line file | Finish domain split |
 | `OnceLock` → `tauri::State` | Not started | 47 `OnceLock` uses, 2 `tauri::State` uses | Migrate registries |
 | Code signing / notarization | Not started | `release.yml` signs updater payloads only | Authenticode + Apple notarization |
-| Automated app (E2E) tests | Started | `e2e/` WebdriverIO harness; startup and dirty-tab close specs pass on Linux | More P0 flows; Windows/macOS CI proof; installed-package runs |
+| Automated app (E2E) tests | In progress | `e2e/`: startup, dirty-tab close, external change conflict, Run/Stop process tree, crash draft recovery (Linux green) | Windows/macOS CI proof; Git/branch and Explorer transitions; installed-package runs |
 | Rust advisory/licence audit in CI | Implemented | `cargo deny` in security workflow, `deny.toml` | MPL-2.0 (Tauri HTML parser) and updater-only zip 4.x advisories need maintainer disposition |
 
 ---

@@ -192,6 +192,13 @@ jobs:
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
+      # The Run/Stop spec runs a real `go run`; it fails (not skips) in CI without Go.
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+          cache: false
+
       - name: Install dependencies
         run: |
           npm ci
