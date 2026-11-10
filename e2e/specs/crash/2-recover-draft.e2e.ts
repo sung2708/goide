@@ -15,7 +15,17 @@ describe("draft recovery: relaunch after the crash", () => {
 
   it("offers the unsaved draft and leaves disk unchanged", async () => {
     const banner = $('[aria-label="Draft recovery"]');
-    await banner.waitForDisplayed({ timeout: 30_000 });
+    try {
+      await banner.waitForDisplayed({ timeout: 30_000 });
+    } catch (error) {
+      // Say which half failed: storage lost across the crash, or a UI problem.
+      const state = await browser.execute(() => ({
+        drafts: localStorage.getItem("goro.drafts.v1")?.length ?? null,
+        history: localStorage.getItem("goide.workspaceHistory.v1"),
+        body: document.body.innerText.slice(0, 400),
+      }));
+      throw new Error(`no draft recovery banner after relaunch: ${JSON.stringify(state)}`, { cause: error });
+    }
     await expect(banner).toHaveText(expect.stringContaining("1 unsaved draft"));
     expect(disk()).toBe(original);
   });

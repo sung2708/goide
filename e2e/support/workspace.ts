@@ -113,7 +113,14 @@ export async function crashApp() {
   await browser.overwriteCommand("deleteSession" as "keys", async () => {});
   // Match the exact e2e binary path so an installed Goro is never touched.
   if (process.platform === "win32") {
-    const script = `Get-Process | Where-Object { $_.Path -eq $env:GORO_KILL_PATH } | Stop-Process -Force`;
+    // /T also ends the WebView2 (msedgewebview2.exe) children, as a real crash
+    // or power loss would; left alive they can still hold the profile when the
+    // next spec relaunches the app. Wait until the whole tree is gone.
+    const script = [
+      "$ids = Get-Process | Where-Object { $_.Path -eq $env:GORO_KILL_PATH } | ForEach-Object { $_.Id }",
+      "foreach ($id in $ids) { taskkill /F /T /PID $id | Out-Null }",
+      "foreach ($i in 1..50) { if (-not (Get-Process -Id $ids -ErrorAction SilentlyContinue)) { break }; Start-Sleep -Milliseconds 200 }",
+    ].join("; ");
     execFileSync("powershell", ["-NoProfile", "-Command", script], { env: { ...process.env, GORO_KILL_PATH: appPath }, stdio: "ignore" });
   } else {
     execFileSync("pkill", ["-KILL", "-f", `^${appPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`], { stdio: "ignore" });
